@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "name": "Parametric spindle assembly",
+  "units": "mm",
+  "parameters": {},
+  "components": [
+    {
+      "id": "base",
+      "name": "Mounting base",
+      "color": "#81909f",
+      "parameters": {
+        "length": 80,
+        "width": 60,
+        "thickness": 8,
+        "hole_radius": 3,
+        "bolt_circle": 26
+      },
+      "features": [
+        {
+          "id": "base_block",
+          "type": "box",
+          "size": [
+            "length",
+            "width",
+            "thickness"
+          ],
+          "operation": "new"
+        },
+        {
+          "id": "base_corners",
+          "type": "fillet",
+          "size": 3,
+          "edges": "|Z"
+        },
+        {
+          "id": "mounting_hole",
+          "type": "cylinder",
+          "radius": "hole_radius",
+          "height": "thickness + 4",
+          "operation": "cut",
+          "placement": {
+            "translation": [
+              "bolt_circle",
+              0,
+              "-thickness / 2 - 2"
+            ]
+          }
+        },
+        {
+          "id": "mounting_pattern",
+          "type": "circular_pattern",
+          "feature": "mounting_hole",
+          "count": 4,
+          "operation": "cut"
+        }
+      ],
+      "expected_size": [
+        "length",
+        "width",
+        "thickness"
+      ]
+    },
+    {
+      "id": "post",
+      "name": "Spindle",
+      "color": "#b69bce",
+      "parameters": {
+        "diameter": 16,
+        "height": 32
+      },
+      "features": [
+        {
+          "id": "post_body",
+          "type": "cylinder",
+          "radius": "diameter / 2",
+          "height": "height",
+          "operation": "new"
+        }
+      ],
+      "placement": {
+        "translation": [
+          0,
+          0,
+          "base.thickness / 2"
+        ]
+      },
+      "expected_size": [
+        "diameter",
+        "diameter",
+        "height"
+      ]
+    },
+    {
+      "id": "cap",
+      "name": "Lofted grip",
+      "color": "#90b6cc",
+      "parameters": {
+        "end_radius": 8,
+        "middle_radius": 14,
+        "height": 24
+      },
+      "features": [
+        {
+          "id": "grip_bottom",
+          "type": "sketch",
+          "profile": "circle",
+          "radius": "end_radius"
+        },
+        {
+          "id": "grip_middle",
+          "type": "sketch",
+          "profile": "circle",
+          "radius": "middle_radius",
+          "origin": [
+            0,
+            0,
+            "height / 2"
+          ]
+        },
+        {
+          "id": "grip_top",
+          "type": "sketch",
+          "profile": "circle",
+          "radius": "end_radius",
+          "origin": [
+            0,
+            0,
+            "height"
+          ]
+        },
+        {
+          "id": "grip_loft",
+          "type": "loft",
+          "sketches": [
+            "grip_bottom",
+            "grip_middle",
+            "grip_top"
+          ],
+          "operation": "new"
+        }
+      ],
+      "placement": {
+        "translation": [
+          0,
+          0,
+          "base.thickness / 2 + post.height"
+        ]
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "base_post_contact",
+      "type": "contact",
+      "component_a": "base",
+      "component_b": "post"
+    },
+    {
+      "id": "post_cap_contact",
+      "type": "contact",
+      "component_a": "post",
+      "component_b": "cap"
+    },
+    {
+      "id": "post_cap_axis",
+      "type": "coaxial",
+      "component_a": "post",
+      "component_b": "cap"
+    }
+  ]
+}

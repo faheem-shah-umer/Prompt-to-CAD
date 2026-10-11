@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "name": "Geometric threaded bolt",
+  "units": "mm",
+  "parameters": {},
+  "components": [
+    {
+      "id": "bolt",
+      "name": "Threaded bolt",
+      "color": "#b7c5d6",
+      "parameters": {
+        "major_radius": 5,
+        "minor_radius": 4.4,
+        "pitch": 1.5,
+        "length": 12,
+        "head_height": 4,
+        "head_radius": 8
+      },
+      "features": [
+        {
+          "id": "helical_thread",
+          "type": "thread",
+          "operation": "new",
+          "major_radius": "major_radius",
+          "minor_radius": "minor_radius",
+          "pitch": "pitch",
+          "length": "length"
+        },
+        {
+          "id": "hex_head_profile",
+          "type": "sketch",
+          "profile": "polygon",
+          "origin": [
+            0,
+            0,
+            "length"
+          ],
+          "points": [
+            [
+              "head_radius * cos(0 * pi / 3)",
+              "head_radius * sin(0 * pi / 3)"
+            ],
+            [
+              "head_radius * cos(1 * pi / 3)",
+              "head_radius * sin(1 * pi / 3)"
+            ],
+            [
+              "head_radius * cos(2 * pi / 3)",
+              "head_radius * sin(2 * pi / 3)"
+            ],
+            [
+              "head_radius * cos(3 * pi / 3)",
+              "head_radius * sin(3 * pi / 3)"
+            ],
+            [
+              "head_radius * cos(4 * pi / 3)",
+              "head_radius * sin(4 * pi / 3)"
+            ],
+            [
+              "head_radius * cos(5 * pi / 3)",
+              "head_radius * sin(5 * pi / 3)"
+            ]
+          ]
+        },
+        {
+          "id": "hex_head",
+          "type": "extrude",
+          "sketch": "hex_head_profile",
+          "distance": "head_height"
+        },
+        {
+          "id": "head_chamfer",
+          "type": "chamfer",
+          "size": 0.5,
+          "edges": ">Z"
+        }
+      ]
+    }
+  ]
+}

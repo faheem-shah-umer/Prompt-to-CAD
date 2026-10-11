@@ -1,0 +1,9 @@
+{
+  "description": "An 80 x 50 x 6 mm rectangular plate with four 6 mm through holes at (+/-25, +/-15) mm from its centre.",
+  "units": "mm",
+  "length": 80,
+  "width": 50,
+  "thickness": 6,
+  "hole_diameter": 6,
+  "hole_centres": [[-25, -15], [25, -15], [-25, 15], [25, 15]]
+}

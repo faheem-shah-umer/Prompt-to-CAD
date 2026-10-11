@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Prompt to CAD purple pyramid</title>
+  <polygon points="244,30 40,396 278,482" fill="#cb97e7" />
+  <polygon points="244,30 278,482 472,396" fill="#e5caf3" />
+  <polygon points="244,30 40,396 118,366" fill="#d9b1ee" />
+  <polygon points="40,396 118,366 278,482" fill="#bd80e1" />
+</svg>

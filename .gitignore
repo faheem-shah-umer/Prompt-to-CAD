@@ -1,0 +1,36 @@
+# Python and installed desktop dependencies
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.desktop-runtime/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend dependencies and production output
+node_modules/
+frontend/dist/
+.npm-cache/
+*.tsbuildinfo
+
+# Credentials: commit only the empty configuration template
+.env
+.env.*
+!.env.example
+
+# Local CAD work, exported files and diagnostics
+/projects/
+/runs/
+/artifacts/
+/tmp/
+*.log
+
+# Machine-specific shortcuts and editor/OS files
+*.lnk
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
