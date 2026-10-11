@@ -46,6 +46,8 @@ def apply_changes(design: Design, plan: EditPlan, selected_id: str | None) -> De
             part["parameters"].update(change["values"])
         elif kind == "set_placement":
             part["placement"] = change["placement"]
+        elif kind == "set_attachment":
+            part["attachment"] = change["attachment"]
         elif kind == "remove_component":
             data["components"].remove(part)
         elif kind == "add_feature":

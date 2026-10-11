@@ -11,13 +11,14 @@ from fastapi.staticfiles import StaticFiles
 from . import generation, planner, service
 from .config import FRONTEND_DIST, FRONTEND_ORIGINS
 from .llm_client import LLMError, public_status
+from .design_jobs import router as design_job_router
 from .project_api import router as project_router
 from .schemas import GenerationResult, ModelResult, PlateSpec, PlanningResult, PromptRequest
 
 logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Prompt to CAD API",
-    version="0.4.0",
+    version="0.5.0",
     description="Parametric, editable CAD projects with component selection, feature histories, assemblies and verified revisions. The earlier plate endpoints remain available.",
 )
 app.add_middleware(
@@ -26,6 +27,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+app.include_router(design_job_router)
 
 
 @app.get("/api/health", tags=["status"])

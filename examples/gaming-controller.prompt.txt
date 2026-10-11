@@ -1,0 +1,28 @@
+Create a 3D concept of a two-handed gaming controller.
+Use millimetres, with the controls facing upward along +Z.
+
+Main body:
+- A rounded central body, 140 mm wide, 70 mm deep and 20 mm thick.
+- Round the vertical corners with a 6 mm radius.
+- Add two rounded grips extending approximately 40 mm backward.
+- Use elliptical lofts for the grips and attach them to the body.
+
+Controls on the top surface:
+- Two analogue joysticks, positioned symmetrically near the lower centre.
+  Each should have a 6 mm radius stem and a 10 mm radius thumb cap.
+- A raised cross-shaped directional pad on the upper left,
+  approximately 20 mm across and 3 mm tall.
+- Four circular face buttons on the upper right, arranged in a diamond.
+  Each button should be 9 mm in diameter and 3 mm tall,
+  with 12 mm spacing between neighbouring button centres.
+
+Keep the body, each grip, each joystick, the directional pad
+and each face button as separate selectable components.
+Place their connecting surfaces in contact and avoid unintended overlaps.
+
+Use a dark grey body, black grips and joysticks, and green,
+red, blue and yellow face buttons.
+
+Make the dimensions editable through named parameters.
+Preserve each component's construction history.
+Focus on the exterior form and visible controls.

@@ -1,0 +1,551 @@
+{
+  "schema_version": 1,
+  "name": "Gaming controller reference",
+  "units": "mm",
+  "parameters": {
+    "button_spacing": 12,
+    "button_cluster_x": 43,
+    "button_cluster_y": 15
+  },
+  "components": [
+    {
+      "id": "body",
+      "name": "Controller body",
+      "color": "#30343a",
+      "parameters": {
+        "width": 140,
+        "depth": 70,
+        "thickness": 20,
+        "corner_radius": 6
+      },
+      "features": [
+        {
+          "id": "body_blank",
+          "type": "box",
+          "operation": "new",
+          "size": [
+            "width",
+            "depth",
+            "thickness"
+          ]
+        },
+        {
+          "id": "body_corners",
+          "type": "fillet",
+          "edges": "|Z",
+          "size": "corner_radius"
+        }
+      ],
+      "expected_size": [
+        "width",
+        "depth",
+        "thickness"
+      ]
+    },
+    {
+      "id": "left_grip",
+      "name": "Left grip",
+      "color": "#141519",
+      "parameters": {
+        "length": 40,
+        "root_width": 28,
+        "root_height": 18,
+        "middle_width": 30,
+        "middle_height": 24,
+        "tip_width": 12,
+        "tip_height": 12,
+        "x_offset": -45
+      },
+      "placement": {
+        "translation": [
+          "x_offset",
+          "-body.depth / 2",
+          0
+        ]
+      },
+      "features": [
+        {
+          "id": "root_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "width": "root_width",
+          "height": "root_height"
+        },
+        {
+          "id": "middle_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "origin": [
+            0,
+            "-length / 2",
+            -3
+          ],
+          "width": "middle_width",
+          "height": "middle_height"
+        },
+        {
+          "id": "tip_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "origin": [
+            0,
+            "-length",
+            -6
+          ],
+          "width": "tip_width",
+          "height": "tip_height"
+        },
+        {
+          "id": "grip_loft",
+          "type": "loft",
+          "operation": "new",
+          "sketches": [
+            "root_profile",
+            "middle_profile",
+            "tip_profile"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "right_grip",
+      "name": "Right grip",
+      "color": "#141519",
+      "parameters": {
+        "length": 40,
+        "root_width": 28,
+        "root_height": 18,
+        "middle_width": 30,
+        "middle_height": 24,
+        "tip_width": 12,
+        "tip_height": 12,
+        "x_offset": 45
+      },
+      "placement": {
+        "translation": [
+          "x_offset",
+          "-body.depth / 2",
+          0
+        ]
+      },
+      "features": [
+        {
+          "id": "root_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "width": "root_width",
+          "height": "root_height"
+        },
+        {
+          "id": "middle_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "origin": [
+            0,
+            "-length / 2",
+            -3
+          ],
+          "width": "middle_width",
+          "height": "middle_height"
+        },
+        {
+          "id": "tip_profile",
+          "type": "sketch",
+          "profile": "ellipse",
+          "plane": "XZ",
+          "origin": [
+            0,
+            "-length",
+            -6
+          ],
+          "width": "tip_width",
+          "height": "tip_height"
+        },
+        {
+          "id": "grip_loft",
+          "type": "loft",
+          "operation": "new",
+          "sketches": [
+            "root_profile",
+            "middle_profile",
+            "tip_profile"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "left_joystick",
+      "name": "Left joystick",
+      "color": "#141519",
+      "parameters": {
+        "stem_radius": 6,
+        "cap_radius": 10,
+        "stem_height": 6,
+        "cap_height": 3,
+        "x_offset": -25,
+        "y_offset": -15
+      },
+      "placement": {
+        "translation": [
+          "x_offset",
+          "y_offset",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "stem",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "stem_radius",
+          "height": "stem_height"
+        },
+        {
+          "id": "thumb_cap",
+          "type": "cylinder",
+          "operation": "add",
+          "radius": "cap_radius",
+          "height": "cap_height",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "stem_height"
+            ]
+          }
+        }
+      ],
+      "expected_size": [
+        "cap_radius * 2",
+        "cap_radius * 2",
+        "stem_height + cap_height"
+      ]
+    },
+    {
+      "id": "right_joystick",
+      "name": "Right joystick",
+      "color": "#141519",
+      "parameters": {
+        "stem_radius": 6,
+        "cap_radius": 10,
+        "stem_height": 6,
+        "cap_height": 3,
+        "x_offset": 25,
+        "y_offset": -15
+      },
+      "placement": {
+        "translation": [
+          "x_offset",
+          "y_offset",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "stem",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "stem_radius",
+          "height": "stem_height"
+        },
+        {
+          "id": "thumb_cap",
+          "type": "cylinder",
+          "operation": "add",
+          "radius": "cap_radius",
+          "height": "cap_height",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "stem_height"
+            ]
+          }
+        }
+      ],
+      "expected_size": [
+        "cap_radius * 2",
+        "cap_radius * 2",
+        "stem_height + cap_height"
+      ]
+    },
+    {
+      "id": "dpad",
+      "name": "Directional pad",
+      "color": "#141519",
+      "parameters": {
+        "span": 20,
+        "arm_width": 7,
+        "height": 3,
+        "x_offset": -43,
+        "y_offset": 15
+      },
+      "placement": {
+        "translation": [
+          "x_offset",
+          "y_offset",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "cross_profile",
+          "type": "sketch",
+          "profile": "polygon",
+          "points": [
+            [
+              "-arm_width / 2",
+              "-span / 2"
+            ],
+            [
+              "arm_width / 2",
+              "-span / 2"
+            ],
+            [
+              "arm_width / 2",
+              "-arm_width / 2"
+            ],
+            [
+              "span / 2",
+              "-arm_width / 2"
+            ],
+            [
+              "span / 2",
+              "arm_width / 2"
+            ],
+            [
+              "arm_width / 2",
+              "arm_width / 2"
+            ],
+            [
+              "arm_width / 2",
+              "span / 2"
+            ],
+            [
+              "-arm_width / 2",
+              "span / 2"
+            ],
+            [
+              "-arm_width / 2",
+              "arm_width / 2"
+            ],
+            [
+              "-span / 2",
+              "arm_width / 2"
+            ],
+            [
+              "-span / 2",
+              "-arm_width / 2"
+            ],
+            [
+              "-arm_width / 2",
+              "-arm_width / 2"
+            ]
+          ]
+        },
+        {
+          "id": "raised_cross",
+          "type": "extrude",
+          "operation": "new",
+          "sketch": "cross_profile",
+          "distance": "height"
+        }
+      ],
+      "expected_size": [
+        "span",
+        "span",
+        "height"
+      ]
+    },
+    {
+      "id": "green_button",
+      "name": "Green button",
+      "color": "#29b36e",
+      "parameters": {
+        "diameter": 9,
+        "height": 3,
+        "dx": 0,
+        "dy": "shared.button_spacing / sqrt(2)"
+      },
+      "placement": {
+        "translation": [
+          "shared.button_cluster_x + dx",
+          "shared.button_cluster_y + dy",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "button",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "diameter / 2",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "diameter",
+        "diameter",
+        "height"
+      ]
+    },
+    {
+      "id": "red_button",
+      "name": "Red button",
+      "color": "#e65e61",
+      "parameters": {
+        "diameter": 9,
+        "height": 3,
+        "dx": "shared.button_spacing / sqrt(2)",
+        "dy": 0
+      },
+      "placement": {
+        "translation": [
+          "shared.button_cluster_x + dx",
+          "shared.button_cluster_y + dy",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "button",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "diameter / 2",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "diameter",
+        "diameter",
+        "height"
+      ]
+    },
+    {
+      "id": "blue_button",
+      "name": "Blue button",
+      "color": "#4d81ee",
+      "parameters": {
+        "diameter": 9,
+        "height": 3,
+        "dx": 0,
+        "dy": "-shared.button_spacing / sqrt(2)"
+      },
+      "placement": {
+        "translation": [
+          "shared.button_cluster_x + dx",
+          "shared.button_cluster_y + dy",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "button",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "diameter / 2",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "diameter",
+        "diameter",
+        "height"
+      ]
+    },
+    {
+      "id": "yellow_button",
+      "name": "Yellow button",
+      "color": "#f4c648",
+      "parameters": {
+        "diameter": 9,
+        "height": 3,
+        "dx": "-shared.button_spacing / sqrt(2)",
+        "dy": 0
+      },
+      "placement": {
+        "translation": [
+          "shared.button_cluster_x + dx",
+          "shared.button_cluster_y + dy",
+          "body.thickness / 2"
+        ]
+      },
+      "features": [
+        {
+          "id": "button",
+          "type": "cylinder",
+          "operation": "new",
+          "radius": "diameter / 2",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "diameter",
+        "diameter",
+        "height"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "body_left_grip",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "left_grip"
+    },
+    {
+      "id": "body_right_grip",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "right_grip"
+    },
+    {
+      "id": "body_left_joystick",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "left_joystick"
+    },
+    {
+      "id": "body_right_joystick",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "right_joystick"
+    },
+    {
+      "id": "body_dpad",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "dpad"
+    },
+    {
+      "id": "body_green_button",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "green_button"
+    },
+    {
+      "id": "body_red_button",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "red_button"
+    },
+    {
+      "id": "body_blue_button",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "blue_button"
+    },
+    {
+      "id": "body_yellow_button",
+      "type": "contact",
+      "component_a": "body",
+      "component_b": "yellow_button"
+    }
+  ],
+  "allowed_intersections": []
+}

@@ -1,0 +1,487 @@
+{
+  "name": "TwoHandedGamingController",
+  "parameters": {
+    "body_width": 140,
+    "body_depth": 70,
+    "body_thickness": 20,
+    "body_corner_radius": 6,
+    "grip_length": 40,
+    "grip_width": 30,
+    "grip_thickness": 20,
+    "grip_offset_x": "body_width/4",
+    "joystick_stem_radius": 6,
+    "joystick_stem_height": 15,
+    "joystick_cap_radius": 10,
+    "joystick_cap_height": 5,
+    "joystick_offset_x": 20,
+    "joystick_offset_y": "-body_depth/4",
+    "dpad_size": 20,
+    "dpad_thickness": 3,
+    "dpad_offset_x": "-body_width/4",
+    "dpad_offset_y": "body_depth/4",
+    "button_diameter": 9,
+    "button_thickness": 3,
+    "button_spacing": 12,
+    "button_offset": "button_spacing / sqrt(2)",
+    "button_center_x": "body_width/4",
+    "button_center_y": "body_depth/4"
+  },
+  "components": [
+    {
+      "id": "body",
+      "name": "Main Body",
+      "color": "#404040",
+      "parameters": {
+        "width": "shared.body_width",
+        "depth": "shared.body_depth",
+        "thickness": "shared.body_thickness",
+        "corner_radius": "shared.body_corner_radius"
+      },
+      "features": [
+        {
+          "id": "base_box",
+          "operation": "new",
+          "type": "box",
+          "size": [
+            "width",
+            "depth",
+            "thickness"
+          ]
+        },
+        {
+          "id": "base_fillet",
+          "type": "fillet",
+          "size": "corner_radius"
+        }
+      ],
+      "expected_size": [
+        "body_width",
+        "body_depth",
+        "body_thickness"
+      ]
+    },
+    {
+      "id": "grip_left",
+      "name": "Left Grip",
+      "color": "#000000",
+      "parameters": {
+        "width": "shared.grip_width",
+        "thickness": "shared.grip_thickness",
+        "length": "shared.grip_length"
+      },
+      "features": [
+        {
+          "id": "grip_loft",
+          "operation": "new",
+          "type": "loft",
+          "sections": [
+            {
+              "station": 0,
+              "width": "width",
+              "height": "thickness"
+            },
+            {
+              "station": "length / 2",
+              "width": "width",
+              "height": "thickness"
+            },
+            {
+              "station": "length",
+              "width": "width",
+              "height": "thickness"
+            }
+          ],
+          "plane": "XZ"
+        }
+      ],
+      "expected_size": [
+        "grip_width",
+        "grip_length",
+        "grip_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "axis": "Y",
+        "side": -1,
+        "offset": [
+          "-grip_offset_x",
+          0
+        ]
+      }
+    },
+    {
+      "id": "grip_right",
+      "name": "Right Grip",
+      "color": "#000000",
+      "parameters": {
+        "width": "shared.grip_width",
+        "thickness": "shared.grip_thickness",
+        "length": "shared.grip_length"
+      },
+      "features": [
+        {
+          "id": "grip_loft",
+          "operation": "new",
+          "type": "loft",
+          "sections": [
+            {
+              "station": 0,
+              "width": "width",
+              "height": "thickness"
+            },
+            {
+              "station": "length / 2",
+              "width": "width",
+              "height": "thickness"
+            },
+            {
+              "station": "length",
+              "width": "width",
+              "height": "thickness"
+            }
+          ],
+          "plane": "XZ"
+        }
+      ],
+      "expected_size": [
+        "grip_width",
+        "grip_length",
+        "grip_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "axis": "Y",
+        "side": -1,
+        "offset": [
+          "grip_offset_x",
+          0
+        ]
+      }
+    },
+    {
+      "id": "joystick_left",
+      "name": "Left Joystick",
+      "color": "#000000",
+      "parameters": {
+        "stem_radius": "shared.joystick_stem_radius",
+        "stem_height": "shared.joystick_stem_height",
+        "cap_radius": "shared.joystick_cap_radius",
+        "cap_height": "shared.joystick_cap_height"
+      },
+      "features": [
+        {
+          "id": "stem_cyl",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "stem_radius",
+          "height": "stem_height"
+        },
+        {
+          "id": "cap_cyl",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "stem_height"
+            ]
+          },
+          "type": "cylinder",
+          "radius": "cap_radius",
+          "height": "cap_height"
+        }
+      ],
+      "expected_size": [
+        "2*joystick_cap_radius",
+        "2*joystick_cap_radius",
+        "joystick_stem_height + joystick_cap_height"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "-joystick_offset_x",
+          "joystick_offset_y"
+        ]
+      }
+    },
+    {
+      "id": "joystick_right",
+      "name": "Right Joystick",
+      "color": "#000000",
+      "parameters": {
+        "joystick_stem_radius": "shared.joystick_stem_radius",
+        "joystick_stem_height": "shared.joystick_stem_height",
+        "joystick_cap_radius": "shared.joystick_cap_radius",
+        "joystick_cap_height": "shared.joystick_cap_height"
+      },
+      "features": [
+        {
+          "id": "stem",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "joystick_stem_radius",
+          "height": "joystick_stem_height"
+        },
+        {
+          "id": "cap",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "joystick_stem_height"
+            ]
+          },
+          "type": "cylinder",
+          "radius": "joystick_cap_radius",
+          "height": "joystick_cap_height"
+        }
+      ],
+      "expected_size": [
+        "2*joystick_cap_radius",
+        "2*joystick_cap_radius",
+        "joystick_stem_height + joystick_cap_height"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "joystick_offset_x",
+          "joystick_offset_y"
+        ]
+      }
+    },
+    {
+      "id": "dpad",
+      "name": "Directional Pad",
+      "color": "#404040",
+      "parameters": {
+        "dpad_size": "shared.dpad_size",
+        "dpad_thickness": "shared.dpad_thickness"
+      },
+      "features": [
+        {
+          "id": "dpad_sketch",
+          "type": "sketch",
+          "profile": "polygon",
+          "points": [
+            [
+              "-dpad_size/2",
+              "-dpad_thickness/2"
+            ],
+            [
+              "-dpad_thickness/2",
+              "-dpad_thickness/2"
+            ],
+            [
+              "-dpad_thickness/2",
+              "-dpad_size/2"
+            ],
+            [
+              "dpad_thickness/2",
+              "-dpad_size/2"
+            ],
+            [
+              "dpad_thickness/2",
+              "-dpad_thickness/2"
+            ],
+            [
+              "dpad_size/2",
+              "-dpad_thickness/2"
+            ],
+            [
+              "dpad_size/2",
+              "dpad_thickness/2"
+            ],
+            [
+              "dpad_thickness/2",
+              "dpad_thickness/2"
+            ],
+            [
+              "dpad_thickness/2",
+              "dpad_size/2"
+            ],
+            [
+              "-dpad_thickness/2",
+              "dpad_size/2"
+            ],
+            [
+              "-dpad_thickness/2",
+              "dpad_thickness/2"
+            ],
+            [
+              "-dpad_size/2",
+              "dpad_thickness/2"
+            ]
+          ]
+        },
+        {
+          "id": "dpad_extrude",
+          "operation": "new",
+          "type": "extrude",
+          "sketch": "dpad_sketch",
+          "distance": "dpad_thickness"
+        }
+      ],
+      "expected_size": [
+        "dpad_size",
+        "dpad_size",
+        "dpad_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "dpad_offset_x",
+          "dpad_offset_y"
+        ]
+      }
+    },
+    {
+      "id": "button_top",
+      "name": "Top Face Button",
+      "color": "#00FF00",
+      "parameters": {
+        "button_diameter": "shared.button_diameter",
+        "button_thickness": "shared.button_thickness"
+      },
+      "features": [
+        {
+          "id": "button_cyl",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "button_diameter / 2",
+          "height": "button_thickness"
+        }
+      ],
+      "expected_size": [
+        "button_diameter",
+        "button_diameter",
+        "button_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "button_center_x",
+          "button_center_y + button_offset"
+        ]
+      }
+    },
+    {
+      "id": "button_right",
+      "name": "Right Face Button",
+      "color": "#FF0000",
+      "parameters": {
+        "radius": "shared.button_diameter / 2",
+        "height": "shared.button_thickness"
+      },
+      "features": [
+        {
+          "id": "cyl",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "radius",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "button_diameter",
+        "button_diameter",
+        "button_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "button_center_x + button_offset",
+          "button_center_y"
+        ]
+      }
+    },
+    {
+      "id": "button_bottom",
+      "name": "Bottom Face Button",
+      "color": "#0000FF",
+      "parameters": {
+        "radius": "shared.button_diameter / 2",
+        "height": "shared.button_thickness"
+      },
+      "features": [
+        {
+          "id": "cyl",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "radius",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "button_diameter",
+        "button_diameter",
+        "button_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "button_center_x",
+          "button_center_y - button_offset"
+        ]
+      }
+    },
+    {
+      "id": "button_left",
+      "name": "Left Face Button",
+      "color": "#FFFF00",
+      "parameters": {
+        "radius": "shared.button_diameter / 2",
+        "height": "shared.button_thickness"
+      },
+      "features": [
+        {
+          "id": "cyl",
+          "operation": "new",
+          "type": "cylinder",
+          "radius": "radius",
+          "height": "height"
+        }
+      ],
+      "expected_size": [
+        "button_diameter",
+        "button_diameter",
+        "button_thickness"
+      ],
+      "attachment": {
+        "parent": "body",
+        "offset": [
+          "button_center_x - button_offset",
+          "button_center_y"
+        ]
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_btn_top_right",
+      "type": "distance",
+      "component_a": "button_top",
+      "component_b": "button_right",
+      "distance": "button_spacing"
+    },
+    {
+      "id": "rel_btn_right_bottom",
+      "type": "distance",
+      "component_a": "button_right",
+      "component_b": "button_bottom",
+      "distance": "button_spacing"
+    },
+    {
+      "id": "rel_btn_bottom_left",
+      "type": "distance",
+      "component_a": "button_bottom",
+      "component_b": "button_left",
+      "distance": "button_spacing"
+    },
+    {
+      "id": "rel_btn_left_top",
+      "type": "distance",
+      "component_a": "button_left",
+      "component_b": "button_top",
+      "distance": "button_spacing"
+    }
+  ]
+}

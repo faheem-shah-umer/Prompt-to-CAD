@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { checkHealth, checkLLM, createProject, editProject, importProject, listProjects, moveRevision, openProject } from './api';
-import type { CadProject, ComponentResult, EditableDesign, LLMStatus, ProjectOperation, ProjectSummary } from './api';
+import { checkHealth, checkLLM, generateDesign, importProject, listProjects, moveRevision, openProject } from './api';
+import type { CadProject, ComponentResult, DesignJob, EditableDesign, LLMStatus, ProjectOperation, ProjectSummary } from './api';
 import CadViewer from './components/CadViewer';
 import PromptForm from './components/PromptForm';
 
@@ -9,6 +9,7 @@ const readable = (text: string) => text.replace(/[\u0000-\u0008\u000b\u000c\u000
 const EMPTY_PARTS: ComponentResult[] = [];
 const checkLabels: Record<string, string> = {
   all_components_valid: 'All component solids valid', relationships_pass: 'Assembly relationships',
+  attachment_contacts_valid: 'Attached surfaces meet the specified gap',
   no_unexpected_intersections: 'No unexpected interference', step_roundtrip_valid: 'STEP preserves separate parts',
   brep_valid: 'Valid CAD solid', one_solid: 'One connected body', positive_volume: 'Positive volume',
   feature_history_valid: 'Feature history rebuilt', expected_dimensions_match: 'Specified overall dimensions',
@@ -28,6 +29,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState<ProjectOperation>();
   const [lastSeconds, setLastSeconds] = useState<number>();
+  const [generation, setGeneration] = useState<DesignJob>();
   const [saved, setSaved] = useState<ProjectSummary[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [projectListError, setProjectListError] = useState('');
@@ -63,6 +65,7 @@ export default function App() {
     setPrompt('');
     setAttempt(undefined);
     setError('');
+    setGeneration(undefined);
   }
 
   function acceptProject(value: CadProject, keepSelection = false) {
@@ -83,6 +86,7 @@ export default function App() {
     setAttempt(undefined);
     setError('');
     setLastSeconds(undefined);
+    setGeneration(undefined);
   }
 
   async function operation(label: string, action: () => Promise<void>) {
@@ -92,6 +96,7 @@ export default function App() {
     setBusyLabel(label);
     setError('');
     setAttempt(undefined);
+    setGeneration(undefined);
     try { await action(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'The project operation failed.'); }
     finally { submitting.current = false; setBusy(false); setBusyLabel(''); }
@@ -101,7 +106,10 @@ export default function App() {
     if (!available || prompt.trim().length < 5) return;
     const description = prompt.trim();
     await operation(project ? `Updating ${scope}…` : 'Creating project…', async () => {
-      const result = project ? await editProject(project, description, selectedId) : await createProject(description);
+      const result = await generateDesign(description, project, selectedId, job => {
+        setGeneration(job);
+        setBusyLabel(job.message);
+      });
       setLastSeconds(result.seconds);
       if (result.project) acceptProject(result.project, Boolean(project));
       else setAttempt(result);
@@ -175,7 +183,7 @@ export default function App() {
           <p>{connected ? status?.message : 'The CAD engine could not be reached. Reopen the application or retry.'}</p>
           <button className="text-button" type="button" onClick={() => setConnectionAttempt(value => value + 1)}>Retry connection</button>
         </div>}
-        {error && <div className="feedback" role="alert"><h2>Could not save this change</h2><p>{readable(error)}</p>{project && <p>Your saved design is still available.</p>}</div>}
+        {error && <div className="feedback" role="alert"><h2>{project ? 'Could not save this change' : 'Could not create this design'}</h2><p>{readable(error)}</p>{project && <p>Your saved design is still available.</p>}{generation && <a className="diagnostics-link" href={generation.diagnostics_url} download>Download generation details</a>}</div>}
         {blocked && <div className="feedback clarification" role="status">
           <h2>{attempt.plan.status === 'needs_input' ? 'A little more detail' : 'Modelling capability needed'}</h2>
           <p>{readable(attempt.plan.description)}</p>
@@ -205,8 +213,9 @@ export default function App() {
         <CadViewer documentId={project?.project_id} parts={parts} selectedId={selectedId} hiddenIds={hiddenIds} busy={busy} onSelect={selectPart} />
         <div className="model-footer"><span>{project ? `${parts.length} ${parts.length === 1 ? 'component' : 'components'} · ${project.validation.dimensions_mm.map(number).join(' × ')} mm` : 'Parametric solids · Separate components · Editable projects'}</span>{lastSeconds !== undefined && <span>{lastSeconds.toFixed(2)} s</span>}</div>
         <div className={`workflow ${busy ? 'running' : ''} ${project ? 'complete' : ''}`} aria-busy={busy}>
-          <div className="workflow-heading"><span className="section-label">Description to CAD</span><span>{busy ? 'Working…' : project ? 'Revision saved' : 'Create your first project'}</span></div>
-          <ol className="workflow-steps" aria-label="Creation workflow">{['Interpret', 'Parameters', 'Feature history', 'Verify', 'Save & export'].map((step, index) => <li key={step}><span className="step-marker">{project && !busy ? '✓' : index + 1}</span><span>{step}</span></li>)}</ol>
+          <div className="workflow-heading"><span className="section-label">Description to CAD</span><span>{busy ? generation?.components_total ? `${generation.components_completed}/${generation.components_total} parts · ${generation.elapsed_seconds.toFixed(0)} s` : 'Working…' : generation?.status === 'failed' ? 'Generation stopped' : project ? 'Revision saved' : 'Create your first project'}</span></div>
+          {busy && generation && <p className="generation-progress" role="status">{readable(generation.message)}</p>}
+          <ol className="workflow-steps" aria-label="Creation workflow">{['Plan parts', 'Build features', 'Assemble', 'Verify / repair', 'Save & export'].map((step, index) => <li key={step}><span className="step-marker">{project && !busy ? '✓' : index + 1}</span><span>{step}</span></li>)}</ol>
         </div>
       </section>
 
@@ -228,7 +237,7 @@ export default function App() {
                 <h3>Parameters</h3><dl className="property-list parameter-list">{Object.entries(selected.parameters).map(([key, value]) => <div key={key}><dt title={key}>{key.replaceAll('_', ' ')}</dt><dd>{number(value)}</dd></div>)}</dl>
                 {!Object.keys(selected.parameters).length && <p className="part-description">This part uses values directly in its features.</p>}
                 <p className="review-note">Ask for a change to update these values.</p>
-                <details className="feature-details"><summary>Placement & expressions</summary><pre>{JSON.stringify({ parameters: definition.parameters, placement: definition.placement }, null, 2)}</pre></details>
+                <details className="feature-details"><summary>Placement & expressions</summary><pre>{JSON.stringify({ parameters: definition.parameters, placement: definition.placement, attachment: definition.attachment ?? undefined }, null, 2)}</pre></details>
               </section>
               <section className="inspector-section"><h3>Feature History</h3><ol className="feature-list">{definition.features.map((feature, index) => <li key={feature.id}><details><summary><span className="feature-index">{index + 1}</span><span><strong>{feature.type.replaceAll('_', ' ')}</strong><small>{feature.id}</small></span><span className="check-pass">✓</span></summary><pre>{JSON.stringify(feature, null, 2)}</pre></details></li>)}</ol></section>
             </>}

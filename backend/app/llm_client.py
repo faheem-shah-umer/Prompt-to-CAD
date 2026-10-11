@@ -12,9 +12,10 @@ from .config import PROJECT_ROOT
 
 
 class LLMError(Exception):
-    def __init__(self, message: str, code: str = "provider_error"):
+    def __init__(self, message: str, code: str = "provider_error", response_text: str | None = None):
         super().__init__(message)
         self.code = code
+        self.response_text = response_text
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,8 @@ class LLMResponse:
 
 
 def generate_json(system_prompt: str, prompt: str,
-                  settings: LLMSettings | None = None, *, max_tokens: int = 1800) -> LLMResponse:
+                  settings: LLMSettings | None = None, *, max_tokens: int = 1800,
+                  history: list[dict] | None = None, temperature: float = 0) -> LLMResponse:
     settings = settings or load_settings()
     settings.check()
     started = time.perf_counter()
@@ -84,9 +86,9 @@ def generate_json(system_prompt: str, prompt: str,
     headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
     payload = {
         "model": settings.model,
-        "messages": [{"role": "system", "content": system_prompt},
+        "messages": [{"role": "system", "content": system_prompt}, *(history or []),
                      {"role": "user", "content": prompt}],
-        "temperature": 0, "max_tokens": max_tokens,
+        "temperature": temperature, "max_tokens": max_tokens,
     }
     if settings.json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -105,6 +107,7 @@ def generate_json(system_prompt: str, prompt: str,
         raise LLMError("The provider rejected access. Check the backend key and account permissions.", "access")
     if response.status_code != 200:
         raise LLMError(f"The provider rejected the request (HTTP {response.status_code}).", "provider_error")
+    text = None
     try:
         data = response.json()
         choice = data["choices"][0]
@@ -113,10 +116,14 @@ def generate_json(system_prompt: str, prompt: str,
         usage = data.get("usage") or {}
         input_tokens, output_tokens = usage.get("prompt_tokens"), usage.get("completion_tokens")
         if finish == "length":
-            raise LLMError("The response exceeded the output limit. No CAD model was constructed.", "truncated")
+            raise LLMError("The response exceeded the output limit. No CAD model was constructed.", "truncated", text)
         if not isinstance(text, str) or not text.strip():
             raise LLMError("The model returned no usable JSON.", "empty_response")
+        text = text.strip().removeprefix("\ufeff")
+        if text.startswith("```") and text.endswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         json.loads(text)
     except (ValueError, KeyError, IndexError, TypeError) as error:
-        raise LLMError("The model returned an invalid JSON response. No CAD model was constructed.", "invalid_json") from error
+        raise LLMError("The model returned an invalid JSON response. No CAD model was constructed.", "invalid_json",
+                       text if isinstance(text, str) else None) from error
     return LLMResponse(text, time.perf_counter() - started, input_tokens, output_tokens)

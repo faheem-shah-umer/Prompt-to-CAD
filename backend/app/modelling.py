@@ -114,10 +114,10 @@ class Builder:
                 if feature.type in ("fillet", "chamfer"):
                     if body is None:
                         raise DesignError("An edge treatment needs an existing solid.")
+                    amount = self.size(feature.size, part.id)
                     workplane = cq.Workplane(obj=body).edges(feature.edges)
                     if not workplane.vals():
                         raise DesignError("The edge selector did not match any edges.")
-                    amount = self.size(feature.size, part.id)
                     body = getattr(workplane, feature.type)(amount).val()
                 else:
                     if feature.type == "hole":
@@ -152,6 +152,10 @@ class Builder:
                                        "volume_mm3": checked["volume_mm3"]})
             except Exception as error:
                 message = str(error) if isinstance(error, DesignError) else "CadQuery could not construct this feature; check its dimensions, references and edge selector."
+                if feature.type in ("fillet", "chamfer") and not isinstance(error, DesignError) and body is not None:
+                    dimensions = measure(body)["dimensions_mm"]
+                    message += f" Edge size={amount:g} mm, selector={feature.edges!r}, current local body size={dimensions} mm. "
+                    message += "Try a feasible edge selector. For both circular rims, the fillet radius must be strictly smaller than half the rim separation."
                 raise DesignError(f"{part.name} / {feature.id} ({feature.type}): {message}") from error
         if body is None:
             raise DesignError(f"{part.name} only has sketches; add a solid operation.")
@@ -167,10 +171,41 @@ class Builder:
                 math.isclose(actual, target, abs_tol=0.01, rel_tol=1e-5)
                 for actual, target in zip(local_report["dimensions_mm"], expected))
         if not all(checks.values()):
-            raise DesignError(f"{part.name}: geometry or requested dimensions failed verification.")
+            requested = self.parameters.vector(part.expected_size, part.id) if part.expected_size else None
+            raise DesignError(f"{part.name}: geometry or requested dimensions failed verification. "
+                              f"Measured local size: {local_report['dimensions_mm']}; expected: {requested}.")
         world = pose(body, part.placement, self.parameters, part.id)
+        attachment_report = None
+        if part.attachment:
+            attachment = part.attachment
+            parent = self.component(attachment.parent)
+            self.component_dependencies[part.id].add(parent.component.id)
+            parent_bounds = parent.validation["bounds_mm"]
+            child_bounds = measure(world)["bounds_mm"]
+            axis = "XYZ".index(attachment.axis)
+            offsets = iter(self.parameters.vector(attachment.offset, part.id))
+            gap = self.parameters.value(attachment.gap, part.id)
+            if not 0 <= gap <= 2000:
+                raise DesignError("An attachment gap must be between 0 and 2,000 mm.")
+            delta = []
+            for index in range(3):
+                if index == axis:
+                    parent_face = parent_bounds[1 if attachment.side > 0 else 0][index]
+                    child_face = child_bounds[0 if attachment.side > 0 else 1][index]
+                    delta.append(parent_face - child_face + attachment.side * gap)
+                else:
+                    parent_centre = (parent_bounds[0][index] + parent_bounds[1][index]) / 2
+                    child_centre = (child_bounds[0][index] + child_bounds[1][index]) / 2
+                    delta.append(parent_centre + next(offsets) - child_centre)
+            if any(abs(value) > 10000 for value in delta):
+                raise DesignError("Attachment positions must stay within +/-10,000 mm.")
+            world = world.translate(tuple(delta))
+            attachment_report = {"parent": attachment.parent, "axis": attachment.axis,
+                                 "side": attachment.side, "translation_adjustment_mm": delta}
         report = measure(world)
         report.update(checks=checks, passed=True, local_dimensions_mm=local_report["dimensions_mm"])
+        if attachment_report:
+            report["attachment"] = attachment_report
         result = BuiltComponent(part, body, world, self.parameters.for_component(part.id), report, feature_report)
         self.built[part.id] = result
         self.active.remove(part.id)
@@ -272,7 +307,28 @@ class Builder:
                 raise DesignError("Revolution angle must be between 0 and 360 degrees.")
             return cq.Solid.revolve(wire, [], angle, vector(feature.axis_start), vector(feature.axis_end))
         if kind == "loft":
-            wires = [self.lookup(sketches, name, "sketch")[0] for name in feature.sketches]
+            if feature.sections:
+                plane = cq.Plane.named(feature.plane)
+                sections = []
+                for section in feature.sections:
+                    station = n(section.station)
+                    if abs(station) > 10000:
+                        raise DesignError("Loft section stations must be within +/-10,000 mm.")
+                    located = cq.Plane(origin=plane.zDir * station, xDir=plane.xDir, normal=plane.zDir)
+                    work = cq.Workplane(located).center(*vector(section.centre))
+                    width, height = size(section.width), size(section.height)
+                    work = work.ellipse(width / 2, height / 2) if feature.profile == "ellipse" else work.rect(width, height)
+                    sections.append((work.val(), plane.zDir))
+            else:
+                sections = [self.lookup(sketches, name, "sketch") for name in feature.sketches]
+            for (previous, normal), (current, next_normal) in zip(sections, sections[1:]):
+                parallel = normal.cross(next_normal).Length < TOLERANCE
+                if parallel and abs((current.Center() - previous.Center()).dot(normal)) < TOLERANCE:
+                    axis = "XYZ"[max(range(3), key=lambda index: abs(normal.toTuple()[index]))]
+                    raise DesignError(f"Loft sections are coplanar. Separate their sketch origins along {axis}, the plane normal. "
+                                      "XY sections vary Z; XZ sections vary Y; YZ sections vary X. "
+                                      "Use local section origins and apply the component's world placement only once.")
+            wires = [wire for wire, _ in sections]
             return cq.Solid.makeLoft(wires, ruled=feature.ruled)
         if kind == "sweep":
             wire, _ = self.lookup(sketches, feature.sketch, "sketch")
@@ -321,16 +377,43 @@ class Builder:
 
 def verify_assembly(builder: Builder, components: list[BuiltComponent]):
     lookup = {part.component.id: part for part in components}
-    relations = []
+    relations, attachments, failures = [], [], []
+
+    def anchor(part, point):
+        result = posed_vector(point, part.component.placement, builder.parameters, part.component.id)
+        delta = part.validation.get("attachment", {}).get("translation_adjustment_mm", (0, 0, 0))
+        return result.add(cq.Vector(*delta))
+
+    for part in components:
+        if part.component.attachment:
+            rule = part.component.attachment
+            parent = lookup[rule.parent]
+            distance = part.shape.distance(parent.shape)
+            expected = builder.parameters.value(rule.gap, part.component.id)
+            passed = math.isclose(distance, expected, abs_tol=0.01, rel_tol=1e-5)
+            attachments.append({"component_id": part.component.id, "parent": rule.parent,
+                                "distance_mm": distance, "expected_gap_mm": expected, "passed": passed})
+            if not passed:
+                failures.append(f"Attachment '{part.component.id}' to '{rule.parent}' failed: actual surface distance "
+                                f"{distance:.3f} mm, expected gap {expected:.3f} mm. Correct the attachment offset or geometry; "
+                                "aligned bounding faces alone do not establish contact.")
+
     for relationship in builder.design.relationships:
         a, b = lookup[relationship.component_a], lookup[relationship.component_b]
         if relationship.type == "contact":
             distance = a.shape.distance(b.shape)
             check = {"id": relationship.id, "type": "contact", "distance_mm": distance,
                      "passed": distance <= relationship.tolerance}
+        elif relationship.type == "distance":
+            pa, pb = anchor(a, relationship.point_a), anchor(b, relationship.point_b)
+            target = builder.parameters.value(relationship.distance, a.component.id)
+            if target < 0 or target > 10000:
+                raise DesignError("An anchor distance must be between 0 and 10,000 mm.")
+            distance = (pb - pa).Length
+            check = {"id": relationship.id, "type": "distance", "distance_mm": distance,
+                     "expected_distance_mm": target, "passed": abs(distance - target) <= relationship.tolerance}
         else:
-            pa = posed_vector(relationship.point_a, a.component.placement, builder.parameters, a.component.id)
-            pb = posed_vector(relationship.point_b, b.component.placement, builder.parameters, b.component.id)
+            pa, pb = anchor(a, relationship.point_a), anchor(b, relationship.point_b)
             aa = posed_vector(relationship.axis_a, a.component.placement, builder.parameters, a.component.id, True)
             ab = posed_vector(relationship.axis_b, b.component.placement, builder.parameters, b.component.id, True)
             if min(aa.Length, ab.Length) < TOLERANCE:
@@ -343,7 +426,10 @@ def verify_assembly(builder: Builder, components: list[BuiltComponent]):
         relations.append(check)
         if not check["passed"]:
             separation = check.get("distance_mm", check.get("axis_distance_mm", 0))
-            raise DesignError(f"Assembly relationship '{relationship.id}' failed ({separation:.3f} mm separation); revise the component placements.")
+            detail = f"expected {check['expected_distance_mm']:.3f} mm anchor distance" if relationship.type == "distance" else "revise the component placements"
+            bounds_a, bounds_b = a.validation["bounds_mm"], b.validation["bounds_mm"]
+            failures.append(f"Assembly relationship '{relationship.id}' failed ({separation:.3f} mm separation); {detail}. "
+                            f"{a.component.id} world bounds={bounds_a}; {b.component.id} world bounds={bounds_b}.")
     allowed = {frozenset(pair) for pair in builder.design.allowed_intersections}
     interferences = []
     for index, a in enumerate(components):
@@ -355,13 +441,19 @@ def verify_assembly(builder: Builder, components: list[BuiltComponent]):
                 interferences.append({"components": [a.component.id, b.component.id],
                                       "volume_mm3": overlap, "explicitly_allowed": permitted})
                 if not permitted:
-                    raise DesignError(f"Parts '{a.component.id}' and '{b.component.id}' intersect ({overlap:.3f} mm³). Change their placements or explicitly declare an intentional intersection.")
+                    failures.append(f"Parts '{a.component.id}' and '{b.component.id}' intersect ({overlap:.3f} mm³). "
+                                    "Correct their placements/features. Do not permit an intersection unless the user requests it.")
+    unused = sorted(set(builder.parameters.raw) - builder.parameters.used_parameters())
+    if failures:
+        if unused:
+            failures.append("Parameters not linked to geometry: " + ", ".join(unused) + ". Use them in the feature/placement expressions.")
+        raise DesignError("\n".join(failures))
     compound = cq.Compound.makeCompound([part.shape for part in components])
     report = measure(compound)
-    unused = sorted(set(builder.parameters.raw) - builder.parameters.used_parameters())
     report.update(passed=True, checks={"all_components_valid": True, "relationships_pass": True,
+                                      "attachment_contacts_valid": True,
                                       "no_unexpected_intersections": True},
-                  relationships=relations, interferences=interferences,
+                  relationships=relations, attachments=attachments, interferences=interferences,
                   parameter_dependencies={key: sorted(value) for key, value in builder.parameters.dependencies.items()},
                   component_dependencies={key: sorted(value) for key, value in builder.component_dependencies.items()},
                   unused_parameters=unused,

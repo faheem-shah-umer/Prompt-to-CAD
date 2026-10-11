@@ -41,7 +41,9 @@ class Parameters:
         if key not in self.raw:
             raise DesignError(f"Unknown parameter '{key}'.")
         if key in self.active:
-            raise DesignError(f"Circular parameter dependency involving '{key}'.")
+            name = key.split(".")[-1]
+            hint = f" Use 'shared.{name}' to reference the shared value; local names shadow shared names." if f"shared.{name}" in self.raw and not key.startswith("shared.") else ""
+            raise DesignError(f"Circular parameter dependency involving '{key}'.{hint}")
         self.active.add(key)
         self.dependencies[key] = set()
         value = self.value(self.raw[key], key.split(".")[0], owner=key)

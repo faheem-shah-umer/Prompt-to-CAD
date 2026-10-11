@@ -8,10 +8,9 @@ from fastapi.responses import FileResponse
 
 from . import design_planner, projects
 from .design_edits import apply_changes
-from .design_schema import Design, EditPlan, EditRequest, RevisionRequest
+from .design_schema import Design, DesignPromptRequest, EditPlan, EditRequest, RevisionRequest
 from .llm_client import LLMError
 from .parameters import DesignError
-from .schemas import PromptRequest
 
 router = APIRouter(prefix="/api/projects", tags=["editable projects"])
 logger = logging.getLogger(__name__)
@@ -37,7 +36,7 @@ def saved_projects():
 
 
 @router.post("")
-def create_project(request: PromptRequest):
+def create_project(request: DesignPromptRequest):
     started = perf_counter()
     try:
         plan, inference = design_planner.interpret(request.prompt)

@@ -131,6 +131,29 @@ class ProviderTransportTests(unittest.TestCase):
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(json.loads(response.text)["status"], "ready")
 
+    def test_fenced_json_is_parsed_without_an_additional_provider_request(self):
+        client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": '```json\n{"ok": true}\n```'}}]})))
+        with patch("backend.app.llm_client.httpx.Client", return_value=client):
+            result = generate_json("system", "prompt", TEST_SETTINGS)
+        self.assertEqual(json.loads(result.text), {"ok": True})
+
+    def test_repair_history_reaches_the_same_endpoint_as_conversation_turns(self):
+        observed = []
+
+        def handler(request):
+            observed.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        history = [{"role": "user", "content": "Original design"}, {"role": "assistant", "content": "Rejected plan"}]
+        with patch("backend.app.llm_client.httpx.Client", return_value=client):
+            generate_json("CAD schema", "Fix the placement", TEST_SETTINGS, history=history, temperature=0.15)
+        self.assertEqual([item["role"] for item in observed[0]["messages"]], ["system", "user", "assistant", "user"])
+        self.assertEqual(observed[0]["messages"][2]["content"], "Rejected plan")
+        self.assertEqual(observed[0]["model"], TEST_SETTINGS.model)
+        self.assertEqual(observed[0]["temperature"], 0.15)
+
     def test_local_server_needs_no_key_or_json_mode(self):
         observed = []
 

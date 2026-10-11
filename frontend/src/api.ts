@@ -116,6 +116,7 @@ export interface ComponentDefinition {
   color: string;
   parameters: Record<string, number | string>;
   features: FeatureDefinition[];
+  attachment?: { parent: string; axis: 'X' | 'Y' | 'Z'; side: -1 | 1; offset: (number | string)[]; gap: number | string } | null;
   placement: { translation: (number | string)[]; rotation: (number | string)[] };
   expected_size: (number | string)[] | null;
 }
@@ -126,7 +127,7 @@ export interface EditableDesign {
   units: 'mm';
   parameters: Record<string, number | string>;
   components: ComponentDefinition[];
-  relationships: { id: string; type: 'coaxial' | 'contact'; component_a: string; component_b: string }[];
+  relationships: { id: string; type: 'coaxial' | 'contact' | 'distance'; component_a: string; component_b: string }[];
   allowed_intersections: [string, string][];
 }
 
@@ -187,7 +188,7 @@ export interface ProjectSummary {
 export interface ProjectOperation {
   plan: { status: 'ready' | 'needs_input' | 'unsupported'; description: string; questions: string[]; assumptions: string[] };
   project: CadProject | null;
-  inference: { provider: string; model: string; seconds: number };
+  inference: { provider: string; model: string; seconds: number; strategy?: string; requests?: number; repairs?: number };
   seconds: number;
 }
 
@@ -205,3 +206,35 @@ export const editProject = (project: CadProject, prompt: string, selectedId: str
   });
 export const moveRevision = (project: CadProject, direction: 'undo' | 'redo') =>
   post<CadProject>(`/projects/${project.project_id}/${direction}`, { base_revision_id: project.revision_id });
+
+export interface DesignJob {
+  job_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  stage: 'planning' | 'components' | 'editing' | 'verifying' | 'repairing' | 'exporting' | 'completed' | 'failed';
+  message: string;
+  components_completed: number;
+  components_total: number;
+  requests_used: number;
+  elapsed_seconds: number;
+  diagnostics_url: string;
+  error: { message: string; http_status: number } | null;
+  result: ProjectOperation | null;
+}
+
+export async function generateDesign(prompt: string, project: CadProject | undefined, selectedId: string | null,
+                                     onProgress: (job: DesignJob) => void) {
+  let job = await post<DesignJob>('/design-jobs', {
+    prompt, project_id: project?.project_id ?? null,
+    base_revision_id: project?.revision_id ?? null, selected_component_id: project ? selectedId : null,
+  });
+  while (true) {
+    onProgress(job);
+    if (job.status === 'failed') throw new Error(job.error?.message ?? 'The design could not be constructed.');
+    if (job.status === 'completed') {
+      if (!job.result) throw new Error('The generation finished without a result.');
+      return job.result;
+    }
+    await new Promise<void>(resolve => window.setTimeout(resolve, 1200));
+    job = await request<DesignJob>(`/design-jobs/${job.job_id}`);
+  }
+}

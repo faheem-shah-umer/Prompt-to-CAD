@@ -5,16 +5,20 @@ The app now stores **how a design is built**: parameters, ordered features, sepa
 
 The table below maps the interface, API, planner, modelling engine and desktop launcher. Styles, configuration, tests and examples support these modules.
 
+There are 24 main source files: 18 backend modules, five React/TypeScript modules and the desktop launcher. Read the generation planner, job routes and modeller together when following the new workflow.
+
 | File | Role |
 | --- | --- |
 | `backend/app/main.py` | Creates FastAPI, registers project and legacy routes, serves the built interface. |
 | `backend/app/project_api.py` | Create, open, edit, undo/redo, editable-JSON import and export endpoints. |
 | `backend/app/design_schema.py` | Pydantic schemas for components, feature operations, placements, relationships and edit changes. |
-| `backend/app/design_planner.py` | Gives the configured LLM the modelling contract and selected-part history; validates creation/edit JSON. |
+| `backend/app/assembly_schema.py` | Plans component metadata and dependencies separately from local construction recipes. |
+| `backend/app/design_planner.py` | Plans assemblies, requests component batches and repairs rejected JSON/geometry using measured feedback. |
+| `backend/app/design_jobs.py` | Runs generation in a background worker; exposes progress, results and local diagnostics. |
 | `backend/app/llm_client.py` | One configurable OpenAI-compatible chat request, backend-only credentials, timeout/quota errors, no provider fallback. |
 | `backend/app/design_edits.py` | Applies a typed change list while protecting component IDs and selected-part scope. |
 | `backend/app/parameters.py` | Resolves arithmetic and cross-part parameter dependencies; rejects cycles and executable expressions. |
-| `backend/app/modelling.py` | Rebuilds feature histories with CadQuery and checks actual component/assembly geometry. |
+| `backend/app/modelling.py` | Rebuilds feature histories, derives face attachments and checks actual component/assembly geometry. |
 | `backend/app/projects.py` | STEP/STL exports, STEP re-import, atomic project commits, persistent revisions and undo/redo. |
 | `backend/app/project_lock.py` | Prevents two native application windows from overwriting the same project concurrently. |
 | `backend/app/config.py` | Workspace paths and local development origins. |
@@ -30,18 +34,20 @@ What happens after Create
 -------------------------
 
 ```text
-PromptForm → App → api.ts → POST /api/projects
-  → design_planner: one request to the configured LLM → Design schema
+PromptForm → App → api.ts → POST /api/design-jobs → HTTP 202 + job ID
+  → design_planner: assembly brief → batches of up to three local feature recipes
+  → React polls GET /api/design-jobs/{id} for progress
   → Parameters: resolve dimensions and dependencies
   → Builder: rebuild each component's ordered features
   → Verify solids, expected extents, relationships and interference
+  → On rejected JSON/geometry: send feedback to the same model within a bounded budget
   → Export named STEP parts + per-component STL previews
   → Re-import STEP and check each part's volume and bounds
   → Atomically save the accepted revision
   → React displays selectable components and read-only inspection
 ```
 
-For an edit, React sends the selected component ID and current revision ID to `POST /api/projects/{id}/edits`. The configured LLM proposes typed changes, rather than replacing the whole project. Dependent parts rebuild from their existing expressions. An invalid plan or geometry leaves the saved revision available; a stale revision returns HTTP 409.
+For an edit, React sends the project ID, selected component ID and current revision ID to the same job endpoint. The configured LLM proposes typed changes. Dependent parts rebuild from their existing expressions. An invalid plan or geometry leaves the saved revision available; a stale revision returns HTTP 409. The synchronous project creation/edit routes remain available for API exercises.
 
 FastAPI learning exercises
 -------------------------
@@ -50,13 +56,13 @@ FastAPI learning exercises
 2. Try `GET /api/health`, `GET /api/llm` and `GET /api/projects`.
 3. Paste `examples/spindle-assembly.cad.json` into `POST /api/projects/from-spec`. This builds real geometry without inference.
 4. Open the returned project's component preview URLs, STEP export and editable JSON.
-5. Try `POST /api/projects` with a description, then `POST /api/projects/{id}/edits` with the returned revision ID and selected component ID.
+5. Submit `POST /api/design-jobs` with `{"prompt":"Create a 40 mm diameter, 20 mm tall cylindrical knob"}`. Inspect its 202 response, then poll `GET /api/design-jobs/{id}`. Download the diagnostics after completion.
 6. Try Undo/Redo and deliberately supply an old revision ID to see the 409 response.
 7. Run the tests and read `backend/tests/test_projects.py` to see successful and rejected operations.
 
 All dimensions in the current engine use mm. Rotations use degrees; trigonometric expressions use radians. The inspector shows measured extents and evaluated parameter values. Parameters can also represent angles, counts or ratios, so they are not all labelled mm.
 
-For request validation, read [FastAPI request bodies](https://fastapi.tiangolo.com/tutorial/body/). These geometry routes use synchronous `def` endpoints, which FastAPI runs in its thread pool. CAD work is serialised; see [FastAPI concurrency](https://fastapi.tiangolo.com/async/). This prototype uses one local worker, rather than a job queue.
+For request validation, read [FastAPI request bodies](https://fastapi.tiangolo.com/tutorial/body/). Routes use synchronous `def` endpoints, which FastAPI runs in its thread pool; see [FastAPI concurrency](https://fastapi.tiangolo.com/async/). The job POST returns quickly after submitting work to a separate single-worker `ThreadPoolExecutor`. The polling GET does not run CAD or inference. CAD work is serialised. This is a local in-process worker, with no external queue service or restart recovery.
 
 Launch and development
 ----------------------
@@ -76,5 +82,6 @@ Storage
 - Creating a revision after Undo starts a new forward branch. Earlier branch files remain available, although Redo follows the active branch.
 - A failed candidate never updates the accepted cursor. Its partial export files may remain for diagnosis.
 - Earlier plate models remain in `runs/`.
+- `generation-jobs/<id>/diagnostics.json` records candidate responses and validation feedback, including failed actions. It contains prompts/design context, but no API credentials. The directory is ignored by Git.
 
-Next work should measure interpretation failures and add bounded repair, broader geometry assertions and face/edge references. A full assembly constraint solver and STEP import follow separately. CAD runs on the CPU. Hosted inference uses the provider's hardware; local inference hardware requirements depend on the chosen model.
+Read [Generation pipeline](generation-pipeline.md) next, then `backend/tests/test_design_jobs.py` for staged construction, failed-plan repairs and revision protection. Broader geometry assertions, face/edge references, a full assembly constraint solver and STEP import remain future work. CAD runs on the CPU. Hosted inference uses the provider's hardware; local inference hardware requirements depend on the chosen model.

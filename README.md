@@ -9,8 +9,10 @@ Prompt to CAD is a Windows desktop prototype that turns natural-language descrip
 ## What it does
 
 - Creates separate, selectable components with named parameters and ordered feature histories.
+- Plans assemblies in stages, constructs small groups of components, and repairs rejected plans using schema and geometry feedback.
 - Supports sketches, extrusions, revolutions, lofts, sweeps, drilling, boolean operations, fillets, chamfers, patterns, mirrors and geometric helical threads.
 - Applies conversational edits to a selected part or the whole assembly, then rebuilds parameter dependencies.
+- Keeps parts attached to a parent's bounding face through dimension edits, with actual contact and overlap verification.
 - Checks solids, expected dimensions, assembly relationships and STEP re-import before accepting a revision.
 - Saves projects with undo/redo and exports STEP, STL, editable `.cad.json` and verification reports.
 - Runs in a native WebView2 window with an animated startup screen and a hidden local backend.
@@ -61,28 +63,32 @@ Then double-click **`Prompt to CAD.vbs`**. The application opens without a comma
 
 For a local [Ollama server](https://docs.ollama.com/api/openai-compatibility), use `LLM_BASE_URL=http://localhost:11434/v1`, set `LLM_MODEL` to a model you installed, and leave `LLM_API_KEY` blank. Other servers must expose a compatible chat-completions endpoint; APIs with a different protocol need an adapter.
 
-Keep real settings in `backend/.env`, which Git ignores. Keys and endpoint URLs stay on the backend. Hosted requests send the prompt and relevant design context to your chosen service; local inference uses your local server. Provider fees and model licences are your responsibility. The app sends one request per action, with no automatic retry or provider fallback.
+Keep real settings in `backend/.env`, which Git ignores. Keys and endpoint URLs stay on the backend. Hosted requests send the prompt and relevant design context to your chosen service; local inference uses your local server. Provider fees and model licences are your responsibility. Creation uses an assembly brief followed by component batches. Invalid plans can be repaired by the same configured model, with at most three attempts per stage and 24 requests per action. Quota, authentication, network and timeout failures stop the action; there is no model or provider fallback.
 
 ## Try the workflow
 
 1. Choose **Open → Open .cad.json file** and open an example:
    - [Spindle assembly](examples/spindle-assembly.cad.json): separate parts, patterned holes, a lofted grip and dependent placements.
    - [Threaded bolt](examples/threaded-bolt.cad.json): a hexagonal head, swept helical thread and chamfer.
+   - [Gaming controller reference](examples/gaming-controller.cad.json): ten separate components, elliptical grips and a parameterised button diamond. This example was authored as a geometry regression fixture.
+   - [Model-generated controller](examples/gaming-controller.generated.cad.json): the live model result from the detailed [controller prompt](examples/gaming-controller.prompt.txt), with ten parts and editable construction history.
 2. Click a component in the viewport or parts tree to inspect its dimensions and features.
 3. With your LLM configured, select the spindle and ask: **“Make this spindle 48 mm tall and keep its diameter unchanged.”**
 4. Inspect the result, try Undo/Redo, and export STEP or an editable project.
 
-For a new design, describe its parts, dimensions, positions and connections in **Explain Our Idea**, then choose **Create**. Review any questions or assumptions. Selected-part edits protect other component definitions; an existing dependency may still move or resize a dependent part. Assembly mode permits broader changes.
+For a new design, describe its parts, dimensions, positions and connections in **Explain Our Idea**, then choose **Create**. The interface shows planning, component construction and verification progress. Review any questions or assumptions. Failed actions offer a generation-details download and preserve the accepted revision. Selected-part edits protect other component definitions; an existing dependency may still move or resize a dependent part. Assembly mode permits broader changes.
 
 ## How it works
 
 ```text
 Description or selected-part edit
-  → Configured LLM structured JSON plan
+  → Assembly brief or selected-part edit
+  → Small component recipes from the configured LLM
   → Pydantic validation and typed changes
   → Parameter and dependency resolution
   → CadQuery feature construction
-  → Solid, assembly and STEP checks
+  → Solid and assembly checks → bounded repair on failure
+  → STEP export and re-import checks
   → Saved revision and selectable Three.js preview
 ```
 
@@ -97,7 +103,7 @@ The LLM proposes structured operations. The application executes its own modelli
 | Inference | Your own OpenAI-compatible endpoint and model |
 | Storage | Local JSON revisions and STEP/STL files |
 
-See [Architecture](docs/architecture.md) for the construction format and supported operations, and [Script guide](docs/script-guide.md) for file roles and API exercises.
+See [Generation pipeline](docs/generation-pipeline.md) for the staged workflow and comparison with Meshra and Yo.Town, [Architecture](docs/architecture.md) for the construction format and supported operations, and [Script guide](docs/script-guide.md) for file roles and API exercises.
 
 ## Development and tests
 
@@ -140,7 +146,7 @@ requirements-desktop.txt
 LICENSE
 ```
 
-Saved designs (`projects/`), earlier exports (`runs/`), diagnostics (`tmp/`), API keys, installed dependencies and build output are local data and ignored by Git. An exported `.cad.json` contains the current design; reopening it creates a new project, while reopening a locally saved project retains its revision timeline.
+Saved designs (`projects/`), earlier exports (`runs/`), generation journals (`generation-jobs/`), diagnostics (`tmp/`), API keys, installed dependencies and build output are local data and ignored by Git. An exported `.cad.json` contains the current design; reopening it creates a new project, while reopening a locally saved project retains its revision timeline.
 
 ## Licence
 

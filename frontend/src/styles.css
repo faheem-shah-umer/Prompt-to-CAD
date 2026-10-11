@@ -102,6 +102,8 @@ kbd { font: inherit; color: #9d9fb0; }
 .workflow { padding: 17px 20px 19px; flex-shrink: 0; border-top: 1px solid var(--border); background: #1a1d26; }
 .workflow-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .workflow-heading > span:last-child { font-size: 10px; color: #7e849b; }
+.generation-progress { margin: 12px 0 0; color: #c5add9; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.diagnostics-link { display: inline-block; margin-top: 10px; color: #d8bbec; font-size: 11px; }
 .workflow-steps { display: flex; align-items: flex-start; justify-content: space-between; list-style: none; margin: 17px 0 0; padding: 0; gap: 8px; }
 .workflow-steps li { position: relative; display: flex; align-items: center; gap: 7px; color: #9298ae; font-size: 10px; line-height: 1.4; }
 .step-marker { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border: 1px solid #464051; border-radius: 50%; color: #b29fc7; font-size: 10px; background: #252331; }

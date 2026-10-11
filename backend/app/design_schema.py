@@ -8,6 +8,8 @@ Vector3 = tuple[Value, Value, Value]
 Point2 = tuple[Value, Value]
 Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,47}$")]
 Operation = Literal["new", "add", "cut", "intersect"]
+FeatureKind = Literal["box", "cylinder", "cone", "sphere", "sketch", "extrude", "revolve", "loft", "sweep",
+                      "fillet", "chamfer", "linear_pattern", "circular_pattern", "mirror", "boolean", "thread", "hole"]
 
 
 class StrictModel(BaseModel):
@@ -17,6 +19,14 @@ class StrictModel(BaseModel):
 class Placement(StrictModel):
     translation: Vector3 = (0, 0, 0)
     rotation: Vector3 = (0, 0, 0)
+
+
+class Attachment(StrictModel):
+    parent: Identifier
+    axis: Literal["X", "Y", "Z"] = "Z"
+    side: Literal[-1, 1] = 1
+    offset: Point2 = (0, 0)
+    gap: Value = 0
 
 
 class FeatureBase(StrictModel):
@@ -99,10 +109,26 @@ class Revolve(SolidFeature):
     axis_end: Vector3 = (0, 0, 1)
 
 
+class LoftSection(StrictModel):
+    station: Value
+    width: Value
+    height: Value
+    centre: Point2 = (0, 0)
+
+
 class Loft(SolidFeature):
     type: Literal["loft"]
-    sketches: list[Identifier] = Field(min_length=2, max_length=12)
+    sketches: list[Identifier] = Field(default_factory=list, max_length=12)
+    sections: list[LoftSection] = Field(default_factory=list, max_length=12)
+    plane: Literal["XY", "XZ", "YZ"] = "XY"
+    profile: Literal["ellipse", "rectangle"] = "ellipse"
     ruled: bool = False
+
+    @model_validator(mode="after")
+    def one_section_source(self):
+        if not ((len(self.sketches) >= 2 and not self.sections) or (len(self.sections) >= 2 and not self.sketches)):
+            raise ValueError("A loft needs either 2-12 earlier sketch IDs or 2-12 inline sections, not both.")
+        return self
 
 
 class Sweep(SolidFeature):
@@ -172,6 +198,7 @@ class Component(StrictModel):
     features: list[Feature] = Field(min_length=1, max_length=96)
     placement: Placement = Field(default_factory=Placement)
     expected_size: Vector3 | None = None
+    attachment: Attachment | None = None
 
     @model_validator(mode="after")
     def unique_features(self):
@@ -183,7 +210,7 @@ class Component(StrictModel):
 
 class Relationship(StrictModel):
     id: Identifier
-    type: Literal["coaxial", "contact"]
+    type: Literal["coaxial", "contact", "distance"]
     component_a: Identifier
     component_b: Identifier
     point_a: Vector3 = (0, 0, 0)
@@ -191,6 +218,13 @@ class Relationship(StrictModel):
     axis_a: Vector3 = (0, 0, 1)
     axis_b: Vector3 = (0, 0, 1)
     tolerance: float = Field(default=0.01, gt=0, le=0.1)
+    distance: Value | None = None
+
+    @model_validator(mode="after")
+    def distance_target(self):
+        if (self.type == "distance") != (self.distance is not None):
+            raise ValueError("Only a distance relationship needs a target distance.")
+        return self
 
 
 class Design(StrictModel):
@@ -211,6 +245,7 @@ class Design(StrictModel):
         if len(relation_ids) != len(set(relation_ids)):
             raise ValueError("Relationship IDs must be unique.")
         pairs = [(r.component_a, r.component_b) for r in self.relationships] + self.allowed_intersections
+        pairs += [(part.id, part.attachment.parent) for part in self.components if part.attachment]
         for a, b in pairs:
             if a not in ids or b not in ids or a == b:
                 raise ValueError("An assembly relationship must reference two different existing components.")
@@ -262,6 +297,12 @@ class SetPlacement(StrictModel):
     placement: Placement
 
 
+class SetAttachment(StrictModel):
+    type: Literal["set_attachment"]
+    component_id: Identifier
+    attachment: Attachment | None
+
+
 class AddComponent(StrictModel):
     type: Literal["add_component"]
     component: Component
@@ -283,7 +324,7 @@ class RemoveRelationship(StrictModel):
 
 
 Change = Annotated[
-    SetParameters | ReplaceFeature | AddFeature | RemoveFeature | SetPlacement
+    SetParameters | ReplaceFeature | AddFeature | RemoveFeature | SetPlacement | SetAttachment
     | AddComponent | RemoveComponent | SetRelationship | RemoveRelationship,
     Field(discriminator="type"),
 ]
@@ -303,6 +344,11 @@ class EditPlan(StrictModel):
         return self
 
 
+class GeometryRepairPlan(EditPlan):
+    status: Literal["ready"] = "ready"
+    changes: list[Annotated[SetPlacement | SetAttachment | ReplaceFeature | AddFeature, Field(discriminator="type")]] = Field(min_length=1, max_length=48)
+
+
 class EditRequest(StrictModel):
     prompt: str = Field(min_length=5, max_length=8000)
     selected_component_id: Identifier | None = None
@@ -311,3 +357,7 @@ class EditRequest(StrictModel):
 
 class RevisionRequest(StrictModel):
     base_revision_id: UUID
+
+
+class DesignPromptRequest(StrictModel):
+    prompt: str = Field(min_length=5, max_length=16000)

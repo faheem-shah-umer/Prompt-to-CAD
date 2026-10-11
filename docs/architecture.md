@@ -23,25 +23,30 @@ Architecture
 
 ```mermaid
 flowchart LR
-    A[Idea or selected-part change] --> B[Configured LLM: structured plan]
+    A[Idea or selected-part change] --> Q[FastAPI background job]
+    Q --> B[Configured LLM: assembly brief or typed edit]
     B --> C[Pydantic schema]
-    C --> D[Apply typed edits]
+    C --> R[Build small component batches]
+    R --> D[Apply typed edits]
     D --> E[Resolve parameters and dependencies]
     E --> F[Replay CadQuery feature histories]
     F --> G[Check solids and assembly]
+    G -->|Rejected: bounded feedback| B
     G --> H[Export STEP and re-import]
     H --> I[Commit accepted revision]
     I --> J[Separate selectable preview meshes]
 ```
 
-For creation, the LLM returns a complete `Design`. For an edit, it returns a list of typed changes. Both use the same deterministic modeller. The application does not execute model-generated Python.
+For creation, the LLM first returns an `AssemblyPlan`: component IDs, names, colours, parameters, placements, requirements and dependencies. It then supplies local feature recipes for at most three components at a time. The app attaches the planned metadata and checks actual geometry before continuing. An edit returns typed changes. Rejected JSON, geometry or assembly checks produce specific feedback for bounded repair by the same configured model. Both paths use the deterministic modeller. The application does not execute model-generated Python. See [Generation pipeline](generation-pipeline.md) for the detailed flow and reference-project comparison.
 
 [Script guide](script-guide.md) lists file roles. The project modules are:
 
 | Module | Responsibility |
 | --- | --- |
 | `design_schema.py` | Versioned construction format, features, components, relationships and edit operations. |
-| `design_planner.py` | Creation instructions and selected-part context for the configured LLM; validates the JSON response. |
+| `assembly_schema.py` | Assembly briefs, component recipes and dependency-graph validation. |
+| `design_planner.py` | Staged generation, selected-part context, schema/geometry feedback and bounded repairs. |
+| `design_jobs.py` | Background worker, progress snapshots, revision checks and local generation diagnostics. |
 | `parameters.py` | Bounded arithmetic, cross-component references, dependency resolution and cycle rejection. |
 | `modelling.py` | Actual CadQuery construction, per-feature checks and assembly verification. |
 | `design_edits.py` | Applies targeted changes and protects IDs and selection scope. |
@@ -49,7 +54,7 @@ For creation, the LLM returns a complete `Design`. For an edit, it returns a lis
 | `project_lock.py` | OS-level write lock shared by independently launched desktop windows. |
 | `project_api.py` | FastAPI project routes and HTTP errors. |
 
-The original plate endpoints remain available for compatibility and API exercises. The desktop interface now calls the project API.
+The original plate endpoints remain available for compatibility and API exercises. The desktop interface submits design jobs and polls their progress; the project API still provides opening, deterministic construction, revisions and exports.
 
 Editable construction format
 ----------------------------
@@ -97,7 +102,7 @@ Feature tools
 | `sketch` | One closed circle, rectangle, ellipse, polygon or periodic spline on XY/XZ/YZ. Uses its own origin and centre. Unused profile fields are rejected. |
 | `extrude` | Earlier sketch and signed distance along its plane normal; optional symmetric extrusion. |
 | `revolve` | Earlier sketch, explicit local axis and angle up to 360 degrees. |
-| `loft` | Two to twelve earlier section sketches; smooth or ruled. |
+| `loft` | Two to twelve earlier section sketches or parameterised inline stations in a named plane; smooth or ruled. |
 | `sweep` | Earlier profile and a 3D polyline or spline path; profile orientation must fit the path. |
 | `hole` | Explicit radius and list of centres. A null depth drills through the existing body; a positive depth drills inward from its positive bounding face. Axis Z uses XY centres; X uses YZ; Y uses XZ. |
 | `fillet`, `chamfer` | Positive size and an edge selector such as `|Z`, `>Z` or `%Circle`. |
@@ -108,14 +113,14 @@ Feature tools
 
 Solid tools support `new`, `add`, `cut` and `intersect`. A component must finish as one connected solid; separate bodies belong in separate components. A cut that removes no material is rejected. Drilling verifies each hole intersects material, and rejects overlapping hole centres. Features must reference earlier sketches/tools in the same component; cross-part boolean dependencies are resolved before use.
 
-Rotations are XYZ degrees, applied about the local origin in that order, followed by translation. Component placement is applied after its feature history. Per-component STL vertices already contain world placement, so the frontend keeps their shared coordinates instead of centring each mesh separately.
+Rotations are XYZ degrees, applied about the local origin in that order, followed by translation. Component placement is applied after its feature history. A component may also have an `attachment`: parent ID, world axis, side, two offset expressions and gap. The builder aligns its measured bounding face with the parent's opposite bounding face and derives the final translation after rebuilding. Offset axes follow XYZ order with the attachment axis omitted. This handles top/rear rests and automatically follows parent size edits; actual contact and intersection checks still reject unsuitable curved or rotated interfaces. It is not a general face-mate solver. Per-component STL vertices already contain world placement, so the frontend keeps their shared coordinates instead of centring each mesh separately.
 
 New operations can be added by defining a Pydantic feature type, implementing its CadQuery construction, adding validation and tests, and updating the planner contract. This is the extension point for richer sketches, standardised gears/fasteners and additional freeform operations. Adding a named template is optional; the main engine remains compositional.
 
 Assemblies and selection
 ------------------------
 
-Assemblies preserve separate components and named STEP bodies. `coaxial` relationships check transformed axis direction and line separation. `contact` relationships check actual minimum BREP distance. Every pair of components is checked for overlapping volume; unexpected intersections reject the revision. An intentional intersection must be explicitly declared and appears as a warning.
+Assemblies preserve separate components and named STEP bodies. `coaxial` relationships check transformed axis direction and line separation. `contact` relationships check actual minimum BREP distance. `distance` relationships check the Euclidean distance between two transformed local anchors against a parameterised target, such as adjacent button-centre spacing. Every pair of components is checked for overlapping volume; unexpected intersections reject the revision. An intentional intersection must be explicitly declared and appears as a warning. Assembly feedback reports all failed relationships and intersections together, with measured world bounds for failed relationships.
 
 Placements use parameter expressions. They are **verified**, rather than inferred by a full degrees-of-freedom solver. This first assembly layer has no motion simulation, joint limits or face-mate solver.
 
@@ -159,7 +164,10 @@ API exercises
 | Route | Purpose |
 | --- | --- |
 | `GET /api/projects` | Saved project summaries. |
-| `POST /api/projects` | One creation request to the configured LLM; returns plan, project or questions, inference metadata and elapsed seconds. |
+| `POST /api/design-jobs` | Returns 202 and a job ID for staged creation or a selected/assembly edit. |
+| `GET /api/design-jobs/{id}` | Job status, stage, part counts, request budget, elapsed time and final result/error. |
+| `GET /api/design-jobs/{id}/diagnostics` | Local JSON containing the request, candidate responses and validation failures. |
+| `POST /api/projects` | Synchronous staged creation for API exercises; returns plan, project or questions and inference metadata. |
 | `POST /api/projects/from-spec` | Deterministic construction or editable JSON reopening, without inference. |
 | `GET /api/projects/{id}` | Current revision, design, measurements, part previews and history. |
 | `POST /api/projects/{id}/edits` | Selected or assembly edit through the configured LLM. |
@@ -168,7 +176,7 @@ API exercises
 | `GET /api/projects/{id}/revisions/{revision}/files/{kind}` | STEP, STL, report or editable project JSON. |
 | `GET /api/projects/{id}/revisions/{revision}/components/{component}.stl` | Separate part preview. |
 
-For selected editing:
+For selected editing through the synchronous `POST /api/projects/{id}/edits` route:
 
 ```json
 {
@@ -178,7 +186,11 @@ For selected editing:
 }
 ```
 
-The backend returns 422 for invalid plans/geometry, 409 for revision conflicts, 429 for the configured LLM quota errors, 504 for inference timeout and 503 for missing configuration. The new planner permits 8192 output tokens and a configurable timeout (90 seconds by default). There is one inference request per Create/Apply, with no hidden retry or model/provider fallback.
+The synchronous backend routes return 422 for invalid plans/geometry, 409 for revision conflicts, 429 for LLM quota errors, 504 for inference timeout and 503 for missing configuration. A submitted job exposes a later failure in its status response. Each model request permits 8192 output tokens with a configurable timeout (90 seconds by default). Invalid output can receive up to three attempts per stage, within a 24-request action budget. The planner stops starting requests after ten minutes; an already running request may finish after that deadline. Quota, authentication, network and timeout failures are not retried, and there is no model/provider fallback. A creation prompt can contain up to 16,000 characters; edits retain an 8,000-character limit.
+
+The job edit body also includes `project_id`; creation omits both IDs. Attachment surface distance is checked automatically, independently of declared contact relationships.
+
+One in-process generation worker runs at a time. Job progress is not resumed after backend shutdown, although diagnostic files persist in `generation-jobs/`. The accepted revision is checked again at commit, so an intervening edit cannot be overwritten. Keep the application open until the job finishes.
 
 Verification and limits
 -----------------------
@@ -191,7 +203,7 @@ The practical limits are 32 components, 256 total features, 96 features per part
 
 This foundation does not guarantee arbitrary CAD requests. It has no general mechanical constraint solver, face/edge picking, imported feature recovery, sculpted surface modeller, standard gear generator, strength analysis or manufacturing validation. Its triangular helical threads are geometric demonstrations, not certified ISO fasteners. **Verified** means the implemented solid, assembly and STEP checks pass; review the model against your intended dimensions and function.
 
-The next milestone should evaluate varied prompts, retain failed candidate plans and add bounded repair with explicit geometry assertions. STEP import, richer sketch constraints, durable face references and full assembly solving are separate extensions.
+The next milestone should evaluate varied prompts against intended geometry, improve dimensional assertions and measure success rates for the configured model. STEP import, richer sketch constraints, durable face references and full assembly solving are separate extensions.
 
 References
 ----------

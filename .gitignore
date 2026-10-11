@@ -22,6 +22,7 @@ frontend/dist/
 
 # Local CAD work, exported files and diagnostics
 /projects/
+/generation-jobs/
 /runs/
 /artifacts/
 /tmp/
