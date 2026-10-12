@@ -4,7 +4,7 @@
   <p><strong>Turn an idea into editable 3D parts and assemblies.</strong></p>
   <p>A Windows desktop CAD prototype built with React, FastAPI and CadQuery.</p>
   <p>Selectable parts · Parametric history · STEP / STL export</p>
-  <p><a href="#example-gaming-controller">Example</a> · <a href="#quick-start">Quick start</a> · <a href="#how-it-works">Architecture</a> · <a href="#development">Development</a> · <a href="#privacy-and-local-data">Privacy</a></p>
+  <p><a href="#example-spindle-assembly">Example</a> · <a href="#quick-start">Quick start</a> · <a href="#how-it-works">Architecture</a> · <a href="#development">Development</a> · <a href="#privacy-and-local-data">Privacy</a></p>
 </div>
 
 ---
@@ -26,19 +26,19 @@ The application runs CAD operations locally on the CPU. Natural-language creatio
 | Saved projects | Local construction history, accepted revisions and undo/redo. |
 | Verified exports | Solid, dimension and assembly checks, STEP export/re-import, STL and editable `.cad.json` files. |
 
-## Example: gaming controller
+## Example: spindle assembly
 
-![Gaming controller CAD example with separate body, grips, joysticks, directional pad and four coloured buttons](docs/assets/controller-preview.png)
+![Parametric spindle assembly with a mounting base, cylindrical spindle and lofted grip](docs/assets/spindle-preview.png)
 
-One assembly demonstrates the workflow: a 140 × 70 × 20 mm body, two grips, two joysticks, a directional pad and four face buttons. Its **ten components** retain their parameters and modelling features.
+A three-part assembly demonstrates the workflow: an **80 x 60 x 8 mm mounting base** with four mounting holes, a **16 mm diameter spindle** and a **lofted grip**. Each component keeps its own parameters and construction history. The grip's position depends on the spindle height.
 
 1. Launch the app and choose **Open → Open .cad.json file**.
-2. Open [the controller design](examples/gaming-controller.generated.cad.json).
-3. Select the green button in the viewport or parts tree.
-4. With your model configured, ask: **“Make the selected button 4 mm tall. Keep its diameter and the other parts unchanged.”**
-5. Inspect the revision, try Undo/Redo, and export STEP or STL.
+2. Open [the spindle assembly](examples/spindle-assembly.cad.json).
+3. Select **Spindle** in the viewport or parts tree.
+4. With your model configured, ask: **“Make the selected spindle 48 mm tall. Keep its diameter unchanged and keep the grip connected on top.”**
+5. Inspect how the grip follows the new height, try Undo/Redo, and export STEP or STL.
 
-Read [the original prompt](examples/gaming-controller.prompt.txt) to try generating the assembly yourself. The image above renders the supplied CAD geometry. Opening that file rebuilds an existing design; generating a new result depends on your model and can require correction. This is an exterior concept, without electronics or internal mechanisms.
+The image renders the supplied CAD geometry. Opening the file rebuilds the assembly without inference. Conversational edits require your own configured model; inspect the resulting dimensions and connections before using an export.
 
 ## Quick start
 

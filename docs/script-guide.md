@@ -54,7 +54,7 @@ FastAPI learning exercises
 
 1. Start the backend and open [interactive API documentation](http://127.0.0.1:8000/docs).
 2. Try `GET /api/health`, `GET /api/llm` and `GET /api/projects`.
-3. Paste `examples/gaming-controller.generated.cad.json` into `POST /api/projects/from-spec`. This builds real geometry without inference.
+3. Paste `examples/spindle-assembly.cad.json` into `POST /api/projects/from-spec`. This builds real geometry without inference.
 4. Open the returned project's component preview URLs, STEP export and editable JSON.
 5. Submit `POST /api/design-jobs` with `{"prompt":"Create a 40 mm diameter, 20 mm tall cylindrical knob"}`. Inspect its 202 response, then poll `GET /api/design-jobs/{id}`. Download the diagnostics after completion.
 6. Try Undo/Redo and deliberately supply an old revision ID to see the 409 response.

@@ -49,14 +49,14 @@ A component `attachment` specifies a parent, world axis, side, two offset expres
 
 Every attachment receives an automatic surface-distance check, even if the plan omits a separate contact relationship. A child aligned with the top bounding plane but positioned outside the parent's footprint is rejected. Selected-edit context includes attachment rules and measured world bounds, so the model sees the actual assembly position.
 
-Trying the controller example
-----------------------------
+Trying the spindle assembly
+---------------------------
 
-[The controller prompt](../examples/gaming-controller.prompt.txt) describes ten separate components: a 140 x 70 x 20 mm body, two elliptical grips, two joysticks, a directional pad and four coloured buttons.
+Open [the spindle assembly](../examples/spindle-assembly.cad.json) to rebuild a mounting base, spindle and lofted grip without inference. Separate component IDs and named parameters keep the construction history editable. Mounting holes demonstrate a circular pattern; the grip demonstrates sketch-based lofting.
 
-Open [the generated controller design](../examples/gaming-controller.generated.cad.json) to rebuild the supplied assembly without inference. Each part has a stable ID and editable feature history. Select the green button, request a height change, inspect the accepted revision and use Undo/Redo to compare the results. New generation or conversational editing requires your own configured endpoint and model.
+Select the spindle and ask for a height of 48 mm with its diameter unchanged. The grip placement references the spindle height, so rebuilding the accepted edit keeps the grip on top. Inspect dimensions, contacts and the revision, then use Undo/Redo and STEP or STL export. Conversational editing requires your own configured endpoint and model.
 
-The deterministic controller specification also serves as a regression input for CAD construction, dimensions, attachments and selected-part edits. Mocked provider tests exercise repair and job control. These checks verify implemented behaviours; they are not a benchmark of success on arbitrary descriptions. Inspect generated geometry against the requested design.
+Regression inputs cover additional geometry, attachments and selected-part edits. Mocked provider tests exercise repair and job control. These checks verify implemented behaviours; they are not a benchmark of success on arbitrary descriptions. Inspect generated geometry against the requested design.
 
 Next engineering work
 ---------------------
