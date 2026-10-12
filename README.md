@@ -1,42 +1,73 @@
-<img src="frontend/public/app-icon.svg" width="88" alt="Purple pyramid icon">
+<div align="center">
+  <img src="frontend/public/app-icon.svg" width="88" alt="Prompt to CAD icon">
+  <h1>Prompt to CAD</h1>
+  <p><strong>Turn an idea into editable 3D parts and assemblies.</strong></p>
+  <p>A Windows desktop CAD prototype built with React, FastAPI and CadQuery.</p>
+  <p>Selectable parts · Parametric history · STEP / STL export</p>
+  <p><a href="#example-gaming-controller">Example</a> · <a href="#quick-start">Quick start</a> · <a href="#how-it-works">Architecture</a> · <a href="#development">Development</a> · <a href="#privacy-and-local-data">Privacy</a></p>
+</div>
 
-# Prompt to CAD
+---
 
-**Describe a design. Build editable CAD. Select a part and refine it.**
+## About
 
-Prompt to CAD is a Windows desktop prototype that turns natural-language descriptions into parametric parts and assemblies. It combines a user-configured LLM with a local CadQuery engine, saves the construction history, and exports STEP and STL files.
+Describe a design in plain language, create its 3D model, then select a component and ask for a change. Prompt to CAD keeps named dimensions, construction features and relationships between parts so an accepted design can be rebuilt, edited and exported.
 
-## What it does
+The application runs CAD operations locally on the CPU. Natural-language creation and editing use an OpenAI-compatible model endpoint that **you configure**. You can open the included example without an API key or model connection.
 
-- Creates separate, selectable components with named parameters and ordered feature histories.
-- Plans assemblies in stages, constructs small groups of components, and repairs rejected plans using schema and geometry feedback.
-- Supports sketches, extrusions, revolutions, lofts, sweeps, drilling, boolean operations, fillets, chamfers, patterns, mirrors and geometric helical threads.
-- Applies conversational edits to a selected part or the whole assembly, then rebuilds parameter dependencies.
-- Keeps parts attached to a parent's bounding face through dimension edits, with actual contact and overlap verification.
-- Checks solids, expected dimensions, assembly relationships and STEP re-import before accepting a revision.
-- Saves projects with undo/redo and exports STEP, STL, editable `.cad.json` and verification reports.
-- Runs in a native WebView2 window with an animated startup screen and a hidden local backend.
+## Features
 
-This is an engineering learning project and an extensible CAD prototype. It does **not** guarantee correct interpretation of every prompt. General assembly constraint solving, face/edge selection and STEP import are not implemented. Geometry checks do not establish strength, manufacturability or standards compliance; the thread tool is a geometric demonstration.
+| Capability | What it provides |
+| --- | --- |
+| Prompt-driven modelling | Staged assembly planning, component construction and bounded repair using geometry feedback. |
+| Editable geometry | Sketches, extrusions, revolutions, sweeps, lofts, cuts, holes, fillets, chamfers, patterns, mirrors and geometric threads. |
+| Separate components | Select parts in the 3D view or parts tree, inspect parameters and apply scoped edits. |
+| Parametric relationships | Rebuild dependent dimensions and placements, including attachments to parent bounding faces. |
+| Saved projects | Local construction history, accepted revisions and undo/redo. |
+| Verified exports | Solid, dimension and assembly checks, STEP export/re-import, STL and editable `.cad.json` files. |
 
-## Quick start — Windows
+## Example: gaming controller
+
+![Gaming controller CAD example with separate body, grips, joysticks, directional pad and four coloured buttons](docs/assets/controller-preview.png)
+
+One assembly demonstrates the workflow: a 140 × 70 × 20 mm body, two grips, two joysticks, a directional pad and four face buttons. Its **ten components** retain their parameters and modelling features.
+
+1. Launch the app and choose **Open → Open .cad.json file**.
+2. Open [the controller design](examples/gaming-controller.generated.cad.json).
+3. Select the green button in the viewport or parts tree.
+4. With your model configured, ask: **“Make the selected button 4 mm tall. Keep its diameter and the other parts unchanged.”**
+5. Inspect the revision, try Undo/Redo, and export STEP or STL.
+
+Read [the original prompt](examples/gaming-controller.prompt.txt) to try generating the assembly yourself. The image above renders the supplied CAD geometry. Opening that file rebuilds an existing design; generating a new result depends on your model and can require correction. This is an exterior concept, without electronics or internal mechanisms.
+
+## Quick start
 
 ### Requirements
 
+- Windows with the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
 - Python **3.11** with pip.
-- Node.js **24** and npm.
-- Microsoft Edge [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
-- Your own OpenAI-compatible chat API or local inference server for natural-language creation and editing. Opening the supplied CAD examples does not require inference.
+- Node.js **24** with npm.
+- Your own OpenAI-compatible chat-completions endpoint for prompt creation and editing. This can be a hosted service or a local inference server.
 
-From the root of a **fresh clone**, open PowerShell:
+### 1. Clone and install
+
+Open PowerShell:
 
 ```powershell
+git clone https://github.com/faheem-shah-umer/Prompt-to-CAD.git
+Set-Location Prompt-to-CAD
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
 Copy-Item backend\.env.example backend\.env
+Push-Location frontend
+npm.cmd ci
+Pop-Location
+& '.\Setup desktop.cmd'
 ```
 
-Edit `backend/.env` with your own connection. No endpoint, model or credentials are supplied with this repository:
+### 2. Configure your model
+
+Edit `backend/.env` with your own settings. The repository supplies **no credentials, endpoint or default model**.
 
 ```dotenv
 LLM_BASE_URL=https://your-provider.example/v1
@@ -47,107 +78,90 @@ LLM_JSON_MODE=false
 LLM_TIMEOUT_SECONDS=90
 ```
 
-Install the frontend and build the desktop interface:
+The app appends `/chat/completions` to `LLM_BASE_URL`. Your model must reliably follow structured instructions. Enable `LLM_JSON_MODE` only when your endpoint supports JSON-object response formatting.
 
-```powershell
-Push-Location frontend
-npm.cmd ci
-Pop-Location
-& '.\Setup desktop.cmd'
-```
+For a local [Ollama server](https://docs.ollama.com/api/openai-compatibility), use `LLM_BASE_URL=http://localhost:11434/v1`, choose a model you have installed and leave `LLM_API_KEY` blank. Local inference hardware requirements depend on the model. Hosted providers may charge for requests; the application does not supply free access or switch providers automatically.
 
-Then double-click **`Prompt to CAD.vbs`**. The application opens without a command window or browser tab. Closing the window stops its own backend. You can also run the desktop entry point with `.\.venv\Scripts\pythonw.exe -B desktop-app.py` or create your own shortcut to it.
+### 3. Launch
 
+Double-click **`Prompt to CAD.vbs`**. The desktop window opens with its own local backend. Closing it stops that backend.
 
-`LLM_BASE_URL` is the API base path; the app appends `/chat/completions`. `LLM_PROVIDER` is an optional display label. Set `LLM_JSON_MODE=true` only if the endpoint supports JSON-object response formatting. Responses are always checked as JSON and validated against the CAD schema. The model must follow structured instructions reliably.
+To create a design, enter its parts, dimensions and connections in **Explain Our Idea**, then choose **Create**. Review assumptions and inspect the accepted geometry before using an export. After changing model settings, restart the app.
 
-For a local [Ollama server](https://docs.ollama.com/api/openai-compatibility), use `LLM_BASE_URL=http://localhost:11434/v1`, set `LLM_MODEL` to a model you installed, and leave `LLM_API_KEY` blank. Other servers must expose a compatible chat-completions endpoint; APIs with a different protocol need an adapter.
-
-Keep real settings in `backend/.env`, which Git ignores. Keys and endpoint URLs stay on the backend. Hosted requests send the prompt and relevant design context to your chosen service; local inference uses your local server. Provider fees and model licences are your responsibility. Creation uses an assembly brief followed by component batches. Invalid plans can be repaired by the same configured model, with at most three attempts per stage and 24 requests per action. Quota, authentication, network and timeout failures stop the action; there is no model or provider fallback.
-
-## Try the workflow
-
-1. Choose **Open → Open .cad.json file** and open an example:
-   - [Spindle assembly](examples/spindle-assembly.cad.json): separate parts, patterned holes, a lofted grip and dependent placements.
-   - [Threaded bolt](examples/threaded-bolt.cad.json): a hexagonal head, swept helical thread and chamfer.
-   - [Gaming controller reference](examples/gaming-controller.cad.json): ten separate components, elliptical grips and a parameterised button diamond. This example was authored as a geometry regression fixture.
-   - [Model-generated controller](examples/gaming-controller.generated.cad.json): the live model result from the detailed [controller prompt](examples/gaming-controller.prompt.txt), with ten parts and editable construction history.
-2. Click a component in the viewport or parts tree to inspect its dimensions and features.
-3. With your LLM configured, select the spindle and ask: **“Make this spindle 48 mm tall and keep its diameter unchanged.”**
-4. Inspect the result, try Undo/Redo, and export STEP or an editable project.
-
-For a new design, describe its parts, dimensions, positions and connections in **Explain Our Idea**, then choose **Create**. The interface shows planning, component construction and verification progress. Review any questions or assumptions. Failed actions offer a generation-details download and preserve the accepted revision. Selected-part edits protect other component definitions; an existing dependency may still move or resize a dependent part. Assembly mode permits broader changes.
+If the desktop dependencies are missing, run **`Setup desktop.cmd`** again. Keep `.desktop-runtime/`; `tmp/` contains disposable launch diagnostics and browser profiles and can be removed while the application is closed.
 
 ## How it works
 
-```text
-Description or selected-part edit
-  → Assembly brief or selected-part edit
-  → Small component recipes from the configured LLM
-  → Pydantic validation and typed changes
-  → Parameter and dependency resolution
-  → CadQuery feature construction
-  → Solid and assembly checks → bounded repair on failure
-  → STEP export and re-import checks
-  → Saved revision and selectable Three.js preview
+```mermaid
+flowchart LR
+    IDEA[Description or selected-part edit] --> API[FastAPI]
+    API --> LLM[Configured model endpoint]
+    LLM --> PLAN[Typed component recipes]
+    PLAN --> CAD[Local CadQuery construction]
+    CAD --> CHECK[Geometry and STEP checks]
+    CHECK --> SAVE[Accepted revision]
+    SAVE --> VIEW[Selectable 3D preview]
+    SAVE --> EXPORT[STEP / STL / editable JSON]
 ```
 
-The LLM proposes structured operations. The application executes its own modelling tools; it does not execute model-generated Python. CAD construction runs locally on the CPU. Inference uses the endpoint you configure.
+The model proposes structured operations; the backend runs its own modelling tools rather than executing model-generated Python. Rejected plans receive validation feedback within a fixed request budget. Failed generation and stale edits preserve the accepted revision.
 
 | Layer | Technology |
 | --- | --- |
-| Desktop window | pywebview + Microsoft WebView2 |
-| Interface and selection | React, TypeScript, Three.js |
-| API and input validation | FastAPI, Pydantic |
-| Geometry | CadQuery / OpenCascade |
-| Inference | Your own OpenAI-compatible endpoint and model |
-| Storage | Local JSON revisions and STEP/STL files |
+| Desktop | pywebview, Microsoft WebView2 |
+| Interface | React, TypeScript, Three.js, Vite |
+| API and validation | FastAPI, Pydantic |
+| Geometry | CadQuery, OpenCascade |
+| Inference | User-configured OpenAI-compatible endpoint |
+| Storage | Local JSON revisions and CAD exports |
 
-See [Generation pipeline](docs/generation-pipeline.md) for the staged workflow and comparison with Meshra and Yo.Town, [Architecture](docs/architecture.md) for the construction format and supported operations, and [Script guide](docs/script-guide.md) for file roles and API exercises.
+Learn more in the [architecture guide](docs/architecture.md), [generation pipeline](docs/generation-pipeline.md) and [script guide](docs/script-guide.md).
 
-## Development and tests
+## Development
 
-Run the API from the project root:
+From the project root, start the API:
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-In another terminal:
+In a second terminal, run `npm.cmd run dev` from `frontend/`. Open the [development interface](http://127.0.0.1:5173) or [interactive API docs](http://127.0.0.1:8000/docs).
+
+Run the checks from the project root:
 
 ```powershell
-Set-Location frontend
-npm.cmd run dev
-```
-
-Open [the development interface](http://127.0.0.1:5173) or [API documentation](http://127.0.0.1:8000/docs). After frontend changes, run `npm.cmd run build` in `frontend/` and reopen the desktop app.
-
-```powershell
-# From the project root; provider calls are mocked in the test suite.
 .\.venv\Scripts\python.exe -B -m unittest discover -s backend\tests -v
 Push-Location frontend
 npm.cmd run build
 Pop-Location
 ```
 
-Tests exercise actual CAD construction, STEP exchange, editing scope, dependencies, revision handling and desktop lifecycle. They do not establish success on arbitrary natural-language requests.
-
-## Repository layout
+Tests mock provider requests and construct real CAD geometry. After frontend changes, rebuild and reopen the desktop app.
 
 ```text
-backend/               API, planner, geometry, tests and dependency files
-frontend/              React interface, original icon artwork and npm lockfile
-examples/              Editable CAD example specifications
-docs/                  Architecture and script guide
-desktop-app.py         Native desktop launcher and private backend
-Prompt to CAD.vbs      Double-click Windows entry point
-Setup desktop.cmd     Desktop dependency installation and frontend build
-requirements-desktop.txt
-LICENSE
+backend/               API, planning, geometry and tests
+frontend/              Desktop interface and application icon
+examples/              Editable CAD specifications and regression inputs
+docs/                  Architecture, generation and script guides
+desktop-app.py         Desktop window and local backend lifecycle
+Prompt to CAD.vbs      Windows entry point
+Setup desktop.cmd     Desktop runtime installation and interface build
 ```
 
-Saved designs (`projects/`), earlier exports (`runs/`), generation journals (`generation-jobs/`), diagnostics (`tmp/`), API keys, installed dependencies and build output are local data and ignored by Git. An exported `.cad.json` contains the current design; reopening it creates a new project, while reopening a locally saved project retains its revision timeline.
+## Privacy and local data
 
-## Licence
+- Keep credentials in the ignored `backend/.env`; only the empty `.env.example` template belongs in Git.
+- Saved projects, exports, generation journals, logs, browser profiles and installed dependencies are excluded from Git.
+- Hosted inference sends your prompt and relevant design context to **your configured provider**. CAD construction runs locally; this does not make hosted inference private or offline.
+- Generation diagnostics contain prompts and model responses. Review them before attaching them to a public issue.
+- Commit only deliberate, shareable examples. Check staged files before publishing; ignore rules do not remove files from existing history.
 
-Source code, documentation and the newly drawn pyramid artwork are provided under the [MIT licence](LICENSE). Third-party dependencies retain their own licences. See [Third-party notices](THIRD_PARTY_NOTICES.md).
+## Current scope
+
+This is an extensible CAD prototype. Supported operations and geometry validation do not guarantee that every description becomes a correct design. Full assembly constraint solving, face/edge selection and STEP import are future work. Geometry checks do not certify mechanical function, strength, manufacturability or standards compliance; threads are geometric demonstrations.
+
+## Contributing and licence
+
+Issues and focused pull requests are welcome. Include reproduction steps, run the backend tests and frontend build, and remove private prompts, credentials and local paths from reports.
+
+Project source, documentation and original icon artwork are available under the [MIT licence](LICENSE). Dependencies and model services retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md).

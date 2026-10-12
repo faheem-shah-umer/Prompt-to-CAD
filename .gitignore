@@ -16,8 +16,7 @@ frontend/dist/
 *.tsbuildinfo
 
 # Credentials: commit only the empty configuration template
-.env
-.env.*
+.env*
 !.env.example
 
 # Local CAD work, exported files and diagnostics
@@ -25,8 +24,22 @@ frontend/dist/
 /generation-jobs/
 /runs/
 /artifacts/
+/exports/
+/backups/
 /tmp/
 *.log
+*.step
+*.stp
+*.stl
+*.bak
+*.bundle
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.pfx
+*.p12
 
 # Machine-specific shortcuts and editor/OS files
 *.lnk
