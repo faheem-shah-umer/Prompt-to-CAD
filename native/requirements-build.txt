@@ -1,0 +1,4 @@
+cmake==4.4.4
+ninja==1.13.2
+packaging==26.3
+psutil==7.2.2

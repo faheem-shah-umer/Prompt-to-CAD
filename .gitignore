@@ -48,3 +48,10 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Native workspace builds, runtime and user documents
+/.native-build/
+/.native-runtime/
+/native-projects/
+/dist-native/
+*.brep

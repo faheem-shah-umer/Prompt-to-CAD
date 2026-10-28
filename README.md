@@ -9,6 +9,14 @@
 
 ---
 
+## Native Windows workspace
+
+![Native CAD workspace with assembly tree, solid viewport and Copilot panel](docs/assets/native-workspace.png)
+
+The native application adds a C++/Qt/OpenCascade CAD workspace with STEP import, body/face/edge selection, manual tools and a conversational agent. Completed changes are verified and saved as reversible revisions.
+
+On the configured development machine, open **Prompt to CAD Native.vbs**. See [native build, usage and packaging](docs/native-workspace.md) for setup, model configuration, tested capabilities and limits. The original launcher and web interface remain available.
+
 ## About
 
 Describe a design in plain language, create its 3D model, then select a component and ask for a change. Prompt to CAD keeps named dimensions, construction features and relationships between parts so an accepted design can be rebuilt, edited and exported.
@@ -156,7 +164,7 @@ Setup desktop.cmd     Desktop runtime installation and interface build
 - Generation diagnostics contain prompts and model responses. Review them before attaching them to a public issue.
 - Commit only deliberate, shareable examples. Check staged files before publishing; ignore rules do not remove files from existing history.
 
-## Current scope
+## Original interface scope
 
 This is an extensible CAD prototype. Supported operations and geometry validation do not guarantee that every description becomes a correct design. Full assembly constraint solving, face/edge selection and STEP import are future work. Geometry checks do not certify mechanical function, strength, manufacturability or standards compliance; threads are geometric demonstrations.
 
