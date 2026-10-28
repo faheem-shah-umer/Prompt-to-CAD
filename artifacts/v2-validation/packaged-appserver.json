@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "live_app_server": true,
+  "inference": false,
+  "credentials_used": false,
+  "tool_count": 9,
+  "packaged_python": true
+}

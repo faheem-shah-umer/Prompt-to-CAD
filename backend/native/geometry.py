@@ -49,6 +49,8 @@ def indexed(shape, kind):
 
 
 def load_shape(folder, part):
+    if part.get("representation") == "mesh":
+        raise WorkspaceError("This component is a mesh. Use mesh operations; original CAD faces and features are unavailable.")
     path = asset_path(folder, part["brep"])
     if hashlib.sha256(path.read_bytes()).hexdigest() != part["asset_hash"]:
         raise WorkspaceError("The body asset has changed.", "invalid_project")
@@ -171,23 +173,33 @@ def from_recipe(recipe, folder):
             "recipe": design.model_dump(mode="json"), "verification": verification, "direct_edits": False}
 
 
-def inspect(folder, snapshot, instance_id=None, limit=256):
+def inspect(folder, snapshot, instance_id=None, limit=128, offset=0):
+    limit, offset = max(1, min(int(limit), 256)), max(0, int(offset))
     descriptions = []
     for part in snapshot["components"]:
         if instance_id and part["instance_id"] != instance_id:
             continue
+        if part.get("representation") == "mesh":
+            from backend.v2.meshes import inspect as mesh_inspect
+            descriptions.append(mesh_inspect(folder, part, offset, limit))
+            continue
         shape = load_shape(folder, part)
         faces, edges = indexed(shape, TopAbs_FACE), indexed(shape, TopAbs_EDGE)
         description = {key: part[key] for key in ("instance_id", "name", "metrics", "matrix", "topology")}
+        description.update(parameters=part.get("parameters", {}), definition_id=part.get("definition_id"), parent_id=part.get("parent_id"), representation="solid")
         description["faces"] = [{"index": i, "type": face.geomType(), "area_mm2": face.Area(),
                                  "centre": face.Center().toTuple(),
-                                 "normal": face.normalAt().toTuple() if face.geomType() == "PLANE" else None}
-                                for i, face in enumerate(faces[:limit], 1)]
+                                 "normal": face.normalAt().toTuple() if face.geomType() == "PLANE" else None,
+                                 "x_direction": cq.Plane(origin=face.Center(), normal=face.normalAt()).xDir.toTuple() if face.geomType() == "PLANE" else None}
+                                for i, face in enumerate(faces[offset:offset + limit], offset + 1)]
         description["edges"] = [{"index": i, "type": edge.geomType(), "length_mm": edge.Length(),
                                  "centre": edge.Center().toTuple(),
                                  "start": edge.startPoint().toTuple(), "end": edge.endPoint().toTuple()}
-                                for i, edge in enumerate(edges[:limit], 1)]
-        description["truncated"] = len(faces) > limit or len(edges) > limit
+                                for i, edge in enumerate(edges[offset:offset + limit], offset + 1)]
+        vertices = indexed(shape, TopAbs_VERTEX)
+        description["vertices"] = [{"index": i, "point": vertex.toTuple()} for i, vertex in enumerate(vertices[offset:offset + limit], offset + 1)]
+        description["truncated"] = len(faces) > offset + limit or len(edges) > offset + limit
+        description["next_offset"] = offset + limit if description["truncated"] else None
         descriptions.append(description)
     if instance_id and not descriptions:
         raise WorkspaceError("The selected component no longer exists.", "stale_selection")
@@ -237,11 +249,17 @@ def boolean_apply(body, tool, operation):
 
 def apply_command(folder, snapshot, command_data):
     command = COMMAND.validate_python(command_data)
+    if command.type.startswith("mesh_"):
+        from backend.v2.meshes import apply as mesh_apply
+        return mesh_apply(folder, snapshot, command.model_dump(mode="json"))
     candidate = copy.deepcopy(snapshot)
     part = next((p for p in candidate["components"] if p["instance_id"] == command.instance_id), None)
     if part is None:
         raise WorkspaceError("The command targets a missing component.", "stale_selection")
     if command.type == "parameters":
+        if any(command.instance_id in s.get("part_ids", []) for s in candidate.get("scripts", [])):
+            from backend.v2.scripts import change_parameters
+            return change_parameters(folder, candidate, command.instance_id, command.values)
         if candidate.get("origin") != "recipe" or candidate.get("direct_edits"):
             raise WorkspaceError("Undo downstream direct edits before changing recipe parameters.")
         recipe = copy.deepcopy(candidate["recipe"])
@@ -268,6 +286,26 @@ def apply_command(folder, snapshot, command_data):
             raise WorkspaceError("An edge reference is invalid. Inspect the current body again.", "stale_selection")
         selected = [edges[i - 1] for i in command.edge_indices]
         body = body.fillet(command.size, selected) if command.type == "fillet" else body.chamfer(command.size, None, selected)
+    elif command.type in ("offset_face", "face_holes"):
+        faces = indexed(body, TopAbs_FACE)
+        if command.face_index > len(faces):
+            raise WorkspaceError("Inspect the current topology before using this face.", "stale_selection")
+        face = faces[command.face_index - 1]
+        if face.geomType() != "PLANE":
+            raise WorkspaceError("This operation requires a planar face.")
+        normal = face.normalAt()
+        if command.type == "offset_face":
+            if abs(command.distance) < 1e-6:
+                raise WorkspaceError("Choose a nonzero thickness change.")
+            prism = cq.Solid.extrudeLinear(face.outerWire(), face.innerWires(), normal.multiply(command.distance))
+            body = boolean_apply(body, prism, "add" if command.distance > 0 else "cut")
+        else:
+            plane = cq.Plane(origin=face.Center(), normal=normal)
+            for x, y in command.centres:
+                origin = plane.toWorldCoords((x, y))
+                tool = cq.Solid.makeCylinder(command.diameter / 2, command.depth + 0.02,
+                                             origin.add(normal.multiply(0.01)), normal.multiply(-1))
+                body = boolean_apply(body, tool, "cut")
     elif command.type == "extrude":
         body = boolean_apply(body, extrusion_tool(command), command.operation)
     elif command.type == "pattern":
@@ -372,6 +410,7 @@ def verify_export(folder, snapshot, path):
 def check_new_intersections(folder, before, after, command):
     previous = {p["instance_id"]: p for p in before["components"]}
     changed = {p["instance_id"] for p in after["components"] if
+               p["instance_id"] not in previous or
                p["asset_hash"] != previous[p["instance_id"]]["asset_hash"] or
                p["matrix"] != previous[p["instance_id"]]["matrix"]}
     cache = {}
@@ -382,6 +421,8 @@ def check_new_intersections(folder, before, after, command):
         return cache[key]
     for i, a in enumerate(after["components"]):
         for b in after["components"][i + 1:]:
+            if a.get("representation") == "mesh" or b.get("representation") == "mesh":
+                continue
             ids = {a["instance_id"], b["instance_id"]}
             if not ids.intersection(changed):
                 continue
@@ -395,6 +436,29 @@ def check_new_intersections(folder, before, after, command):
             overlap = first.intersect(second).Volume()
             if overlap <= 1e-5:
                 continue
-            old_overlap = shape(previous[a["instance_id"]]).intersect(shape(previous[b["instance_id"]])).Volume()
+            old_overlap = (shape(previous[a["instance_id"]]).intersect(shape(previous[b["instance_id"]])).Volume()
+                           if a["instance_id"] in previous and b["instance_id"] in previous else 0)
             if overlap > old_overlap + 1e-5:
                 raise WorkspaceError(f"The edit introduces an unexpected intersection between '{a['name']}' and '{b['name']}'.")
+
+
+def measure_entities(folder, snapshot, first, second):
+    def entity(reference):
+        part = next((p for p in snapshot["components"] if p["instance_id"] == reference["instance_id"]), None)
+        if not part:
+            raise WorkspaceError("Measurement component is missing.", "stale_selection")
+        shape = load_shape(folder, part)
+        kind = reference.get("kind", "body")
+        if kind != "body":
+            kinds = {"face": TopAbs_FACE, "edge": TopAbs_EDGE, "vertex": TopAbs_VERTEX}
+            if kind not in kinds:
+                raise WorkspaceError("Choose a body, face, edge or vertex.")
+            entities = indexed(shape, kinds[kind])
+            index = reference.get("index", 0)
+            if not isinstance(index, int) or not 1 <= index <= len(entities):
+                raise WorkspaceError("Inspect measurement topology again.", "stale_selection")
+            shape = entities[index - 1]
+        return shape.moved(cq.Location(transform(part["matrix"])))
+    a, b = entity(first), entity(second)
+    return {"minimum_distance_mm": a.distance(b), "centre_distance_mm": (a.Center() - b.Center()).Length,
+            "coordinates": "assembly world", "units": "mm"}

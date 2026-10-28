@@ -1,0 +1,16 @@
+# Prompt to CAD V2 implementation status
+
+Started from verified commit fbb1d65 on codex/prompt-to-cad-v2. The existing geometry worker, native viewport, content-addressed assets, atomic revision storage and verified STEP exports were preserved. The earlier custom JSON agent remains legacy code; the V2 interface uses Codex App Server.
+
+| Stage | Implemented and observed | Acceptance boundary |
+| --- | --- | --- |
+| A — Codex connection | Independent ChatGPT OAuth/PKCE, DPAPI, model discovery, streamed App Server turns, clarification, cancellation and explicit billing modes. Live gpt-6.1-sol inference and viewport-image input passed. | Provider allowance percentages are unavailable. Signature/refresh/revocation edge cases use explicit protocol fixtures. |
+| B — Projects and shell | Persistent project/document/conversation/task IDs, multiple chats per document, grouped commands, CAD manager, resizable/collapsible panes, properties, history and account controls. Native solid/mesh picking passed at multiple sizes/scales. | Portable archive/import of an entire V2 project and all provider sessions is not implemented. |
+| C — Selected-component editing | Live plate thickening, unchanged neighbour, world-X transform after close/reopen, provider-session resume, undo/redo and validation passed. Live cancellation after a candidate edit preserved the accepted revision. | General solid scripts are component-scoped; they do not prove unchanged topology for every other face of that component. |
+| D — Text creation | Live editable plate creation through a retained parameterized script, then conversational four-hole refinement passed dimensions/volume checks. | Restricted CAD language, 45-second script deadline, 2 GB worker memory, 32 operations and local task budget. |
+| E — Image workflow | Real Tripo v3 adapter, explicit separate-billing gate, reference/settings/hash retention, validated mesh assets and explicit-region operations. HTTP contract fixtures and real imported-mesh/region tests passed. | **Paid live image generation remains pending at the user's request.** No fixture mesh is claimed as a generated service result. |
+| F — Packaging | Isolated Python/Qt/OCCT package passed cryptographic, mesh and native tests with only Windows System32 on PATH. Buildable source and dependency licences are included. | Installer is unsigned. Clean-machine installation/signing and broader performance qualification remain release work. |
+
+The retained [validation reports](../artifacts/v2-validation/) distinguish live provider results, real local geometry/UI checks and mocked protocol/service fixtures. The 100-test full backend suite passed, followed by a targeted real-geometry check for explicit assembly/definition observations. [Setup, architecture, supported formats and limitations](v2-workspace.md) are documented separately.
+
+The supplied Codex screenshots informed the outer shell; their personal content was not copied. Public CAD documentation and the requested SolidWorks manager/toolbar organization informed the workspace. The supplied SolidWorks help pages still returned a JavaScript/help shell when revisited. Career Ops informed the thin runtime adapter, domain instructions, local data and artifact-verification structure. REA was optional and was not needed; no proprietary CAD application was reverse-engineered.

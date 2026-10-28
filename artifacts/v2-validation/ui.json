@@ -1,0 +1,120 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "agent_inference_verified": false,
+      "body_count": 3,
+      "device_pixel_ratio": 1.25,
+      "face_selection": true,
+      "occt_viewer": "7.8.1",
+      "passed": true,
+      "product": "Prompt to CAD V2",
+      "qt_version": "6.9.0",
+      "synthetic_orbit_fps": 29.940986315971223,
+      "topology": {
+        "base": {
+          "edge": 36,
+          "face": 14,
+          "vertex": 24
+        },
+        "cap": {
+          "edge": 3,
+          "face": 3,
+          "vertex": 2
+        },
+        "post": {
+          "edge": 3,
+          "face": 3,
+          "vertex": 2
+        }
+      },
+      "viewport_size": [
+        621,
+        576
+      ],
+      "window_size": [
+        1280,
+        800
+      ],
+      "case": "laptop-solid",
+      "requested_size": "1280x800",
+      "requested_scale": "1",
+      "real_viewport": true,
+      "mocked": false
+    },
+    {
+      "agent_inference_verified": false,
+      "body_count": 2,
+      "device_pixel_ratio": 1.875,
+      "face_selection": true,
+      "occt_viewer": "7.8.1",
+      "passed": true,
+      "product": "Prompt to CAD V2",
+      "qt_version": "6.9.0",
+      "synthetic_orbit_fps": 29.91356773737962,
+      "topology": {
+        "236084c43d9b4e3d": {
+          "triangles": 320
+        },
+        "4f5abc7d7d624cbf": {
+          "triangles": 12
+        }
+      },
+      "viewport_size": [
+        690,
+        376
+      ],
+      "window_size": [
+        1100,
+        600
+      ],
+      "case": "scaled-mesh",
+      "requested_size": "1100x700",
+      "requested_scale": "1.5",
+      "real_viewport": true,
+      "mocked": false
+    },
+    {
+      "agent_inference_verified": false,
+      "body_count": 3,
+      "device_pixel_ratio": 1.25,
+      "face_selection": true,
+      "occt_viewer": "7.8.1",
+      "passed": true,
+      "product": "Prompt to CAD V2",
+      "qt_version": "6.9.0",
+      "synthetic_orbit_fps": 30.007812533993224,
+      "topology": {
+        "base": {
+          "edge": 36,
+          "face": 14,
+          "vertex": 24
+        },
+        "cap": {
+          "edge": 3,
+          "face": 3,
+          "vertex": 2
+        },
+        "post": {
+          "edge": 3,
+          "face": 3,
+          "vertex": 2
+        }
+      },
+      "viewport_size": [
+        692,
+        620
+      ],
+      "window_size": [
+        1600,
+        844
+      ],
+      "case": "large-solid",
+      "requested_size": "1600x950",
+      "requested_scale": "1",
+      "real_viewport": true,
+      "mocked": false
+    }
+  ],
+  "agent_inference": false
+}

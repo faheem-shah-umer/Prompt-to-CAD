@@ -45,6 +45,20 @@ class Extrusion(Targeted):
     operation: Literal["add", "cut", "intersect"] = "cut"
 
 
+class FaceOffset(Targeted):
+    type: Literal["offset_face"]
+    face_index: int = Field(ge=1)
+    distance: float = Field(gt=-10000, lt=10000)
+
+
+class FaceHoles(Targeted):
+    type: Literal["face_holes"]
+    face_index: int = Field(ge=1)
+    diameter: float = Field(gt=0, le=2000)
+    centres: list[tuple[float, float]] = Field(min_length=1, max_length=100)
+    depth: float = Field(gt=0, le=10000)
+
+
 class Transform(Targeted):
     type: Literal["transform"]
     translation: Vector = (0, 0, 0)
@@ -79,7 +93,34 @@ class Parameters(Targeted):
     values: dict[str, float] = Field(min_length=1, max_length=64)
 
 
-Command = Annotated[Hole | EdgeTreatment | Extrusion | Transform | Boolean | Pattern | Parameters,
+class MeshColor(Targeted):
+    type: Literal["mesh_color"]
+    color: tuple[int, int, int]
+    triangle_indices: list[int] = Field(default_factory=list, max_length=200000)
+
+
+class MeshRegionMove(Targeted):
+    type: Literal["mesh_region_move"]
+    translation: Vector
+    triangle_indices: list[int] = Field(min_length=1, max_length=200000)
+
+
+class MeshSeparate(Targeted):
+    type: Literal["mesh_separate"]
+    triangle_indices: list[int] = Field(min_length=1, max_length=200000)
+
+
+class MeshScale(Targeted):
+    type: Literal["mesh_scale"]
+    factor: float = Field(ge=0.001, le=1000)
+
+
+class MeshSmooth(Targeted):
+    type: Literal["mesh_smooth"]
+    iterations: int = Field(default=3, ge=1, le=30)
+
+
+Command = Annotated[Hole | EdgeTreatment | Extrusion | FaceOffset | FaceHoles | Transform | Boolean | Pattern | Parameters | MeshColor | MeshRegionMove | MeshSeparate | MeshScale | MeshSmooth,
                     Field(discriminator="type")]
 
 

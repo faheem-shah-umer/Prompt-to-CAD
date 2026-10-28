@@ -62,7 +62,7 @@ class Document:
         if snapshot["revision_id"] != revision or snapshot["document_id"] != index["document_id"]:
             raise WorkspaceError("The project revision does not match its index.", "invalid_project")
         for part in snapshot["components"]:
-            path = asset_path(self.folder, part["brep"])
+            path = asset_path(self.folder, part.get("mesh", part.get("brep", "")))
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             if digest != part["asset_hash"]:
                 raise WorkspaceError("A geometry asset is missing or has changed.", "invalid_project")
@@ -94,7 +94,7 @@ class Document:
                 raise WorkspaceError("A new project cannot have a base revision.", "revision_conflict")
             snapshot = copy.deepcopy(candidate)
             snapshot.update(schema_version=2, document_id=index["document_id"], revision_id=str(uuid4()),
-                            name=index["name"], units="mm", summary=summary)
+                            name=index["name"], units="mm", summary=summary, parent_revision_id=base_revision)
             snapshot.pop("project_dir", None)
             snapshot["commands"] = commands or []
             snapshot["conversation"] = conversation if conversation is not None else snapshot.get("conversation", [])
@@ -112,6 +112,22 @@ class Document:
             if not 0 <= cursor < len(index["revisions"]):
                 raise WorkspaceError("There is no further revision in that direction.", "history_limit")
             index["cursor"] = cursor
+            write_json(self.index_path, index)
+        return self.view()
+
+    def restore(self, revision_id, base_revision):
+        with revision_lock(self.folder):
+            self.check(base_revision)
+            index = self.index()
+            if revision_id not in index["revisions"]:
+                # Task links still address immutable snapshots after a new edit replaces the redo path.
+                path = asset_path(self.folder, f"revisions/{revision_id}.json")
+                if not path.is_file():
+                    raise WorkspaceError("This revision is not available in the document history.")
+                proposed = {**index, "revisions": [revision_id], "cursor": 0}
+                self.current(proposed)
+                index["revisions"] = index["revisions"][:index["cursor"]+1] + [revision_id]
+            index["cursor"] = index["revisions"].index(revision_id)
             write_json(self.index_path, index)
         return self.view()
 

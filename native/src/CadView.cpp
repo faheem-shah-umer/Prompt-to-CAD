@@ -1,4 +1,9 @@
 #include "CadView.h"
+#include "MeshSource.h"
+#include <QJsonDocument>
+#include <MeshVS_SelectionModeFlags.hxx>
+#include <MeshVS_DisplayModeFlags.hxx>
+#include <MeshVS_MeshEntityOwner.hxx>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QDir>
@@ -78,17 +83,25 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
     pendingDocument = false;
     try {
         QMap<QString, Handle(AIS_Shape)> next;
+        QMap<QString, Handle(MeshVS_Mesh)> nextMeshes;
         for (const auto& item : document.value("components").toArray()) {
             const auto part = item.toObject();
             const auto id = part.value("instance_id").toString();
             const auto projectDir = QFileInfo(document.value("project_dir").toString()).canonicalFilePath();
-            const auto filename = QFileInfo(QDir(projectDir).filePath(part.value("brep").toString())).canonicalFilePath();
+            const auto filename = QFileInfo(QDir(projectDir).filePath(part.value(part.value("representation")=="mesh"?"mesh":"brep").toString())).canonicalFilePath();
             if (filename.isEmpty() || !filename.startsWith(projectDir + '/'))
                 throw std::runtime_error("The project contains an invalid body asset path.");
             QFile file(filename);
             if (!file.open(QIODevice::ReadOnly) || QString::fromLatin1(QCryptographicHash::hash(
                     file.readAll(), QCryptographicHash::Sha256).toHex()) != part.value("asset_hash").toString())
                 throw std::runtime_error("The geometry asset checksum does not match.");
+            if(part.value("representation")=="mesh") {
+                file.seek(0);if(file.size()>100*1024*1024)throw std::runtime_error("Mesh asset exceeds the viewer size limit.");
+                auto asset=QJsonDocument::fromJson(file.readAll()).object();auto mesh=meshPresentation(asset);
+                auto pose=part.value("matrix").toArray();if(pose.size()!=12)throw std::runtime_error("Invalid mesh placement.");
+                gp_Trsf trsf;trsf.SetValues(pose[0].toDouble(),pose[1].toDouble(),pose[2].toDouble(),pose[3].toDouble(),pose[4].toDouble(),pose[5].toDouble(),pose[6].toDouble(),pose[7].toDouble(),pose[8].toDouble(),pose[9].toDouble(),pose[10].toDouble(),pose[11].toDouble());
+                mesh->SetLocalTransformation(trsf);nextMeshes.insert(id,mesh);continue;
+            }
             TopoDS_Shape body;
             BRep_Builder builder;
             if (!BRepTools::Read(body, filename.toUtf8().constData(), builder) || body.IsNull())
@@ -114,7 +127,8 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
             next.insert(id, presentation);
         }
         context->RemoveAll(false);
-        shapes = next;
+        shapes = next;meshes=nextMeshes;
+        for(const auto& mesh:meshes)context->Display(mesh,MeshVS_DMF_Shading|MeshVS_DMF_ElementalColorDataPrs,MeshVS_SMF_Mesh,false);
         for (const auto& shape : shapes) context->Display(shape, AIS_Shaded, 0, false);
         setSelectionMode(mode);
         currentSelection = {};
@@ -129,7 +143,7 @@ void CadView::fitAll() {
 }
 void CadView::standardView(const QString& direction) {
     if (view.IsNull()) return;
-    view->SetProj(direction == "top" ? V3d_Zpos : direction == "front" ? V3d_Yneg : V3d_XposYnegZpos);
+    view->SetProj(direction == "top" ? V3d_Zpos : direction == "front" ? V3d_Yneg : direction == "right" ? V3d_Xpos : V3d_XposYnegZpos);
     fitAll();
 }
 void CadView::setSelectionMode(const QString& kind) {
@@ -138,18 +152,21 @@ void CadView::setSelectionMode(const QString& kind) {
     context->ClearSelected(false); context->Deactivate();
     const int selectionMode = kind == "body" ? 0 : AIS_Shape::SelectionMode(topologyKind(kind));
     for (const auto& shape : shapes) context->Activate(shape, selectionMode);
+    for(const auto& mesh:meshes)context->Activate(mesh,kind=="face"?MeshVS_SMF_Face:MeshVS_SMF_Mesh);
     currentSelection = {};
     Q_EMIT selectionChanged({}); view->Redraw();
 }
 void CadView::selectInstance(const QString& id) {
-    if (context.IsNull() || !shapes.contains(id)) return;
-    context->ClearSelected(false); context->SetSelected(shapes[id], false);
+    if (context.IsNull() || (!shapes.contains(id)&&!meshes.contains(id))) return;
+    context->ClearSelected(false);
+    if(shapes.contains(id))context->SetSelected(shapes[id],false);else context->SetSelected(meshes[id],false);
     currentSelection = {{"revision_id", document.value("revision_id")}, {"instance_id", id}, {"kind", "body"}, {"index", 0}};
     Q_EMIT selectionChanged(currentSelection); view->Redraw();
 }
 void CadView::setVisibleInstance(const QString& id, bool visible) {
-    if (!shapes.contains(id)) return;
-    if (visible) context->Display(shapes[id], false); else context->Erase(shapes[id], false);
+    if(context.IsNull())return;
+    if(shapes.contains(id)){if(visible)context->Display(shapes[id],false);else context->Erase(shapes[id],false);}
+    else if(meshes.contains(id)){if(visible)context->Display(meshes[id],false);else context->Erase(meshes[id],false);}
     view->Redraw();
 }
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -197,6 +214,18 @@ void CadView::updateSelection() {
                 {"instance_id", id}, {"kind", kind}, {"index", index}};
         }
     }
+    if(currentSelection.isEmpty()) {
+        context->InitSelected();if(context->MoreSelected()) {
+            auto object=Handle(MeshVS_Mesh)::DownCast(context->SelectedInteractive());QString id;
+            for(auto it=meshes.cbegin();it!=meshes.cend();++it)if(it.value()==object){id=it.key();break;}
+            if(!id.isEmpty()) {
+                QJsonArray triangles;
+                for(context->InitSelected();context->MoreSelected();context->NextSelected())if(context->SelectedInteractive()==object){auto owner=Handle(MeshVS_MeshEntityOwner)::DownCast(context->SelectedOwner());if(!owner.IsNull()&&owner->Type()==MeshVS_ET_Face)triangles.append(owner->ID());}
+                currentSelection={{"revision_id",document.value("revision_id")},{"instance_id",id},{"kind",triangles.isEmpty()?"body":"region"},{"index",triangles.isEmpty()?0:triangles[0].toInt()},{"triangle_indices",triangles}};
+            }
+        }
+    }
+    if(currentSelection.value("kind")=="edge")currentSelection["edge_indices"]=selectedEdges(currentSelection.value("instance_id").toString());
     Q_EMIT selectionChanged(currentSelection);
 }
 QJsonArray CadView::selectedEdges(const QString& id) const {
@@ -223,9 +252,15 @@ QJsonObject CadView::topologyReport() const {
         }
         report[it.key()] = body;
     }
+    for(auto it=meshes.cbegin();it!=meshes.cend();++it)report[it.key()]=QJsonObject{{"triangles",it.value()->GetDataSource()->GetAllElements().Extent()}};
     return report;
 }
 bool CadView::smokeSelectFace() {
+    if(shapes.isEmpty()&&!meshes.isEmpty()) {
+        setSelectionMode("face");
+        for(const auto& mesh:meshes){auto* source=dynamic_cast<MeshSource*>(mesh->GetDataSource().get());if(!source)continue;for(int id=1;id<=source->triangleCount();++id){auto point=source->triangleCentre(id).Transformed(mesh->LocalTransformation());int x,y;view->Convert(point.X(),point.Y(),point.Z(),x,y);context->MoveTo(x,y,view,false);context->SelectDetected(AIS_SelectionScheme_Replace);updateSelection();if(currentSelection.value("kind")=="region")return true;}}
+        return false;
+    }
     if (shapes.isEmpty()) return false;
     setSelectionMode("face");
     for (const auto& object : shapes) {
@@ -266,3 +301,7 @@ double CadView::benchmarkOrbit() {
     standardView("isometric");
     return seconds > 0 ? 60 / seconds : 0;
 }
+
+void CadView::isolateInstance(const QString& id){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),it.key()==id);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),it.key()==id);}
+void CadView::showAll(){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),true);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),true);}
+void CadView::setShading(bool edges){if(context.IsNull())return;context->DefaultDrawer()->SetFaceBoundaryDraw(edges);for(const auto& shape:shapes)context->Redisplay(shape,false);view->Redraw();}

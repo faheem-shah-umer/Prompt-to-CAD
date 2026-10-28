@@ -11,7 +11,7 @@ public:
     using Callback = std::function<void(const QJsonObject&, const QString&)>;
     explicit RpcClient(QObject* parent = nullptr);
     ~RpcClient() override;
-    void start(const QString& workspace, const QString& python);
+    void start(const QString& workspace, const QString& python, const QString& module = "backend.native.service");
     void call(const QString& method, const QJsonObject& params, Callback callback);
     void cancel();
 Q_SIGNALS:

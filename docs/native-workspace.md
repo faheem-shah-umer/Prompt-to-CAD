@@ -1,3 +1,5 @@
+> Historical native-workspace reference. The normal executable now opens Prompt to CAD V2; use `--legacy-native` for the connection and UI described below. See [V2 setup and capabilities](v2-workspace.md) for the current application.
+
 # Native CAD workspace
 
 The native workspace is the Windows application built on C++20, Qt 6 and OCCT 7.8.1. A Python document service handles commands and conversations; an isolated CadQuery/OCP process constructs geometry. The original React/pywebview application remains available through its existing launcher.

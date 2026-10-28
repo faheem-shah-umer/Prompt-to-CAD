@@ -16,12 +16,13 @@ from .worker_client import GeometryWorker
 
 
 class Workspace:
-    def __init__(self, projects_dir, notify=lambda event: None):
+    def __init__(self, projects_dir, notify=lambda event: None, load_model=True):
         self.projects_dir = Path(projects_dir)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.worker = GeometryWorker(self.projects_dir / ".logs", timeout=float(os.getenv("CAD_GEOMETRY_TIMEOUT", "120")))
         from . import settings
-        settings.load()
+        if load_model:
+            settings.load()
         self.document = None
         self.cancelled = threading.Event()
         self.notify = notify

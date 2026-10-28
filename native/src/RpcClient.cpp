@@ -54,14 +54,14 @@ RpcClient::~RpcClient() {
 #endif
 }
 
-void RpcClient::start(const QString& workspace, const QString& python) {
+void RpcClient::start(const QString& workspace, const QString& python, const QString& module) {
     auto env = QProcessEnvironment::systemEnvironment();
     env.insert("PYTHONUNBUFFERED", "1");
     env.insert("PYTHONIOENCODING", "utf-8");
     process.setProcessEnvironment(env);
     process.setWorkingDirectory(workspace);
     process.setProgram(python);
-    process.setArguments({"-B", "-m", "backend.native.service"});
+    process.setArguments({"-B", "-m", module});
     process.start();
 }
 

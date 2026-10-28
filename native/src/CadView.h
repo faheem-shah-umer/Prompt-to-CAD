@@ -6,6 +6,7 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
+#include <MeshVS_Mesh.hxx>
 
 class CadView : public QWidget {
     Q_OBJECT
@@ -17,10 +18,13 @@ public:
     void standardView(const QString& view);
     void setSelectionMode(const QString& kind);
     void selectInstance(const QString& id);
+    void isolateInstance(const QString& id);
+    void showAll();
+    void setShading(bool edges);
     void setVisibleInstance(const QString& id, bool visible);
     QJsonArray selectedEdges(const QString& instanceId) const;
     QJsonObject selection() const { return currentSelection; }
-    int bodyCount() const { return shapes.size(); }
+    int bodyCount() const { return shapes.size()+meshes.size(); }
     QJsonObject topologyReport() const;
     bool smokeSelectFace();
     bool saveViewport(const QString& path);
@@ -42,6 +46,7 @@ private:
     Handle(AIS_InteractiveContext) context;
     Handle(V3d_View) view;
     QMap<QString, Handle(AIS_Shape)> shapes;
+    QMap<QString, Handle(MeshVS_Mesh)> meshes;
     QJsonObject document;
     QJsonObject currentSelection;
     QString mode = "body";

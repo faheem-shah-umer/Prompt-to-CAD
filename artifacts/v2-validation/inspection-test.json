@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "tests": 1,
+  "command": "python -m unittest backend.tests.test_v2_workspace.V2WorkspaceTests.test_agent_inspection_exposes_actual_structure_and_editable_definition -v",
+  "real_geometry": true,
+  "observations": [
+    "assembly hierarchy",
+    "named parameters",
+    "retained script definition"
+  ],
+  "elapsed_seconds": 9.903
+}
