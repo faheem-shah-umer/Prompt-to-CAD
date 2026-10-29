@@ -35,6 +35,7 @@ class WorkspaceWindow : public QMainWindow {
 
   Q_SIGNALS:
     void workspaceReady();
+    void conversationOpened();
 
   protected:
     void resizeEvent(QResizeEvent *) override;
@@ -44,6 +45,9 @@ class WorkspaceWindow : public QMainWindow {
     void showState(const QJsonObject &, bool fit = false);
     void openFile(const QString &path = {});
     void newProject();
+    void newConversation();
+    void openConversation(const QString &projectId, const QString &conversationId);
+    void revealConversation();
     void manageProjects();
     void account();
     void discoverModels();
@@ -90,7 +94,7 @@ class WorkspaceWindow : public QMainWindow {
     QAction *undoAction, *redoAction;
     QJsonObject state, document, selected, operationSelection;
     QString workspace, currentOperation;
-    bool settingsVerified = false;
+    bool settingsVerified = false, conversationsVerified = false;
     int settingsSaves = 0;
     bool busy = false, smoke = false, viewerFailed = false, loading = false;
 };

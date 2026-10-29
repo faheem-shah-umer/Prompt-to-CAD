@@ -232,6 +232,11 @@ class WorkspaceV2(Workspace):
             self.projects.update(project_id, **values)
             return self.state()
         if method == "v2.conversation.new":
+            if not self.project_id:
+                raise WorkspaceError(
+                    "Create or open a project before starting a conversation.",
+                    "project_required",
+                )
             self.projects.new_conversation(self.project_id, params.get("document_id"))
             return self.activate(self.project_id)
         if method == "v2.conversation.open":

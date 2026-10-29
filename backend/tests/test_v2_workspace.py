@@ -61,6 +61,38 @@ class V2WorkspaceTests(unittest.TestCase):
         self.assertEqual(state["document"]["revision_id"], document["revision_id"])
         self.assertEqual(state["document"]["components"], document["components"])
 
+    def test_new_conversation_keeps_the_document_and_reopens_the_original_chat(self):
+        document = self.assembly()
+        original = self.workspace.state()["conversation"]
+        snapshot = self.workspace.document.index_path.read_bytes()
+        count = len(self.workspace.state()["conversations"])
+        created = self.workspace.dispatch("v2.conversation.new", {})
+        self.assertNotEqual(
+            created["conversation"]["conversation_id"], original["conversation_id"]
+        )
+        self.assertEqual(created["conversation"]["messages"], [])
+        self.assertEqual(len(created["conversations"]), count + 1)
+        self.assertEqual(created["document"], document)
+        self.assertEqual(self.workspace.document.index_path.read_bytes(), snapshot)
+        reopened = self.workspace.dispatch(
+            "v2.conversation.open", {"conversation_id": original["conversation_id"]}
+        )
+        self.assertEqual(
+            reopened["conversation"]["conversation_id"], original["conversation_id"]
+        )
+        self.assertEqual(reopened["document"], document)
+
+    def test_new_conversation_without_an_active_project_reports_a_project_requirement(
+        self,
+    ):
+        self.workspace.project_id = None
+        self.workspace.document = None
+        before = self.workspace.projects.catalog.read_bytes()
+        with self.assertRaises(WorkspaceError) as error:
+            self.workspace.dispatch("v2.conversation.new", {})
+        self.assertEqual(error.exception.code, "project_required")
+        self.assertEqual(self.workspace.projects.catalog.read_bytes(), before)
+
     def assembly(self):
         return self.workspace.dispatch(
             "v2.script",

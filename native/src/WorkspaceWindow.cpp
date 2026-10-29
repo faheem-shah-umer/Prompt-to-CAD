@@ -111,7 +111,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     nav->addWidget(heading);
     setWorkspaceIcon(button("New project", nav, [this] { newProject(); }), "add");
     setWorkspaceIcon(button("Open project…", nav, [this] { openNativeProject(); }), "folder-open");
-    setWorkspaceIcon(button("New conversation", nav, [this] { call("v2.conversation.new"); }), "comment-alt");
+    auto *newChat = button("New conversation", nav, [this] { newConversation(); });
+    newChat->setObjectName("newConversationButton");
+    setWorkspaceIcon(newChat, "comment-alt");
     search = new QLineEdit;
     search->setPlaceholderText("Search projects and conversations");
     search->addAction(workspaceIcon("search"), QLineEdit::LeadingPosition);
@@ -420,6 +422,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     conversationPane->setMinimumWidth(290);
     auto *file = menuBar()->addMenu("&File");
     file->addAction("New project…", this, &WorkspaceWindow::newProject, QKeySequence::New);
+    file->addAction("New conversation", this, &WorkspaceWindow::newConversation, QKeySequence("Ctrl+Shift+N"));
     file->addAction("Import model…", this, [this] { openFile(); }, QKeySequence::Open);
     file->addAction("Open native project…", this, &WorkspaceWindow::openNativeProject);
     file->addAction(
@@ -582,15 +585,17 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             return;
         auto pid = item->data(0, Qt::UserRole).toString();
         auto cid = item->data(0, Qt::UserRole + 1).toString();
+        if (pid.isEmpty())
+            return;
         if (!cid.isEmpty())
-            call("v2.conversation.open", {{"project_id", pid}, {"conversation_id", cid}});
+            openConversation(pid, cid);
         else if (pid != state.value("project").toObject().value("project_id").toString())
             call("v2.project.open", {{"project_id", pid}});
     });
     projects->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(projects, &QTreeWidget::customContextMenuRequested, this, [this](QPoint position) {
         auto *item = projects->itemAt(position);
-        if (!item || busy)
+        if (!item || item->isDisabled() || busy)
             return;
         auto cid = item->data(0, Qt::UserRole + 1).toString();
         auto pid = item->data(0, Qt::UserRole).toString();
@@ -819,6 +824,47 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
             done(result);
     });
 }
+void WorkspaceWindow::revealConversation() {
+    conversationPane->show();
+    auto sizes = split->sizes();
+    const int index = split->indexOf(conversationPane);
+    if (index >= 0 && sizes[index] < conversationPane->minimumWidth()) {
+        const int total = split->width() - split->handleWidth() * (split->count() - 1);
+        const int chatWidth = qBound(290, total / 3, 400);
+        int navigationWidth = navigation->isVisible() ? sizes[0] : 0;
+        if (total - navigationWidth - chatWidth < 450) {
+            navigation->hide();
+            navigationWidth = 0;
+        }
+        sizes[0] = navigationWidth;
+        sizes[1] = qMax(1, total - navigationWidth - chatWidth);
+        sizes[index] = chatWidth;
+        split->setSizes(sizes);
+    }
+    composer->setFocus(Qt::OtherFocusReason);
+}
+void WorkspaceWindow::newConversation() {
+    revealConversation();
+    if (busy) {
+        activity->setText("Wait for the current task, or stop it before starting another conversation.");
+        return;
+    }
+    if (focusOpenDialog()) return;
+    if (state.value("project").toObject().isEmpty()) {
+        activity->setText("Create or open a project to start a conversation.");
+        newProject();
+        return;
+    }
+    call("v2.conversation.new", {}, [this](auto) {
+        revealConversation();
+        Q_EMIT conversationOpened();
+    });
+}
+void WorkspaceWindow::openConversation(const QString &projectId, const QString &conversationId) {
+    if (busy || projectId.isEmpty() || conversationId.isEmpty()) return;
+    call("v2.conversation.open", {{"project_id", projectId}, {"conversation_id", conversationId}},
+         [this](auto) { revealConversation(); Q_EMIT conversationOpened(); });
+}
 bool WorkspaceWindow::focusOpenDialog() {
     for (auto *dialog : findChildren<QDialog *>()) {
         if (!dialog->isVisible()) continue;
@@ -877,6 +923,7 @@ void WorkspaceWindow::newProject() {
             activity->setText(
                 "Created " +
                 QDir::toNativeSeparators(r.value("project").toObject().value("folder_path").toString()));
+            revealConversation();
         });
     });
     dialog->show();
@@ -1289,6 +1336,54 @@ void WorkspaceWindow::applyOperation() {
     call("v2.command", p);
 }
 void WorkspaceWindow::smokeCheck() {
+    if (!conversationsVerified) {
+        auto *trigger = findChild<QPushButton *>("newConversationButton");
+        const auto originalState = state;
+        state.remove("project");
+        for (int click = 0; click < 25; ++click) trigger->click();
+        auto dialogs = findChildren<QDialog *>("newProjectDialog");
+        if (dialogs.size() != 1) {
+            showError("A conversation without a project did not open one project dialog.");
+            return;
+        }
+        dialogs.first()->reject();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        showState(originalState);
+        const auto originalDocument = document;
+        const auto originalChat = state.value("conversation").toObject().value("conversation_id").toString();
+        const auto originalProject = state.value("project").toObject().value("project_id").toString();
+        const auto count = state.value("conversations").toArray().size();
+        conversationPane->hide();
+        connect(this, &WorkspaceWindow::conversationOpened, this,
+                [this, originalDocument, originalChat, originalProject, count] {
+            if (document != originalDocument || state.value("conversations").toArray().size() != count + 1 ||
+                state.value("conversation").toObject().value("conversation_id") == originalChat ||
+                !conversationPane->isVisible() || conversationPane->width() < 290 || focusWidget() != composer) {
+                showError("New conversation did not reveal and focus chat or preserve the document.");
+                return;
+            }
+            auto sizes = split->sizes();
+            sizes[2] = 0;
+            split->setSizes(sizes);
+            connect(this, &WorkspaceWindow::conversationOpened, this,
+                    [this, originalDocument, originalChat] {
+                if (document != originalDocument ||
+                    state.value("conversation").toObject().value("conversation_id") != originalChat ||
+                    !conversationPane->isVisible() || conversationPane->width() < 290 || focusWidget() != composer) {
+                    showError("Opening an existing conversation did not restore collapsed chat.");
+                    return;
+                }
+                conversationsVerified = true;
+                QTimer::singleShot(0, this, &WorkspaceWindow::smokeCheck);
+            }, Qt::SingleShotConnection);
+            openConversation(originalProject, originalChat);
+        }, Qt::SingleShotConnection);
+        for (int click = 0; click < 25; ++click) trigger->click();
+        QTimer::singleShot(10000, this, [this] {
+            if (!conversationsVerified) showError("Conversation opening did not finish.");
+        });
+        return;
+    }
     if (!settingsVerified) {
         for (const auto &name : {QString("newProjectDialog"), QString("projectCatalogue")}) {
             for (int click = 0; click < 25; ++click) {
@@ -1388,6 +1483,11 @@ void WorkspaceWindow::smokeCheck() {
         {"body_count", viewer->bodyCount()},
         {"face_selection", true},
         {"settings_singleton_rapid_clicks", 125},
+        {"new_conversation_reveals_hidden_panel", conversationsVerified},
+        {"existing_conversation_restores_collapsed_panel", conversationsVerified},
+        {"new_conversation_without_project_guides_creation", conversationsVerified},
+        {"conversation_rapid_clicks", 25},
+        {"conversation_switch_preserves_document", conversationsVerified},
         {"project_dialog_singleton_clicks", 50},
         {"composer_clears_on_submission", true},
         {"next_draft_preserved", true},

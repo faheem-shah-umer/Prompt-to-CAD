@@ -69,3 +69,5 @@ The conversation panel places user messages on the right and Codex replies on th
 Use Open project to copy an older project folder into Projects/ with its chats and documents. The original is preserved. New project folders use their creation name; the Projects settings page and project context menu reveal their actual locations.
 
 If a saved project folder is moved, missing, or unreadable, the sidebar marks that catalog entry Unavailable. Other projects remain usable. If the last active project cannot open, the app starts with an empty workspace so you can open another project. Catalog records and project files are retained; restoring the folder makes its entry available again on refresh or reopening.
+
+New conversation (Ctrl+Shift+N) opens and focuses the chat panel even when it was hidden or collapsed. Selecting an existing conversation also reveals the panel. With no active project, New conversation opens the named-project dialog first. Conversations within a project continue to reference the same CAD document.
