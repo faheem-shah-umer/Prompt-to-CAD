@@ -17,6 +17,7 @@ from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
 from .provider import CodexAppServer, discover_executable
+from .usage import allowance, merge_allowance, tokens
 
 INSTRUCTIONS = (
     Path(__file__).with_name("CAD_INSTRUCTIONS.md").read_text(encoding="utf-8")
@@ -24,14 +25,24 @@ INSTRUCTIONS = (
 
 
 class WorkspaceV2(Workspace):
-    def __init__(self, home, notify=lambda event: None, identity_home=None):
+    def __init__(
+        self, home, notify=lambda event: None, identity_home=None, projects_dir=None
+    ):
         self.home = Path(home).resolve()
         self.active_task = None
         self.task_state = "disconnected"
         self.acceptance_lock = threading.RLock()
         self.output = notify
         super().__init__(self.home / "geometry", self.emit)
-        self.projects = Projects(self.home / "projects")
+        self.projects = Projects(
+            Path(projects_dir) if projects_dir else self.home / "projects"
+        )
+        self.provider_usage = {
+            "available": False,
+            "message": "Refresh to check reported allowance.",
+        }
+        self.usage_account = None
+        self.token_usage = {}
         self.connections = Connections(
             Path(identity_home) if identity_home else self.home / "identity", self.emit
         )
@@ -48,6 +59,25 @@ class WorkspaceV2(Workspace):
 
     def emit(self, event):
         event = dict(event)
+        if event.get("stage") == "usage":
+            if event.get("kind") == "tokens":
+                self.token_usage = tokens(event.get("observation", {}))
+                event["tokens"] = self.token_usage
+            elif event.get("kind") == "allowance":
+                self.provider_usage = merge_allowance(
+                    self.provider_usage
+                    if self.active_task
+                    and self.usage_account == self.active_task.get("provider_account")
+                    else {},
+                    event.get("observation", {}),
+                )
+                self.usage_account = (
+                    self.active_task.get("provider_account")
+                    if self.active_task
+                    else None
+                )
+                event["usage"] = self.provider_usage
+            event.pop("observation", None)
         stages = {
             "connecting": "connecting",
             "agent_running": "running",
@@ -65,7 +95,7 @@ class WorkspaceV2(Workspace):
                 conversation_id=task["conversation_id"],
                 document_id=task["document_id"],
             )
-            if event.get("stage") not in ("assistant_delta", "candidate"):
+            if event.get("stage") not in ("assistant_delta", "candidate", "usage"):
                 task.setdefault("activity", []).append(
                     {k: event[k] for k in ("stage", "state", "message") if k in event}
                 )
@@ -96,13 +126,22 @@ class WorkspaceV2(Workspace):
         return self.state()
 
     def state(self):
+        provider = self.connections.status()
+        active = provider.get("active") or {}
+        if (
+            active.get("connected")
+            and active.get("id") == self.usage_account
+            and self.usage_account
+        ):
+            provider["usage"] = self.provider_usage
         return {
             **(
                 self.projects.view(self.project_id)
                 if self.project_id
                 else {"catalog": self.projects.listing()}
             ),
-            "provider": self.connections.status(),
+            "provider": provider,
+            "projects_root": str(self.projects.folder),
             "task_state": self.task_state
             if self.active_task
             or self.task_state
@@ -229,7 +268,7 @@ class WorkspaceV2(Workspace):
             self.projects.save_conversation(pid, chat)
             return self.state()
         if method == "provider.status":
-            return self.connections.status()
+            return self.state()["provider"]
         if method == "provider.login":
             return self.connections.begin(params.get("account_id"))
         if method == "provider.cancel_login":
@@ -242,6 +281,8 @@ class WorkspaceV2(Workspace):
             return self.connections.disconnect()
         if method == "provider.models":
             return self.connections.models()
+        if method == "provider.usage":
+            return self.read_usage()
         if method == "provider.configure":
             path = str(params.get("codex_path", "")).strip()
             if path and not Path(path).is_file():
@@ -335,6 +376,9 @@ class WorkspaceV2(Workspace):
             self.projects.adopt(self.project_id, doc)
             return self.state()
         if method == "v2.open_native":
+            folder = Path(params["path"]).resolve()
+            if (folder / "workspace.json").is_file():
+                return self.activate(self.projects.import_project(folder))
             super().dispatch("document.open", params)
             document = self.document
             if not self.project_id:
@@ -571,6 +615,7 @@ class WorkspaceV2(Workspace):
                 + "\n\nUser request:\n"
                 + prompt
             )
+            self.token_usage = conversation.get("token_usage", {})
             message = self.runtime.run(
                 text,
                 model,
@@ -665,6 +710,7 @@ class WorkspaceV2(Workspace):
                 self.runtime.close()
                 self.runtime = None
             self.projects.task(self.project_id, task)
+            conversation["token_usage"] = self.token_usage
             self.projects.save_conversation(self.project_id, conversation)
             self.task_deadline = None
             self.emit(
@@ -676,3 +722,32 @@ class WorkspaceV2(Workspace):
             )
             self.active_task = None
         return {**self.state(), "task": task}
+
+    def read_usage(self):
+        account_id, account = self.connections.credential()
+        usage = {
+            "available": False,
+            "message": "API billing is separate. View costs in the API usage dashboard.",
+        }
+        if account["mode"] == "chatgpt":
+            runtime = None
+            try:
+                runtime = CodexAppServer(
+                    self.home / "runtime/usage",
+                    self.configuration.get("codex_path") or None,
+                    account.get("access_token"),
+                    account["mode"],
+                )
+                usage = allowance(
+                    runtime.request("account/rateLimits/read", {}, timeout=15)
+                )
+            except WorkspaceError:
+                usage = {
+                    "available": False,
+                    "message": "This authorized connection does not report allowance. Open provider usage for current limits.",
+                }
+            finally:
+                if runtime:
+                    runtime.close()
+        self.provider_usage, self.usage_account = usage, account_id
+        return {"usage": usage}

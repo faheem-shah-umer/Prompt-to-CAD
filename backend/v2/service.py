@@ -11,16 +11,42 @@ from backend.native.contracts import WorkspaceError
 from .workspace import WorkspaceV2
 
 
+def application_folder():
+    folder = Path(__file__).resolve().parents[2]
+    if (folder.parent / "bin/PromptToCAD.exe").is_file() and (
+        folder.parent / "python/python.exe"
+    ).is_file():
+        return folder.parent
+    return folder
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--projects-dir",
         type=Path,
         default=Path(
-            os.getenv("PROMPTCAD_HOME", str(Path.home() / ".promptcad" / "v2"))
+            os.getenv(
+                "PROMPTCAD_HOME",
+                str(application_folder() / ".promptcad"),
+            )
         ),
     )
     args = parser.parse_args()
+    isolated = (
+        "PROMPTCAD_HOME" in os.environ
+        or args.projects_dir != application_folder() / ".promptcad"
+    )
+    project_folder = Path(
+        os.getenv(
+            "PROMPTCAD_PROJECTS_DIR",
+            str(
+                args.projects_dir / "projects"
+                if isolated
+                else application_folder() / "Projects"
+            ),
+        )
+    )
     output_lock = threading.Lock()
     state_lock = threading.Lock()
     busy = False
@@ -36,7 +62,9 @@ def main():
     workspace = WorkspaceV2(
         args.projects_dir,
         lambda event: send({"jsonrpc": "2.0", "method": "progress", "params": event}),
-        identity_home=os.getenv("PROMPTCAD_IDENTITY_HOME"),
+        identity_home=os.getenv("PROMPTCAD_IDENTITY_HOME")
+        or (None if isolated else Path.home() / ".promptcad/v2/identity"),
+        projects_dir=project_folder,
     )
 
     def respond(request):

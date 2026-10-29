@@ -1,6 +1,6 @@
 # Repository privacy
 
-Use the `prompt-to-cad-v2` branch. Git contains application source, documentation, tests and approved branding assets. User-created models, example CAD files, project/document/revision data, conversations, imported/reference files, exports and generated reports/screenshots are excluded. Runtime accounts and user projects belong outside the checkout; the application defaults to `%USERPROFILE%/.promptcad/v2`.
+Use the `prompt-to-cad-v2` branch. Git contains application source, documentation, tests and approved branding assets. User-created models, example CAD files, project/document/revision data, conversations, imported/reference files, exports and generated reports/screenshots are excluded. New projects are stored locally in ignored `Projects/<project name>/` folders inside the checkout, or beside a packaged app. Provider/runtime preferences use ignored `.promptcad/`; credentials remain protected by Windows in user storage. These local files are excluded from Git and installer inventories.
 
 The source policy in `tools/source_policy.py` is shared by the tracked-file checker and packager. It allows source files in designated source directories and the original logo assets. JSON/JSONL records, CAD/mesh files, databases, reference images and generated validation outputs are ignored and rejected if force-added. Add any future legitimate source asset to this reviewed policy explicitly. Validation creates fresh synthetic geometry in ignored temporary folders instead of reusing saved user designs.
 

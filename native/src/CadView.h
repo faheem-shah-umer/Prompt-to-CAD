@@ -21,6 +21,7 @@ public:
     void isolateInstance(const QString& id);
     void showAll();
     void setShading(bool edges);
+    void setLightTheme(bool light);
     void setVisibleInstance(const QString& id, bool visible);
     QJsonArray selectedEdges(const QString& instanceId) const;
     QJsonObject selection() const { return currentSelection; }
@@ -52,4 +53,5 @@ private:
     QString mode = "body";
     QPoint lastPosition, pressedPosition;
     bool pendingDocument = false;
+    bool lightTheme = false;
 };

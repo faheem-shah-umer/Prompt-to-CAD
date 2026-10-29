@@ -305,6 +305,10 @@ class CodexAppServer:
                             },
                         }
                     )
+            elif method == "thread/tokenUsage/updated":
+                notify({"stage": "usage", "kind": "tokens", "observation": params})
+            elif method == "account/rateLimits/updated":
+                notify({"stage": "usage", "kind": "allowance", "observation": params})
             elif method == "item/agentMessage/delta":
                 delta = params.get("delta", "")
                 key = params.get("itemId", "message")

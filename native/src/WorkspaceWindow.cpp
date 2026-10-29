@@ -1,5 +1,6 @@
 #include "WorkspaceWindow.h"
 #include "CadView.h"
+#include "WorkspaceTheme.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -14,15 +15,18 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
@@ -59,7 +63,7 @@ QIcon lineIcon(const QString &name) {
     pixmap.fill(Qt::transparent);
     QPainter p(&pixmap);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor("#b8c4d2"), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setPen(QPen(QColor("#85858d"), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     if (name == "projects") {
         p.drawPolyline(QPolygonF{{3, 7}, {3, 20}, {21, 20}, {21, 7}, {11, 7}, {9, 4}, {3, 4}, {3, 7}});
     } else if (name == "model") {
@@ -102,15 +106,6 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     rail->setFixedWidth(46);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(3, 10, 3, 8);
-    auto *brand = new QLabel;
-    brand->setObjectName("brandLogo");
-    brand->setPixmap(QPixmap(":/brand/app-icon.png").scaled(32, 32, Qt::KeepAspectRatio,
-                                                          Qt::SmoothTransformation));
-    brand->setAccessibleName("Prompt to CAD logo");
-    brand->setToolTip("Prompt to CAD V2");
-    brand->setAlignment(Qt::AlignCenter);
-    brand->setContentsMargins(0, 10, 0, 10);
-    railLayout->addWidget(brand);
     auto *projectsToggle =
         button("", railLayout, [this] { navigation->setVisible(!navigation->isVisible()); });
     projectsToggle->setIcon(lineIcon("projects"));
@@ -158,7 +153,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     nav->addWidget(projects, 1);
     auto *usage = new QLabel("Local workspace · files stay on this PC");
     usage->setWordWrap(true);
-    usage->setStyleSheet("color:#93939e;font-size:11px");
+    usage->setObjectName("muted");
     nav->addWidget(usage);
     accountBadge = button("Account · disconnected", nav, [this] { account(); });
     accountBadge->setObjectName("accountBadge");
@@ -173,7 +168,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     title->setStyleSheet("font-weight:600");
     title->setMaximumWidth(320);
     saved = new QLabel("Saved locally");
-    saved->setStyleSheet("color:#8f929d");
+    saved->setObjectName("muted");
     documentHeader->addWidget(title, 1);
     documentHeader->addWidget(saved);
     button("Save", documentHeader,
@@ -353,66 +348,145 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     conversationPane = new QWidget;
     conversationPane->setObjectName("conversationPane");
     auto *conversation = new QVBoxLayout(conversationPane);
-    conversation->setContentsMargins(14, 14, 14, 12);
+    conversation->setContentsMargins(18, 16, 18, 12);
+    conversation->setSpacing(12);
+    auto *conversationHeader = new QHBoxLayout;
     conversationTitle = new QLabel("Design conversation");
     conversationTitle->setWordWrap(true);
-    conversationTitle->setStyleSheet("font-size:15px;font-weight:600");
-    conversation->addWidget(conversationTitle);
+    conversationTitle->setStyleSheet("font-size:14px;font-weight:600");
+    conversationHeader->addWidget(conversationTitle, 1);
+    auto *connectionButton = button("Codex", conversationHeader, [this] { account(); });
+    connectionButton->setObjectName("quietButton");
+    connectionButton->setToolTip("Account and agent settings");
+    conversation->addLayout(conversationHeader);
     chat = new QTextBrowser;
+    chat->setObjectName("conversationHistory");
     chat->setOpenExternalLinks(false);
-    chat->setPlaceholderText("Describe a part and its dimensions, or "
-                             "select geometry to focus a change.");
+    chat->setOpenLinks(false);
     conversation->addWidget(chat, 1);
-    taskActivity = new QLabel("Ready for a design request");
-    taskActivity->setWordWrap(true);
-    taskActivity->setMaximumHeight(54);
+    auto *taskCard = new QFrame;
+    taskCard->setObjectName("taskCard");
+    auto *taskLayout = new QVBoxLayout(taskCard);
+    taskLayout->setContentsMargins(12, 10, 12, 10);
+    taskLayout->setSpacing(7);
+    auto *taskHeader = new QHBoxLayout;
+    taskTitle = new QLabel("Starting workspace");
+    taskTitle->setObjectName("taskTitle");
+    taskHeader->addWidget(taskTitle, 1);
+    taskElapsed = new QLabel;
+    taskElapsed->setObjectName("muted");
+    taskHeader->addWidget(taskElapsed);
+    taskLayout->addLayout(taskHeader);
+    taskActivity = new QLabel("Opening the local CAD service…");
     taskActivity->setObjectName("taskActivity");
-    conversation->addWidget(taskActivity);
+    taskActivity->setWordWrap(true);
+    taskLayout->addWidget(taskActivity);
+    taskProgress = new QProgressBar;
+    taskProgress->setObjectName("taskProgress");
+    taskProgress->setRange(0, 0);
+    taskProgress->setTextVisible(false);
+    taskProgress->setFixedHeight(3);
+    taskProgress->hide();
+    taskLayout->addWidget(taskProgress);
     auto *details = new QToolButton;
-    details->setText("Activity details");
+    details->setObjectName("activityDetails");
+    details->setText("Activity");
+    details->hide();
     details->setCheckable(true);
     details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     details->setArrowType(Qt::RightArrow);
-    conversation->addWidget(details);
+    details->setStyleSheet("text-align:left;border:0;padding:0;");
+    taskLayout->addWidget(details, 0, Qt::AlignLeft);
     taskLog = new QPlainTextEdit;
     taskLog->setReadOnly(true);
-    taskLog->setMaximumHeight(140);
+    taskLog->setMaximumHeight(125);
     taskLog->hide();
-    conversation->addWidget(taskLog);
+    taskLayout->addWidget(taskLog);
     connect(details, &QToolButton::toggled, this, [this, details](bool show) {
         taskLog->setVisible(show);
         details->setArrowType(show ? Qt::DownArrow : Qt::RightArrow);
     });
-
+    conversation->addWidget(taskCard);
+    auto *composerFrame = new QFrame;
+    composerFrame->setObjectName("composerFrame");
+    auto *compose = new QVBoxLayout(composerFrame);
+    compose->setContentsMargins(10, 8, 10, 8);
+    compose->setSpacing(7);
     selectionChip = new QPushButton;
     selectionChip->setObjectName("selectionChip");
     selectionChip->hide();
     selectionChip->setToolTip("Remove selection context from the next task");
-    conversation->addWidget(selectionChip);
+    compose->addWidget(selectionChip);
     composer = new QPlainTextEdit;
-    composer->setPlaceholderText("Ask the agent to create or refine…\nCtrl+Enter to send");
-    composer->setMinimumHeight(90);
-    composer->setMaximumHeight(160);
-    conversation->addWidget(composer);
+    composer->setPlaceholderText("Describe a design or ask for a change…");
+    composer->setFixedHeight(68);
+    compose->addWidget(composer);
     auto *providerRow = new QHBoxLayout;
-    auto *providerName = new QLabel("Codex");
-    providerRow->addWidget(providerName);
     models = new QComboBox;
-    models->setMinimumContentsLength(8);
+    models->setMinimumContentsLength(7);
     models->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    models->setPlaceholderText("Connect and discover models");
+    models->setPlaceholderText("Choose model");
     providerRow->addWidget(models, 1);
-    conversation->addLayout(providerRow);
-    auto *sendRow = new QHBoxLayout;
-    sendRow->addStretch();
-    sendButton = button("Send request", sendRow, [this] { submit(); });
-    stopButton = button("Stop", sendRow, [this] {
+    stopButton = button("Stop", providerRow, [this] {
         rpc->cancel();
-        activity->setText("Stopping task; candidate will be discarded…");
+        updateTask("cancelling", "Discarding the unaccepted candidate. Your saved design is preserved.");
+        stopButton->setEnabled(false);
     });
+    stopButton->hide();
+    sendButton = button("↑", providerRow, [this] { submit(); });
     sendButton->setObjectName("primaryButton");
-    stopButton->setEnabled(false);
-    conversation->addLayout(sendRow);
+    sendButton->setFixedSize(30, 30);
+    sendButton->setAccessibleName("Send request");
+    sendButton->setToolTip("Send · Ctrl+Enter");
+    sendButton->setEnabled(false);
+    compose->addLayout(providerRow);
+    conversation->addWidget(composerFrame);
+    auto *usageRow = new QHBoxLayout;
+    usageBadge = new QPushButton("Usage unavailable");
+    usageBadge->setObjectName("usageBadge");
+    usageRow->addWidget(usageBadge);
+    tokenUsageLabel = new QLabel;
+    tokenUsageLabel->setObjectName("muted");
+    usageRow->addWidget(tokenUsageLabel, 1, Qt::AlignRight);
+    conversation->addLayout(usageRow);
+    connect(usageBadge, &QPushButton::clicked, this, [this] {
+        if (!state.value("provider").toObject().value("active").toObject().value("connected").toBool()) {
+            account();
+            return;
+        }
+        QMenu menu;
+        for (auto line : usageBadge->toolTip().split('\n'))
+            menu.addAction(line)->setEnabled(false);
+        menu.addSeparator();
+        auto *refresh = menu.addAction("Refresh allowance");
+        refresh->setEnabled(!busy);
+        auto *manage = menu.addAction("Manage provider usage ↗");
+        auto *choice = menu.exec(usageBadge->mapToGlobal(QPoint(0, 0)));
+        if (choice == refresh)
+            refreshUsage();
+        if (choice == manage) {
+            const bool api =
+                state.value("provider").toObject().value("active").toObject().value("connection") == "api";
+            QDesktopServices::openUrl(
+                QUrl(api ? "https://platform.openai.com/usage" : "https://chatgpt.com/settings/usage"));
+        }
+    });
+    taskPulse = new QTimer(this);
+    taskPulse->setInterval(1000);
+    connect(taskPulse, &QTimer::timeout, this, [this] {
+        const qint64 seconds = taskClock.isValid() ? taskClock.elapsed() / 1000 : 0;
+        taskElapsed->setText(QString("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')));
+    });
+    chatRefresh = new QTimer(this);
+    chatRefresh->setSingleShot(true);
+    chatRefresh->setInterval(100);
+    connect(chatRefresh, &QTimer::timeout, this, &WorkspaceWindow::renderChat);
+    connect(composer, &QPlainTextEdit::textChanged, this, [this] {
+        composer->setFixedHeight(
+            qBound(68, composer->fontMetrics().lineSpacing() * (composer->blockCount() + 1) + 16, 140));
+        sendButton->setEnabled(!busy && !state.value("project").toObject().isEmpty() &&
+                               !composer->toPlainText().trimmed().isEmpty());
+    });
     split->addWidget(conversationPane);
     split->setSizes({245, 915, 360});
     split->setStretchFactor(1, 1);
@@ -593,10 +667,20 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         auto cid = item->data(0, Qt::UserRole + 1).toString();
         auto pid = item->data(0, Qt::UserRole).toString();
         QMenu menu;
+        auto *openFolder = menu.addAction("Open project folder ↗");
+        menu.addSeparator();
         auto *rename = menu.addAction("Rename…");
         auto *archive = menu.addAction("Archive");
         auto *remove = menu.addAction("Move to trash…");
         auto *chosen = menu.exec(projects->viewport()->mapToGlobal(position));
+        if (chosen == openFolder) {
+            for (auto value : state.value("catalog").toObject().value("projects").toArray()) {
+                auto p = value.toObject();
+                if (p.value("project_id") == pid)
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(p.value("folder_path").toString()));
+            }
+            return;
+        }
         QJsonObject args{{"project_id", pid}};
         QString method = cid.isEmpty() ? "v2.project.update" : "v2.conversation.update";
         args[cid.isEmpty() ? "project_id" : "conversation_id"] = cid.isEmpty() ? pid : cid;
@@ -653,22 +737,25 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         if (!taskId.isEmpty() &&
             event.value("conversation_id") != state.value("conversation").toObject().value("conversation_id"))
             return;
-        if (stage != "assistant_delta" && stage != "candidate") {
-            auto message = event.value("message").toString();
-            auto taskState = event.value("state").toString();
-            if (taskState == "completed")
-                taskActivity->setText("Completed · geometry verified and saved");
-            else if (taskState == "completed_no_change")
-                taskActivity->setText("Completed · no geometry change");
-            else if (taskState == "cancelled")
-                taskActivity->setText("Cancelled · accepted model preserved");
-            else if (taskState == "failed")
-                taskActivity->setText("Task failed · accepted model preserved");
-            else if (taskState == "usage_limit")
-                taskActivity->setText("Usage limit reached · manage usage in Settings");
-            else
-                taskActivity->setText(message.left(180));
+        if (stage == "usage") {
+            if (event.contains("tokens")) {
+                auto c = state.value("conversation").toObject();
+                c["token_usage"] = event.value("tokens");
+                state["conversation"] = c;
+            }
+            if (event.contains("usage")) {
+                auto p = state.value("provider").toObject();
+                p["usage"] = event.value("usage");
+                state["provider"] = p;
+            }
+            updateUsage();
+            return;
+        }
+        if (stage != "assistant_delta" && stage != "candidate" && !taskId.isEmpty()) {
+            const auto message = event.value("message").toString();
+            updateTask(event.value("state").toString("running"), message);
             taskLog->appendPlainText(message);
+            findChild<QToolButton *>("activityDetails")->show();
         }
         if (stage == "clarification") {
             QJsonObject answers;
@@ -696,8 +783,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
                               showError(e);
                       });
         } else if (stage == "assistant_delta") {
-            chat->moveCursor(QTextCursor::End);
-            chat->insertHtml(html(event.value("message").toString()));
+            liveAnswer += event.value("message").toString();
+            if (!chatRefresh->isActive())
+                chatRefresh->start();
         } else if (stage == "candidate") {
             viewer->setDocument(event.value("document").toObject(), false);
             saved->setText("Candidate preview · not accepted");
@@ -711,10 +799,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         } else
             activity->setText(event.value("message").toString());
     });
-    connect(rpc, &RpcClient::stopped, this, &WorkspaceWindow::showError);
+    connect(rpc, &RpcClient::stopped, this, [this](const QString &error) {
+        Q_EMIT workspaceReady();
+        showError(error);
+    });
     connect(rpc, &RpcClient::ready, this, [this, openPath] {
         call("v2.state", {}, [this, openPath](auto r) {
             showState(r);
+            Q_EMIT workspaceReady();
             if (!openPath.isEmpty())
                 openFile(openPath);
             else if (smoke)
@@ -732,7 +824,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     manager->setVisible(prefs.value("v2/managerVisible", true).toBool());
     conversationPane->setVisible(prefs.value("v2/conversationVisible", true).toBool());
     viewer->setShading(prefs.value("v2/edges", true).toBool());
-    setStyleSheet(QString("QWidget { font-size:%1px; }").arg(prefs.value("v2/textSize", 12).toInt()));
+    applyAppearance();
     rpc->start(workspace, python, "backend.v2.service");
 }
 
@@ -771,16 +863,21 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     }
     busy = true;
     sendButton->setEnabled(false);
-    stopButton->setEnabled(true);
+    stopButton->setEnabled(method == "v2.task");
+    stopButton->setVisible(method == "v2.task");
     undoAction->setEnabled(false);
     redoAction->setEnabled(false);
     rpc->call(method, params, [this, done](const QJsonObject &result, const QString &failure) {
         busy = false;
-        sendButton->setEnabled(true);
+        sendButton->setEnabled(!composer->toPlainText().trimmed().isEmpty());
         stopButton->setEnabled(false);
+        stopButton->hide();
         if (!failure.isEmpty()) {
             activeTaskId.clear();
-            taskActivity->setText(failure);
+            pendingUser.clear();
+            liveAnswer.clear();
+            Q_EMIT workspaceReady();
+            updateTask("failed", failure);
             showError(failure);
             viewer->setDocument(document, false);
             saved->setText("Accepted document preserved");
@@ -797,11 +894,49 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     });
 }
 void WorkspaceWindow::newProject() {
-    bool ok;
-    auto name = QInputDialog::getText(this, "New project", "Project name", QLineEdit::Normal,
-                                      "Untitled project", &ok);
-    if (ok)
-        call("v2.project.create", {{"name", name}});
+    auto *dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName("newProjectDialog");
+    dialog->setWindowTitle("New project");
+    dialog->resize(500, 260);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(24, 22, 24, 20);
+    layout->setSpacing(14);
+    auto *heading = new QLabel("New project");
+    heading->setObjectName("pageTitle");
+    layout->addWidget(heading);
+    layout->addWidget(new QLabel("Project name"));
+    auto *name = new QLineEdit;
+    name->setObjectName("newProjectName");
+    name->setPlaceholderText("e.g. Motor mounting bracket");
+    layout->addWidget(name);
+    auto *location =
+        new QLabel("Saved in " +
+                   QDir::toNativeSeparators(state.value("projects_root").toString(workspace + "/Projects")) +
+                   "\nA folder is created using your project name.");
+    location->setWordWrap(true);
+    location->setObjectName("muted");
+    layout->addWidget(location);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText("Create project");
+    buttons->button(QDialogButtonBox::Ok)->setObjectName("primaryButton");
+    buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+    layout->addWidget(buttons);
+    connect(name, &QLineEdit::textChanged, dialog, [buttons](const QString &text) {
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(!text.trimmed().isEmpty());
+    });
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, [this, name, dialog] {
+        const auto title = name->text().trimmed();
+        dialog->accept();
+        call("v2.project.create", {{"name", title}}, [this](auto r) {
+            activity->setText(
+                "Created " +
+                QDir::toNativeSeparators(r.value("project").toObject().value("folder_path").toString()));
+        });
+    });
+    dialog->show();
+    name->setFocus();
 }
 void WorkspaceWindow::openFile(const QString &supplied) {
     auto path = supplied;
@@ -929,47 +1064,31 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
         if (o.value("revision_id") == document.value("revision_id"))
             revisions->setCurrentItem(item);
     }
-    chat->clear();
     taskLog->clear();
-    for (auto message : value.value("conversation").toObject().value("messages").toArray()) {
-        auto m = message.toObject();
-        chat->append("<p style='color:#bbaadc'><b>" + html(m.value("role").toString()) + "</b></p><p>" +
-                     html(m.value("content").toString()) + "</p>");
-        for (auto event : m.value("activity").toArray())
+    for (auto item : value.value("conversation").toObject().value("messages").toArray())
+        for (auto event : item.toObject().value("activity").toArray())
             taskLog->appendPlainText(event.toObject().value("message").toString());
-        auto change = m.value("change").toObject();
-        if (!change.isEmpty()) {
-            QString links;
-            for (auto id : change.value("affected_components").toArray())
-                links += "<a href='component:" + id.toString().toHtmlEscaped() + "'>" + html(id.toString()) +
-                         "</a> ";
-            chat->append("<p style='background:#282c32;padding:8px'>Changed: " + links +
-                         "<br>Validated geometry and preserved task scope.<br><a "
-                         "href='revision:" +
-                         change.value("result_revision_id").toString() + "'>Restore revision " +
-                         change.value("result_revision_id").toString().left(8) +
-                         "</a> · Undo is available in Edit.</p>");
-        }
-    }
+    findChild<QToolButton *>("activityDetails")->setVisible(!taskLog->toPlainText().isEmpty());
+    renderChat();
     auto connection = value.value("provider").toObject();
     auto active = connection.value("active").toObject();
-    accountBadge->setText(active.isEmpty()
-                              ? "Account · disconnected"
-                              : active.value("email").toString() + "\n" +
-                                    connection.value("billing").toString() + " · Usage unavailable");
-    accountBadge->setToolTip("Allowance percentages are shown only when reported by the provider.");
-    if (settingsDialog) {
-        if (auto *label = settingsDialog->findChild<QLabel *>("connectionInfo"))
-            label->setText(connection.value("billing").toString() + "\n" + active.value("email").toString() +
-                           "\n" + active.value("workspace").toString());
-    }
+    accountBadge->setText(active.isEmpty() ? "Account · sign in" : active.value("email").toString());
+    accountBadge->setToolTip(connection.value("billing").toString());
+    updateUsage();
     activity->setText("mm · " + QString::number(document.value("components").toArray().size()) +
                       " components · " +
                       (active.isEmpty() ? "Agent disconnected" : connection.value("billing").toString()));
-    if (!busy && !value.contains("task"))
-        taskActivity->setText(connection.value("state") == "ready"
-                                  ? "Ready for a design request"
-                                  : "Connect in Settings to use the CAD agent");
+    if (!busy) {
+        const auto taskState = value.value("task_state").toString();
+        if (QStringList{"completed", "completed_no_change", "failed", "cancelled", "usage_limit"}.contains(
+                taskState))
+            updateTask(taskState, taskActivity->text());
+        else
+            updateTask(connection.value("state") == "ready" ? "idle" : "disconnected",
+                       connection.value("state") == "ready" ? "Select geometry or send a design request."
+                                                            : "Sign in from Settings to start a CAD task.");
+    }
+    sendButton->setEnabled(!busy && !project.isEmpty() && !composer->toPlainText().trimmed().isEmpty());
     loading = false;
 }
 void WorkspaceWindow::select(const QJsonObject &selection) {
@@ -1045,12 +1164,19 @@ void WorkspaceWindow::submit() {
     activeTaskId = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
     p["task_id"] = activeTaskId;
     taskLog->clear();
-    taskActivity->setText("Connecting to Codex…");
+    findChild<QToolButton *>("activityDetails")->hide();
+    pendingUser = composer->toPlainText();
+    liveAnswer.clear();
+    taskClock.restart();
+    taskElapsed->setText("0:00");
+    updateTask("connecting", "Preparing the current document and selected geometry.");
     if (!selected.isEmpty())
         p["selection"] = selected;
-    chat->append("<p><b>You</b><br>" + html(composer->toPlainText()) + "</p><p><b>CAD agent</b></p>");
+    QTimer::singleShot(0, this, &WorkspaceWindow::renderChat);
     call("v2.task", p, [this](auto) {
         composer->clear();
+        pendingUser.clear();
+        liveAnswer.clear();
         activeTaskId.clear();
     });
 }
@@ -1069,209 +1195,6 @@ void WorkspaceWindow::discoverModels() {
         activity->setText("Models discovered. Availability is verified only by "
                           "successful inference.");
     });
-}
-void WorkspaceWindow::account() {
-    if (settingsDialog) {
-        settingsDialog->showNormal();
-        settingsDialog->raise();
-        settingsDialog->activateWindow();
-        return;
-    }
-    auto *dialog = new QDialog(this);
-    settingsDialog = dialog;
-    dialog->setObjectName("workspaceSettings");
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle("Settings · Prompt to CAD V2");
-    dialog->resize(620, 540);
-    auto *layout = new QVBoxLayout(dialog);
-    auto *tabs = new QTabWidget;
-    layout->addWidget(tabs, 1);
-    auto *ai = new QWidget;
-    auto *connectionLayout = new QVBoxLayout(ai);
-    auto *mode = new QComboBox;
-    mode->setObjectName("connectionMode");
-    mode->addItem("ChatGPT subscription — Codex", "chatgpt");
-    mode->addItem("OpenAI API key — separately billed", "api");
-    connectionLayout->addWidget(mode);
-    auto *info = new QLabel;
-    info->setObjectName("connectionInfo");
-    info->setWordWrap(true);
-    auto connection = state.value("provider").toObject();
-    info->setText(connection.value("billing").toString() + "\n" +
-                  connection.value("active").toObject().value("email").toString() + "\n" +
-                  connection.value("active").toObject().value("workspace").toString());
-    connectionLayout->addWidget(info);
-    auto *plan = new QWidget;
-    auto *planLayout = new QVBoxLayout(plan);
-    planLayout->setContentsMargins(0, 0, 0, 0);
-    auto *accounts = new QComboBox;
-    accounts->setPlaceholderText("Saved ChatGPT registrations");
-    for (auto a : connection.value("accounts").toArray()) {
-        auto item = a.toObject();
-        if (item.value("connection") == "chatgpt")
-            accounts->addItem(item.value("email").toString() + " · " + item.value("workspace").toString(),
-                              item.value("id"));
-    }
-    planLayout->addWidget(accounts);
-    button("Continue with ChatGPT", planLayout, [this] {
-        call("provider.login", {}, [this](auto r) {
-            QDesktopServices::openUrl(QUrl(r.value("authorization_url").toString()));
-            taskActivity->setText("Complete authorization in your browser. This app "
-                                  "needs its own permission.");
-        });
-    });
-    button("Reconnect saved registration", planLayout, [this, accounts] {
-        if (accounts->currentIndex() >= 0)
-            call("provider.login", {{"account_id", accounts->currentData().toString()}},
-                 [](auto r) { QDesktopServices::openUrl(QUrl(r.value("authorization_url").toString())); });
-    });
-    button("Use saved registration", planLayout, [this, accounts] {
-        if (accounts->currentIndex() >= 0)
-            call("provider.select", {{"account_id", accounts->currentData().toString()}},
-                 [this](auto) { call("v2.state"); });
-    });
-    button("Cancel pending sign-in", planLayout, [this] { call("provider.cancel_login"); });
-    connectionLayout->addWidget(plan);
-    auto *api = new QWidget;
-    auto *apiLayout = new QVBoxLayout(api);
-    apiLayout->setContentsMargins(0, 0, 0, 0);
-    auto *key = new QLineEdit;
-    key->setEchoMode(QLineEdit::Password);
-    key->setPlaceholderText("Your OpenAI API key");
-    apiLayout->addWidget(key);
-    button("Validate and connect API key", apiLayout, [this, key] {
-        auto value = key->text();
-        key->clear();
-        call("provider.api_key", {{"key", value}},
-             [this](auto) { call("v2.state", {}, [this](auto) { discoverModels(); }); });
-    });
-    connectionLayout->addWidget(api);
-    api->hide();
-    connect(mode, &QComboBox::currentIndexChanged, dialog, [plan, api](int index) {
-        plan->setVisible(index == 0);
-        api->setVisible(index == 1);
-    });
-    mode->setCurrentIndex(connection.value("active").toObject().value("connection") == "api" ? 1 : 0);
-    auto *billing = new QLabel("Tasks consume the selected plan allowance or API credits. "
-                               "Long tasks may use more. Usage is unavailable from this "
-                               "connection. Reaching a limit stops the request; billing "
-                               "never switches automatically.\nConnection actions apply "
-                               "immediately. Save applies display and runtime preferences.");
-    billing->setWordWrap(true);
-    billing->setObjectName("muted");
-    connectionLayout->addWidget(billing);
-    auto *actions = new QHBoxLayout;
-    button("Discover models", actions, [this] { discoverModels(); });
-    button("Disconnect", actions,
-           [this] { call("provider.disconnect", {}, [this](auto) { call("v2.state"); }); });
-    button("Manage usage", actions, [mode] {
-        QDesktopServices::openUrl(QUrl(mode->currentIndex() == 0 ? "https://chatgpt.com/settings/usage"
-                                                                 : "https://platform.openai.com/usage"));
-    });
-    connectionLayout->addLayout(actions);
-    connectionLayout->addStretch();
-    tabs->addTab(ai, "AI connection");
-    QSettings prefs;
-    auto *appearance = new QWidget;
-    auto *appearanceLayout = new QFormLayout(appearance);
-    auto *textSize = new QComboBox;
-    textSize->addItem("Standard", 12);
-    textSize->addItem("Larger", 14);
-    textSize->setCurrentIndex(prefs.value("v2/textSize", 12).toInt() == 14 ? 1 : 0);
-    appearanceLayout->addRow("Interface text", textSize);
-    auto *navVisible = new QCheckBox("Show projects and conversations");
-    navVisible->setChecked(navigation->isVisible());
-    appearanceLayout->addRow(navVisible);
-    tabs->addTab(appearance, "Appearance");
-    auto *display = new QWidget;
-    auto *displayLayout = new QFormLayout(display);
-    auto *edges = new QCheckBox("Show solid edges");
-    edges->setObjectName("showEdges");
-    edges->setChecked(prefs.value("v2/edges", true).toBool());
-    displayLayout->addRow(edges);
-    auto *modelVisible = new QCheckBox("Show CAD manager");
-    modelVisible->setChecked(manager->isVisible());
-    displayLayout->addRow(modelVisible);
-    displayLayout->addRow(new QLabel("Units: millimetres. Imported solids retain geometry; "
-                                     "original feature history may be unavailable."));
-    tabs->addTab(display, "CAD / display");
-    auto *diagnostics = new QWidget;
-    auto *diagnosticLayout = new QVBoxLayout(diagnostics);
-    diagnosticLayout->addWidget(new QLabel("Prompt to CAD V2 · 0.4.0\nLocal OpenCascade geometry · Codex "
-                                           "App Server"));
-    auto *runtime = new QLineEdit(state.value("runtime").toObject().value("executable").toString());
-    runtime->setPlaceholderText("Automatic Codex discovery");
-    diagnosticLayout->addWidget(runtime);
-    button("Choose Codex executable…", diagnosticLayout, [this, runtime] {
-        auto path = QFileDialog::getOpenFileName(this, "Installed Codex executable", {}, "Codex (codex.exe)");
-        if (!path.isEmpty())
-            runtime->setText(path);
-    });
-    auto *probeInfo = new QLabel("Test checks the local runtime. Successful "
-                                 "inference separately verifies model access.");
-    probeInfo->setWordWrap(true);
-    diagnosticLayout->addWidget(probeInfo);
-    QPointer<QLabel> probeLabel(probeInfo);
-    button("Test runtime", diagnosticLayout, [this, probeLabel] {
-        call("provider.probe", {}, [probeLabel](auto r) {
-            if (probeLabel)
-                probeLabel->setText(r.value("message").toString());
-        });
-    });
-    diagnosticLayout->addStretch();
-    tabs->addTab(diagnostics, "Diagnostics / about");
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    buttons->setObjectName("settingsActions");
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, dialog,
-            [this, dialog, buttons, runtime, textSize, navVisible, modelVisible, edges] {
-                if (busy)
-                    return;
-                busy = true;
-                sendButton->setEnabled(false);
-                buttons->button(QDialogButtonBox::Save)->setEnabled(false);
-                ++settingsSaves;
-                QPointer<QDialog> guard(dialog);
-                const int fontSize = textSize->currentData().toInt();
-                const bool showNavigation = navVisible->isChecked();
-                const bool showManager = modelVisible->isChecked();
-                const bool showEdges = edges->isChecked();
-                rpc->call("provider.configure", {{"codex_path", runtime->text()}},
-                          [this, guard, fontSize, showNavigation, showManager, showEdges](auto r, auto e) {
-                              busy = false;
-                              sendButton->setEnabled(true);
-                              if (!e.isEmpty()) {
-                                  if (guard)
-                                      guard->findChild<QDialogButtonBox *>("settingsActions")
-                                          ->button(QDialogButtonBox::Save)
-                                          ->setEnabled(true);
-                                  showError(e);
-                                  return;
-                              }
-                              QSettings p;
-                              p.setValue("v2/textSize", fontSize);
-                              p.setValue("v2/edges", showEdges);
-                              p.sync();
-                              if (p.status() != QSettings::NoError) {
-                                  if (guard)
-                                      guard->findChild<QDialogButtonBox *>("settingsActions")
-                                          ->button(QDialogButtonBox::Save)
-                                          ->setEnabled(true);
-                                  showError("Display preferences could not be saved. Check access to local "
-                                            "application settings.");
-                                  return;
-                              }
-                              navigation->setVisible(showNavigation);
-                              manager->setVisible(showManager);
-                              viewer->setShading(showEdges);
-                              setStyleSheet(QString("QWidget { font-size:%1px; }").arg(fontSize));
-                              showState(r);
-                              if (guard)
-                                  guard->accept();
-                          });
-            });
-    dialog->show();
 }
 void WorkspaceWindow::operation(const QString &kind) {
     if (busy)
@@ -1450,6 +1373,11 @@ void WorkspaceWindow::smokeCheck() {
             });
         });
         dialog->grab().save(workspace + "/tmp/native-settings.png");
+        if (auto *pages = dialog->findChild<QListWidget *>("settingsNavigation")) {
+            pages->setCurrentRow(1);
+            dialog->grab().save(workspace + "/tmp/native-appearance.png");
+            pages->setCurrentRow(0);
+        }
         auto *save = dialog->findChild<QDialogButtonBox *>("settingsActions")->button(QDialogButtonBox::Save);
         save->click();
         save->click();
@@ -1466,23 +1394,30 @@ void WorkspaceWindow::smokeCheck() {
         return;
     }
     QDir().mkpath(workspace + "/tmp");
-    QJsonObject report{{"passed", true},
-                       {"product", "Prompt to CAD V2"},
-                       {"body_count", viewer->bodyCount()},
-                       {"face_selection", true},
-                       {"settings_singleton_rapid_clicks", 125},
-                       {"settings_close_reopen_cycles", 5},
-                       {"settings_save_requests", settingsSaves},
-                       {"settings_display_change_saved", true},
-                       {"ai_connection_options", 2},
-                       {"topology", viewer->topologyReport()},
-                       {"occt_viewer", OCC_VERSION_COMPLETE},
-                       {"qt_version", QT_VERSION_STR},
-                       {"synthetic_orbit_fps", viewer->benchmarkOrbit()},
-                       {"agent_inference_verified", false},
-                       {"window_size", QJsonArray{width(), height()}},
-                       {"viewport_size", QJsonArray{viewer->width(), viewer->height()}},
-                       {"device_pixel_ratio", viewer->devicePixelRatioF()}};
+    QJsonObject report{
+        {"passed", true},
+        {"product", "Prompt to CAD V2"},
+        {"body_count", viewer->bodyCount()},
+        {"face_selection", true},
+        {"settings_singleton_rapid_clicks", 125},
+        {"settings_close_reopen_cycles", 5},
+        {"settings_save_requests", settingsSaves},
+        {"settings_display_change_saved", true},
+        {"ai_connection_options", 2},
+        {"theme", QSettings().value("v2/theme", "dark").toString()},
+        {"named_project_folder",
+         QFileInfo(state.value("project").toObject().value("folder_path").toString()).fileName() ==
+             state.value("project").toObject().value("name").toString()},
+        {"startup_logo_captured", QFileInfo::exists(workspace + "/tmp/native-startup.png")},
+        {"usage_and_working_preview_are_fixtures", true},
+        {"topology", viewer->topologyReport()},
+        {"occt_viewer", OCC_VERSION_COMPLETE},
+        {"qt_version", QT_VERSION_STR},
+        {"synthetic_orbit_fps", viewer->benchmarkOrbit()},
+        {"agent_inference_verified", false},
+        {"window_size", QJsonArray{width(), height()}},
+        {"viewport_size", QJsonArray{viewer->width(), viewer->height()}},
+        {"device_pixel_ratio", viewer->devicePixelRatioF()}};
     QFile file(workspace + "/tmp/native-smoke-report.json");
     if (file.open(QIODevice::WriteOnly))
         file.write(QJsonDocument(report).toJson());
@@ -1496,6 +1431,34 @@ void WorkspaceWindow::smokeCheck() {
     painter.drawImage(QRect(viewer->mapTo(this, QPoint(0, 0)), viewer->size()), QImage(path));
     painter.end();
     shot.save(workspace + "/tmp/native-workspace.png");
+    auto originalProvider = state.value("provider").toObject();
+    auto fixtureProvider = originalProvider;
+    fixtureProvider["active"] =
+        QJsonObject{{"connected", true}, {"connection", "chatgpt"}, {"email", "UI fixture"}};
+    fixtureProvider["usage"] = QJsonObject{
+        {"available", true},
+        {"windows",
+         QJsonArray{QJsonObject{{"label", "5-hour"}, {"remaining_percent", 86}, {"duration_minutes", 300}}}}};
+    state["provider"] = fixtureProvider;
+    busy = true;
+    pendingUser = "Inspect the selected synthetic fixture.";
+    liveAnswer = "This is a UI validation preview, not live agent inference.";
+    updateTask("running", "UI test · synthetic activity and allowance.");
+    stopButton->show();
+    stopButton->setEnabled(true);
+    taskClock.restart();
+    renderChat();
+    updateUsage();
+    QApplication::processEvents();
+    auto working = grab();
+    QPainter workingPainter(&working);
+    workingPainter.drawImage(QRect(viewer->mapTo(this, QPoint(0, 0)), viewer->size()), QImage(path));
+    workingPainter.end();
+    working.save(workspace + "/tmp/native-agent-working.png");
+    busy = false;
+    pendingUser.clear();
+    liveAnswer.clear();
+    state["provider"] = originalProvider;
     QApplication::exit(0);
 }
 

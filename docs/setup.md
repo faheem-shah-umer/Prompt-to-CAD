@@ -48,7 +48,7 @@ Task timeout and the 32-operation budget are application limits, separate from p
 
 Engineering import: STEP/STP and the application's editable JSON recipes. Mesh import: GLB, STL, OBJ, PLY with explicit unit scaling. Solid export: STEP/STL; mesh export: GLB/STL. No DWG, proprietary feature-history reconstruction, full sketch constraint solver or arbitrary mesh-to-solid conversion is promised.
 
-Data defaults to %USERPROFILE%/.promptcad/v2. PROMPTCAD_HOME selects an isolated data directory for testing. Project, document, conversation, task and revision IDs are distinct. Atomic JSON saves, asset hashes and recovery journals are retained. Existing models/reference assets are preserved. The retired image-service credential is removed from the protected vault during migration; active image-generation routes and tool definitions are absent. No image generation dependency was exclusive to that adapter: HTTPX remains needed by OAuth/provider calls and mesh libraries remain needed for existing imported models.
+Projects default to Projects/<project name>/ in the repository, or beside a packaged application. Duplicate names receive a numeric suffix; Windows-reserved filename characters are sanitized. Documents use project-relative paths so a project folder can be moved with its conversations. Runtime preferences and provider state use the ignored .promptcad/ folder. Existing account credentials remain protected by Windows in user storage; existing older project locations are preserved. PROMPTCAD_HOME selects an isolated data directory for testing, and PROMPTCAD_PROJECTS_DIR can explicitly override the project root. Project, document, conversation, task and revision IDs are distinct. Atomic JSON saves, asset hashes and recovery journals are retained. Existing models/reference assets are preserved. The retired image-service credential is removed from the protected vault during migration; active image-generation routes and tool definitions are absent. No image generation dependency was exclusive to that adapter: HTTPX remains needed by OAuth/provider calls and mesh libraries remain needed for existing imported models.
 
 ## Build, package and validate
 
@@ -58,4 +58,12 @@ Data defaults to %USERPROFILE%/.promptcad/v2. PROMPTCAD_HOME selects an isolated
 .venv\Scripts\python.exe -m tools.package_native --help
 ```
 
-The packaging tool creates a 0.4.0 runtime with Python, Qt/OCCT libraries, dependency licences and approved application source. User projects, chats, CAD files, screenshots and account data are excluded. A separate installed Codex executable and user authorization are still required. The installer is unsigned. Validation generates ignored local evidence under artifacts/validation; see validation.md.
+The packaging tool creates a 0.4.0 runtime with Python, Qt/OCCT libraries, dependency licences and approved application source. User projects, chats, CAD files, screenshots and account data are excluded. A separate installed Codex executable and user authorization are still required. The installer uses an explicit approved file inventory and excludes Projects/, .promptcad/, chats and user assets. The installer is unsigned. Validation generates ignored local evidence under artifacts/validation; see validation.md.
+
+## Workspace preferences
+
+Settings uses separate AI connection, Appearance, Projects, CAD display and Advanced pages. Select Dark or Light in Appearance and save. Theme, text size and panel preferences persist. The logo is shown during startup and in the Windows icon; the workspace navigation rail contains controls rather than a logo.
+
+The conversation panel shows the active task phase, elapsed time, Stop, streamed visible responses and expandable activity. A compact usage badge shows only reported allowance; conversation token counts are separate. The current app-owned ChatGPT connection may not expose rolling allowance through App Server, in which case use Manage usage. See the official [App Server usage interface](https://learn.chatgpt.com/docs/app-server) and [authorized plan-provider configuration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server).
+
+Use Open project to copy an older project folder into Projects/ with its chats and documents. The original is preserved. New project folders use their creation name; the Projects settings page and project context menu reveal their actual locations.

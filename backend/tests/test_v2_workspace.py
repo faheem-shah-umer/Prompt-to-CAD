@@ -51,6 +51,30 @@ class V2WorkspaceTests(unittest.TestCase):
             "test-task",
         )
 
+    def test_named_project_collection_moves_with_verified_geometry(self):
+        import shutil
+
+        original = self.assembly()
+        conversation = self.workspace.state()["conversation"]["conversation_id"]
+        previous_root = self.workspace.projects.folder
+        self.workspace.worker.close()
+        relocated = self.folder / "Relocated projects"
+        shutil.move(str(previous_root), str(relocated))
+        self.workspace = WorkspaceV2(self.folder, projects_dir=relocated)
+        current = self.workspace.state()
+        self.assertEqual(current["document"]["revision_id"], original["revision_id"])
+        self.assertEqual(current["conversation"]["conversation_id"], conversation)
+        self.assertTrue(
+            Path(current["document"]["project_dir"]).is_relative_to(relocated)
+        )
+        self.assertEqual(
+            {
+                p["instance_id"]: p["asset_hash"]
+                for p in current["document"]["components"]
+            },
+            {p["instance_id"]: p["asset_hash"] for p in original["components"]},
+        )
+
     def test_selected_plate_thickening_scope_undo_reopen_and_conversation_switch(self):
         doc = self.assembly()
         first_chat = self.workspace.state()["conversation"]["conversation_id"]

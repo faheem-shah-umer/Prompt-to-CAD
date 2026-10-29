@@ -1,11 +1,15 @@
+#include "StartupSplash.h"
+#include "WorkspaceTheme.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
 #include <QSettings>
+#include <QTimer>
 #include <QUuid>
 #include <cstdio>
 #include <memory>
@@ -57,45 +61,38 @@ int main(int argc, char **argv) {
         python = QFileInfo::exists(bundled) ? bundled : QDir(workspace).filePath(".venv/Scripts/python.exe");
     }
     app.setStyle("Fusion");
-    app.setStyleSheet(R"(
-        QWidget { background:#181b20; color:#dce2eb; font-family:'Segoe UI'; font-size:12px; }
-        QMenuBar, QToolBar, QStatusBar { background:#1e2228; padding:4px; border:0; }
-        #rail { background:#13161a; border-right:1px solid #2c323b; }
-        #rail QPushButton { padding:9px 0; border:0; background:transparent; font-size:17px; }
-        #navigation, #conversationPane { background:#1b1f25; }
-        #navigation QPushButton { padding:7px 9px; text-align:left; }
-        #accountBadge, #muted { color:#94a0b2; font-size:11px; }
-        #taskActivity { color:#8bd0c7; padding:6px 0; }
-        QMenu { background:#232932; border:1px solid #37404d; } QMenu::item:selected { background:#34424c; }
-        QTreeWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:#181c22; border:1px solid #303844; border-radius:6px; padding:7px; }
-        #conversationHistory { border:0; background:transparent; }
-        QTreeWidget::item { padding:6px 3px; } QTreeWidget::item:selected { background:#2c4649; color:#e8f7f4; }
-        QPushButton { background:#272e37; border:1px solid #3a4553; border-radius:5px; padding:6px 10px; }
-        QPushButton:hover, QToolButton:hover { background:#35414d; }
-        #primaryButton { background:#427d73; border-color:#52958a; color:#ffffff; font-weight:600; }
-        QPushButton:disabled { color:#626d7c; background:#20262e; border-color:#2d3540; }
-        QComboBox, QDoubleSpinBox { padding:5px; background:#232a33; border:1px solid #3c4858; border-radius:4px; }
-        QTabWidget::pane { border:0; border-top:1px solid #303844; }
-        QTabBar::tab { padding:7px 10px; background:#20262e; color:#9eabba; border-bottom:2px solid transparent; }
-        QTabBar::tab:selected { color:#e6f2f0; border-bottom:2px solid #68b4a7; background:#283139; }
-        QToolButton { background:transparent; border:0; padding:6px; color:#b5c1cf; }
-        QHeaderView::section { background:#252c35; padding:7px; border:0; }
-        QSplitter::handle { background:#2c3440; width:3px; }
-        QScrollBar:vertical { background:#1b2027; width:9px; } QScrollBar::handle:vertical { background:#414c5c; border-radius:4px; min-height:25px; }
-
-    )");
-    if (parser.isSet("smoke-test") &&
-        qEnvironmentVariableIsEmpty("PROMPTCAD_HOME"))
+    if (parser.isSet("smoke-test") && qEnvironmentVariableIsSet("CAD_UI_THEME"))
+        QSettings().setValue("v2/theme", qEnvironmentVariable("CAD_UI_THEME"));
+    applyWorkspaceTheme(QSettings().value("v2/theme", "dark").toString(),
+                        QSettings().value("v2/textSize", 12).toInt());
+    if (parser.isSet("smoke-test") && qEnvironmentVariableIsEmpty("PROMPTCAD_HOME"))
         qputenv(
             "PROMPTCAD_HOME",
             (workspace + "/tmp/ui-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)).toUtf8());
-    auto window = std::make_unique<WorkspaceWindow>(workspace, python, parser.value("open"), parser.isSet("smoke-test"));
+    StartupSplash splash;
+    QElapsedTimer startupClock;
+    startupClock.start();
+    splash.show();
+    app.processEvents();
+    if (parser.isSet("smoke-test")) {
+        QDir().mkpath(workspace + "/tmp");
+        QTimer::singleShot(150, &splash, [&splash, workspace] {
+            splash.grab().save(workspace + "/tmp/native-startup.png");
+        });
+    }
+    auto window = std::make_unique<WorkspaceWindow>(workspace, python, parser.value("open"),
+                                                    parser.isSet("smoke-test"));
     if (parser.isSet("smoke-size")) {
         auto dimensions = parser.value("smoke-size").split('x');
         if (dimensions.size() != 2 || dimensions[0].toInt() < 880 || dimensions[1].toInt() < 600)
             return 2;
         window->resize(dimensions[0].toInt(), dimensions[1].toInt());
     }
-    window->show();
+    QObject::connect(window.get(), &WorkspaceWindow::workspaceReady, &splash, [&] {
+        QTimer::singleShot(int(qMax<qint64>(0, 650 - startupClock.elapsed())), window.get(), [&] {
+            window->show();
+            splash.hide();
+        });
+    });
     return app.exec();
 }

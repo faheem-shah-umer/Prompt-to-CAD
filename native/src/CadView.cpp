@@ -64,9 +64,7 @@ void CadView::initialize() {
     Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
     view->SetWindow(window);
     if (!window->IsMapped()) window->Map();
-    view->SetBgGradientColors(Quantity_Color(0.105, 0.125, 0.16, Quantity_TOC_RGB),
-                              Quantity_Color(0.055, 0.065, 0.085, Quantity_TOC_RGB), Aspect_GFM_VER, false);
-    view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY80, 0.08, V3d_ZBUFFER);
+    setLightTheme(lightTheme);
     view->SetProj(V3d_XposYnegZpos);
     view->MustBeResized();
 }
@@ -305,3 +303,12 @@ double CadView::benchmarkOrbit() {
 void CadView::isolateInstance(const QString& id){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),it.key()==id);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),it.key()==id);}
 void CadView::showAll(){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),true);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),true);}
 void CadView::setShading(bool edges){if(context.IsNull())return;context->DefaultDrawer()->SetFaceBoundaryDraw(edges);for(const auto& shape:shapes)context->Redisplay(shape,false);view->Redraw();}
+
+void CadView::setLightTheme(bool light) {
+    lightTheme = light;
+    if (view.IsNull()) return;
+    view->SetBgGradientColors(light ? Quantity_Color(0.95, 0.95, 0.96, Quantity_TOC_RGB) : Quantity_Color(0.14, 0.14, 0.16, Quantity_TOC_RGB),
+                              light ? Quantity_Color(0.85, 0.87, 0.90, Quantity_TOC_RGB) : Quantity_Color(0.09, 0.09, 0.11, Quantity_TOC_RGB), Aspect_GFM_VER, false);
+    view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, light ? Quantity_NOC_GRAY40 : Quantity_NOC_GRAY80, 0.08, V3d_ZBUFFER);
+    view->Redraw();
+}

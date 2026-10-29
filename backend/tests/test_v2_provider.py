@@ -33,6 +33,26 @@ class ProviderProtocolTests(unittest.TestCase):
                     "params": {"delta": "private reasoning fixture"},
                 },
                 {
+                    "method": "thread/tokenUsage/updated",
+                    "params": {
+                        "tokenUsage": {
+                            "total": {
+                                "inputTokens": 12,
+                                "outputTokens": 3,
+                                "totalTokens": 15,
+                            }
+                        }
+                    },
+                },
+                {
+                    "method": "account/rateLimits/updated",
+                    "params": {
+                        "rateLimits": {
+                            "primary": {"usedPercent": 14, "windowDurationMins": 300}
+                        }
+                    },
+                },
+                {
                     "method": "item/agentMessage/delta",
                     "params": {"itemId": "message", "delta": "Inspected the plate."},
                 },
@@ -48,6 +68,10 @@ class ProviderProtocolTests(unittest.TestCase):
         )
         self.assertEqual(message, "Inspected the plate.")
         self.assertNotIn("private reasoning", str(events))
+        self.assertEqual(
+            [e["kind"] for e in events if e["stage"] == "usage"],
+            ["tokens", "allowance"],
+        )
 
     def test_cancellation_interrupts_the_active_turn_and_rejects_completion(self):
         runtime = self.runtime(

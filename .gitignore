@@ -29,6 +29,7 @@ tokens.json
 .aws/
 .azure/
 projects/
+/Projects/
 native-projects/
 runs/
 generation-jobs/

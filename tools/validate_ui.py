@@ -53,20 +53,23 @@ def main():
             "1280x800",
             "1",
             solid_path,
+            "dark",
         ),
-        ("scaled-mesh", "1100x700", "1.5", mesh_path),
+        ("scaled-mesh", "1100x700", "1.5", mesh_path, "light"),
         (
             "large-solid",
             "1600x950",
             "1",
             solid_path,
+            "light",
         ),
     ]
     reports = []
-    for name, size, scale, model in cases:
+    for name, size, scale, model, theme in cases:
         env = {
             **base,
             "QT_SCALE_FACTOR": scale,
+            "CAD_UI_THEME": theme,
             "PROMPTCAD_HOME": str(fixtures / name),
             "CAD_UI_LOG": str(ROOT / "tmp" / (name + ".log")),
         }
@@ -94,16 +97,27 @@ def main():
         report = json.loads((ROOT / "tmp/native-smoke-report.json").read_text())
         if not report["passed"] or min(report.get("viewport_size", [0, 0])) < 300:
             raise RuntimeError("Viewport acceptance failed: " + name)
+        if (
+            report.get("theme") != theme
+            or not report.get("named_project_folder")
+            or not report.get("startup_logo_captured")
+        ):
+            raise RuntimeError(
+                "Theme, named storage or startup validation failed: " + name
+            )
         report.update(
             case=name,
             requested_size=size,
             requested_scale=scale,
             real_viewport=True,
-            mocked=False,
+            geometry_mocked=False,
+            provider_activity_and_usage_are_fixtures=True,
         )
         shutil.copyfile(ROOT / "tmp/native-workspace.png", output / (name + ".png"))
-        if name == "laptop-solid":
-            shutil.copyfile(ROOT / "tmp/native-settings.png", output / "settings.png")
+        for capture in ("settings", "appearance", "startup", "agent-working"):
+            path = ROOT / ("tmp/native-" + capture + ".png")
+            if path.exists():
+                shutil.copyfile(path, output / (name + "-" + capture + ".png"))
         reports.append(report)
         print(name + ": passed", flush=True)
     write_json(

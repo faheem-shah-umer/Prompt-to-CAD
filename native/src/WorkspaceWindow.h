@@ -1,4 +1,5 @@
 #pragma once
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -21,6 +22,8 @@ class QLineEdit;
 class QFormLayout;
 class QDoubleSpinBox;
 class QResizeEvent;
+class QProgressBar;
+class QTimer;
 
 class WorkspaceWindow : public QMainWindow {
     Q_OBJECT
@@ -28,6 +31,9 @@ class WorkspaceWindow : public QMainWindow {
     WorkspaceWindow(const QString &source, const QString &python, const QString &openPath,
                     bool smokeTest = false);
     ~WorkspaceWindow() override;
+
+  Q_SIGNALS:
+    void workspaceReady();
 
   protected:
     void resizeEvent(QResizeEvent *) override;
@@ -46,6 +52,12 @@ class WorkspaceWindow : public QMainWindow {
     void applyOperation();
     void showError(const QString &);
     void smokeCheck();
+    void renderChat();
+    void updateTask(const QString &status, const QString &message);
+    void refreshUsage();
+    void updateUsage();
+    void refreshConnectionControls();
+    void applyAppearance();
     QJsonObject base() const;
     CadView *viewer;
     RpcClient *rpc;
@@ -57,6 +69,12 @@ class WorkspaceWindow : public QMainWindow {
     QTextBrowser *chat, *properties;
     QPlainTextEdit *composer;
     QPushButton *sendButton, *stopButton, *selectionChip, *accountBadge;
+    QPushButton *usageBadge;
+    QLabel *taskTitle, *taskElapsed, *tokenUsageLabel;
+    QProgressBar *taskProgress;
+    QTimer *taskPulse, *chatRefresh;
+    QElapsedTimer taskClock;
+    QString pendingUser, liveAnswer, currentTaskState;
     QLabel *activity, *title, *saved, *conversationTitle, *taskActivity;
     QPlainTextEdit *taskLog;
     QPointer<QDialog> settingsDialog;
