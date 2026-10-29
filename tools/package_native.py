@@ -12,6 +12,8 @@ import zipfile
 
 from packaging.requirements import Requirement
 from tools.build_native import ROOT, build_environment
+from tools.fixtures import write_assembly
+from tools.source_policy import is_public_source
 
 
 def dependency_closure():
@@ -120,34 +122,32 @@ def copy_native(destination, qt, occt, env):
 
 def copy_sources(destination):
     app = destination / "app"
+    tracked = None
+    if (ROOT / ".git").exists():
+        tracked = set(subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0"))
+
+    def copy_public(folder, target):
+        for path in (ROOT / folder).rglob("*"):
+            relative = path.relative_to(ROOT).as_posix()
+            if not path.is_file() or not is_public_source(relative) or (tracked is not None and relative not in tracked):
+                continue
+            output = target / path.relative_to(ROOT / folder)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, output)
+
     for module in ("native", "v2"):
-        shutil.copytree(
-            ROOT / "backend" / module,
-            app / "backend" / module,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
+        copy_public("backend/" + module, app / "backend" / module)
     shutil.copy2(ROOT / "backend/__init__.py", app / "backend/__init__.py")
-    shutil.copytree(ROOT / "examples", app / "examples", dirs_exist_ok=True)
     (app / "tmp").mkdir(exist_ok=True)
-    shutil.copytree(ROOT / "docs", destination / "docs", dirs_exist_ok=True)
+    copy_public("docs", destination / "docs")
     (destination / "README.md").write_text(
         '# Prompt to CAD V2\n\n<img src="assets/app-icon.svg" alt="Prompt to CAD logo" width="80">\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n',
         encoding="utf-8",
     )
     source = destination / "source"
-    shutil.copytree(ROOT / "assets", destination / "assets", dirs_exist_ok=True)
-    shutil.copytree(ROOT / "assets", source / "assets", dirs_exist_ok=True)
-    shutil.copytree(ROOT / "native", source / "native", dirs_exist_ok=True)
-    shutil.copytree(ROOT / "tools", source / "tools", dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(
-        ROOT / "backend",
-        source / "backend",
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(
-            ".env*", "__pycache__", "*.pyc", "*.dpapi", "auth.json", "credentials*", "*.key", "*.pem"
-        ),
-    )
+    copy_public("assets", destination / "assets")
+    for folder in ("assets", "native", "tools", "backend"):
+        copy_public(folder, source / folder)
     for name in ("requirements.txt", "requirements-dev.txt", "native-app.py"):
         shutil.copy2(ROOT / name, source / name)
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
@@ -279,7 +279,7 @@ def main():
             str(bundle / "bin/PromptToCAD.exe"),
             "--smoke-test",
             "--open",
-            str(bundle / "app/examples/spindle-assembly.cad.json"),
+            str(write_assembly(ROOT / "tmp/packaged-fixture")),
         ]
         runtime_check = "import jwt, trimesh, scipy; from cryptography.hazmat.primitives.asymmetric import rsa; key=rsa.generate_private_key(public_exponent=65537,key_size=2048); token=jwt.encode({'sub':'package-test'},key,algorithm='RS256'); assert jwt.decode(token,key.public_key(),algorithms=['RS256'])['sub']=='package-test'; assert trimesh.Scene(trimesh.creation.box()).export(file_type='glb')[:4]==b'glTF'; print('V2 packaged authentication and mesh dependencies passed')"
         subprocess.run(

@@ -1,6 +1,8 @@
 # Repository privacy
 
-Use the `prompt-to-cad-v2` branch. The repository contains application code, public provider documentation and synthetic validation evidence. Runtime accounts and user projects belong outside the checkout.
+Use the `prompt-to-cad-v2` branch. Git contains application source, documentation, tests and approved branding assets. User-created models, example CAD files, project/document/revision data, conversations, imported/reference files, exports and generated reports/screenshots are excluded. Runtime accounts and user projects belong outside the checkout; the application defaults to `%USERPROFILE%/.promptcad/v2`.
+
+The source policy in `tools/source_policy.py` is shared by the tracked-file checker and packager. It allows source files in designated source directories and the original logo assets. JSON/JSONL records, CAD/mesh files, databases, reference images and generated validation outputs are ignored and rejected if force-added. Add any future legitimate source asset to this reviewed policy explicitly. Validation creates fresh synthetic geometry in ignored temporary folders instead of reusing saved user designs.
 
 Public OAuth client identifiers, endpoints, model names and the code handling authentication are application configuration, not account credentials. Do not replace them with a developer key or remove the login implementation. API keys, access/refresh/ID tokens, authorization codes, actual account email addresses, session exports and encrypted credential stores must never be committed.
 

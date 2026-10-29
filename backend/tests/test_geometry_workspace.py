@@ -13,6 +13,7 @@ from backend.native.documents import Document, asset_path
 from backend.native.geometry import inspect, world_shape
 from backend.native.worker_client import GeometryWorker
 from backend.native.workspace import Workspace
+from tools.fixtures import write_assembly
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -217,7 +218,7 @@ class NativeWorkspaceTests(NativeWorkspaceTestCase):
         )
 
     def test_recipe_compatibility_and_downstream_parameter_guard(self):
-        source = ROOT / "examples/spindle-assembly.cad.json"
+        source = write_assembly(self.folder)
         before_bytes = source.read_bytes()
         doc = self.workspace.dispatch("document.import", {"path": str(source)})
         original = next(p for p in doc["components"] if p["instance_id"] == "post")

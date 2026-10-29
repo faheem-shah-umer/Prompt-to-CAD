@@ -1,20 +1,15 @@
 import math
 import unittest
-from pathlib import Path
 
 from pydantic import ValidationError
 
 from backend.native.design_schema import Design
 from backend.native.modelling import Builder, verify_assembly
 from backend.native.parameters import DesignError, Parameters
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
+from tools.fixtures import assembly_definition
 
 def example():
-    return Design.model_validate_json(
-        (PROJECT_ROOT / "examples/spindle-assembly.cad.json").read_text()
-    )
+    return Design.model_validate(assembly_definition())
 
 
 def single(features, parameters=None):
@@ -98,8 +93,8 @@ class FeatureEngineTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         base = parts[0]
         expected = (
-            80 * 60 - 4 * (3**2 - math.pi * 3**2 / 4)
-        ) * 8 - 4 * math.pi * 3**2 * 8
+            64 * 44 - 4 * (1 - math.pi / 4)
+        ) * 8 - 4 * math.pi * 2**2 * 8
         self.assertAlmostEqual(base.shape.Volume(), expected, places=4)
         self.assertEqual(len(base.features), 4)
         self.assertTrue(all(item["passed"] for item in report["relationships"]))
@@ -263,9 +258,11 @@ class FeatureEngineTests(unittest.TestCase):
         self.assertEqual(builder.component_dependencies["plate"], {"tool"})
 
     def test_external_and_internal_threads_use_helical_geometry(self):
-        bolt = Design.model_validate_json(
-            (PROJECT_ROOT / "examples" / "threaded-bolt.cad.json").read_text()
-        )
+        bolt = single([
+            {"id": "core", "type": "cylinder", "radius": 2.6, "height": 8},
+            {"id": "helix", "type": "thread", "major_radius": 3,
+             "minor_radius": 2.6, "pitch": 1, "length": 8},
+        ])
         part = Builder(bolt).build()[0]
         self.assertTrue(part.validation["passed"])
         self.assertGreater(len(part.local_shape.Faces()), 12)

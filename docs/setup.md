@@ -58,4 +58,4 @@ Data defaults to %USERPROFILE%/.promptcad/v2. PROMPTCAD_HOME selects an isolated
 .venv\Scripts\python.exe -m tools.package_native --help
 ```
 
-The packaging tool creates a 0.4.0 runtime with Python, Qt/OCCT libraries, dependency licences and application source. A separate installed Codex executable and user authorization are still required. The installer is unsigned. Current retained evidence lives under artifacts/validation; See validation.md for which current runs passed and which external checks remain pending.
+The packaging tool creates a 0.4.0 runtime with Python, Qt/OCCT libraries, dependency licences and approved application source. User projects, chats, CAD files, screenshots and account data are excluded. A separate installed Codex executable and user authorization are still required. The installer is unsigned. Validation generates ignored local evidence under artifacts/validation; see validation.md.

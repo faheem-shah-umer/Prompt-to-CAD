@@ -12,6 +12,7 @@ import trimesh
 from backend.native.documents import write_json
 from backend.v2.workspace import WorkspaceV2
 from tools.build_native import ROOT, build_environment
+from tools.fixtures import write_assembly
 
 
 def main():
@@ -19,6 +20,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     fixtures = ROOT / "tmp" / ("ui-fixture-" + uuid4().hex[:8])
     fixtures.mkdir()
+    solid_path = str(write_assembly(fixtures))
     scene = trimesh.Scene()
     sphere = trimesh.creation.icosphere(subdivisions=2, radius=10)
     sphere.visual.vertex_colors = [80, 160, 210, 255]
@@ -50,14 +52,14 @@ def main():
             "laptop-solid",
             "1280x800",
             "1",
-            str(ROOT / "examples/spindle-assembly.cad.json"),
+            solid_path,
         ),
         ("scaled-mesh", "1100x700", "1.5", mesh_path),
         (
             "large-solid",
             "1600x950",
             "1",
-            str(ROOT / "examples/spindle-assembly.cad.json"),
+            solid_path,
         ),
     ]
     reports = []
@@ -106,9 +108,6 @@ def main():
         print(name + ": passed", flush=True)
     write_json(
         output / "ui.json", {"passed": True, "cases": reports, "agent_inference": False}
-    )
-    shutil.copyfile(
-        output / "large-solid.png", ROOT / "docs/assets/workspace.png"
     )
 
 

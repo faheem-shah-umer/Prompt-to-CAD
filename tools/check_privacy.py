@@ -5,6 +5,11 @@ import re
 import subprocess
 from pathlib import Path
 
+try:
+    from tools.source_policy import is_public_source
+except ModuleNotFoundError:
+    from source_policy import is_public_source
+
 ROOT = Path(__file__).resolve().parents[1]
 EMAIL = re.compile(r"[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}")
 USER_PATH = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s\"<>]+)", re.I)
@@ -28,6 +33,8 @@ def check(root, history=False):
         if not path.is_file():
             continue
         files += 1
+        if not is_public_source(relative):
+            findings.append((relative, 0, "not application source, documentation or approved branding"))
         name = path.name.lower()
         if (
             name in ("auth.json", "credentials.json", "credentials.dpapi", ".env", ".env.local", ".env.production")
