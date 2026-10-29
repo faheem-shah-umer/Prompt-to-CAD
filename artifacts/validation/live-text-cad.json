@@ -6,13 +6,13 @@
   "cases": [
     {
       "name": "text_creation",
-      "revision": "6c34ac9b-4a68-4783-a161-525773a80e66",
+      "revision": "not-published",
       "volume_mm3": 48000,
       "solid_count": 2
     },
     {
       "name": "selected_four_holes",
-      "revision": "2437eb95-d46f-4ebc-a447-3423a6b1de0b",
+      "revision": "not-published",
       "volume_mm3": 47095.22131576613,
       "expected_volume_mm3": 47095.22131576614,
       "unrelated_components_preserved": true,
@@ -20,7 +20,7 @@
     },
     {
       "name": "reopen_resume_and_refine",
-      "revision": "02e6b79f-d53c-42e9-ab4f-03ed1226e5a3",
+      "revision": "not-published",
       "same_provider_session": true,
       "conversations_persisted": true,
       "volume_mm3": 76529.73463811999,
@@ -35,6 +35,6 @@
   "event_count": 347,
   "correlated_task_events": 346,
   "elapsed_seconds": 180.73400000005495,
-  "preserved_project_data_root": "D:\\Fun Projects\\Prompt-to-CAD Saved Designs\\acceptance-designs\\live-rework-e7032bb9",
+  "preserved_project_data_root": "local acceptance data preserved outside Git",
   "evidence_scope": "Real inference before shared-core extraction; cleanup uses fresh regression/UI/package checks."
 }

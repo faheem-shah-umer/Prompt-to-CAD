@@ -1,8 +1,8 @@
 {
   "passed": true,
   "version": "0.4.0",
-  "branch": "codex/prompt-to-cad-v2",
-  "source_recovery_checkpoint": "b2f4ee7",
+  "branch": "prompt-to-cad-v2",
+  "source_recovery_checkpoint": "not-published",
   "backend_tests": 45,
   "native_layout_cases": 3,
   "packaged_tools": 8,

@@ -25,6 +25,6 @@ Connect **ChatGPT subscription — Codex** or **OpenAI API key — separately bi
 | artifacts/validation/ | Current validation reports/screenshots |
 | dist-native/ | Current release only; generated and Git-ignored |
 
-Current user-profile projects and accounts remain at **%USERPROFILE%/.promptcad/v2**. Repository-local design/export folders were preserved outside the source tree at **D:\Fun Projects\Prompt-to-CAD Saved Designs**. Git history retains retired source; older applications are not maintained alongside this checkout.
+Current user-profile projects and accounts remain at **%USERPROFILE%/.promptcad/v2**. Repository-local design/export folders were preserved in **Prompt-to-CAD Saved Designs**, beside the repository. Git history retains retired source; older applications are not maintained alongside this checkout.
 
 See [setup and capabilities](docs/setup.md), [architecture](docs/architecture.md), [validation](docs/validation.md), and [third-party notices](THIRD_PARTY_NOTICES.md). This is developing CAD software; arbitrary-format compatibility and production readiness are not claimed.

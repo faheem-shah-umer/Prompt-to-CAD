@@ -3,8 +3,8 @@
   "source_cleanup_complete": true,
   "validation_pending": false,
   "recovered_verified_version": "0.4.0",
-  "source_recovery_checkpoint": "b2f4ee7",
-  "preserved_design_directory": "D:\\Fun Projects\\Prompt-to-CAD Saved Designs",
+  "source_recovery_checkpoint": "not-published",
+  "preserved_design_directory": "../Prompt-to-CAD Saved Designs",
   "user_profile_data_untouched": true,
   "retired_paths_verified_absent": [
     "frontend",

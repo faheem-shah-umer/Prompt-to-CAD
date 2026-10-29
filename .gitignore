@@ -15,6 +15,14 @@ htmlcov/
 *.dpapi
 auth.json
 credentials*
+/.promptcad/
+/.codex/
+/.claude/
+/.aws/
+/.azure/
+auth-*.json
+tokens.json
+.envrc
 *.key
 *.pem
 *.pfx
