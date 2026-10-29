@@ -46,30 +46,35 @@ class Projects:
             write_json(self.catalog, {"version": 1, "projects": [], "active": None})
         # An interrupted task never becomes an accepted revision on restart.
         for path in self.folder.glob("*/tasks/*.json"):
-            record = json.loads(path.read_text(encoding="utf-8"))
-            if record.get("status") == "running":
-                project = self.read(path.parent.parent / "workspace.json")
-                entry = next(
-                    (
-                        d
-                        for d in project["documents"]
-                        if d["document_id"] == record.get("document_id")
-                    ),
-                    None,
-                )
-                if entry:
-                    try:
-                        with revision_lock(
-                            self.document(project, record["document_id"]).folder
-                            / ".task-lock"
-                        ):
-                            record.update(
-                                status="interrupted",
-                                message="Application stopped. The accepted document was preserved.",
-                            )
-                            write_json(path, record)
-                    except RevisionConflict:
-                        pass
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if record.get("status") == "running":
+                    project = self.read(path.parent.parent / "workspace.json")
+                    entry = next(
+                        (
+                            d
+                            for d in project["documents"]
+                            if d["document_id"] == record.get("document_id")
+                        ),
+                        None,
+                    )
+                    if entry:
+                        self.document(project, record["document_id"]).index()
+                        try:
+                            with revision_lock(
+                                self.document(project, record["document_id"]).folder
+                                / ".task-lock"
+                            ):
+                                record.update(
+                                    status="interrupted",
+                                    message="Application stopped. The accepted document was preserved.",
+                                )
+                                write_json(path, record)
+                        except RevisionConflict:
+                            pass
+            except (OSError, json.JSONDecodeError, WorkspaceError):
+                # A missing project must not prevent recovery of the other projects.
+                continue
 
     def read(self, path):
         return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -87,36 +92,59 @@ class Projects:
 
     def listing(self):
         catalog = self.read(self.catalog)
-        projects = []
+        projects, unavailable = [], []
         for pid in catalog["projects"]:
-            project = self.project(pid)
-            project["folder_path"] = str(self.project_path(pid))
-            project["conversation_summaries"] = [
-                {
-                    k: c.get(k)
-                    for k in (
-                        "conversation_id",
-                        "document_id",
-                        "title",
-                        "archived",
-                        "trashed",
+            try:
+                project = self.project(pid)
+                project["folder_path"] = str(self.project_path(pid))
+                project["conversation_summaries"] = [
+                    {
+                        k: c.get(k)
+                        for k in (
+                            "conversation_id",
+                            "document_id",
+                            "title",
+                            "archived",
+                            "trashed",
+                        )
+                    }
+                    for c in (
+                        self.conversation(pid, cid) for cid in project["conversations"]
                     )
-                }
-                for c in (
-                    self.conversation(pid, cid) for cid in project["conversations"]
+                ]
+                projects.append(project)
+            except (OSError, json.JSONDecodeError, WorkspaceError) as error:
+                try:
+                    location = str(self.project_path(pid))
+                except WorkspaceError:
+                    location = ""
+                unavailable.append(
+                    {
+                        "project_id": pid,
+                        "name": catalog.get("folders", {}).get(pid, pid),
+                        "folder_path": location,
+                        "reason": "Project files are missing from the saved location."
+                        if isinstance(error, FileNotFoundError)
+                        else "Project files could not be read. Check the folder and its metadata.",
+                    }
                 )
-            ]
-            projects.append(project)
-        return {**catalog, "projects": projects}
+        return {**catalog, "projects": projects, "unavailable": unavailable}
 
     def create(self, name):
         name = str(name).strip()[:120] or "Untitled project"
         project_id = uuid4().hex[:16]
         with revision_lock(self.folder):
+            catalog = self.read(self.catalog)
+            reserved = {
+                catalog.get("folders", {}).get(pid, pid).casefold()
+                for pid in catalog["projects"]
+            }
             stem = folder_name(name)
             directory = stem
             number = 2
-            while (self.folder / directory).exists():
+            while (
+                self.folder / directory
+            ).exists() or directory.casefold() in reserved:
                 directory = f"{stem} ({number})"
                 number += 1
             base = self.folder / directory
@@ -141,7 +169,6 @@ class Projects:
                 "created_at": time.time(),
             }
             write_json(base / "workspace.json", project)
-            catalog = self.read(self.catalog)
             catalog.setdefault("folders", {})[project_id] = directory
             catalog["projects"].append(project_id)
             catalog["active"] = project_id
@@ -169,9 +196,13 @@ class Projects:
                 raise WorkspaceError(
                     "This project is already in the Projects folder. Open that copy to continue."
                 )
+            reserved = {
+                catalog.get("folders", {}).get(pid, pid).casefold()
+                for pid in catalog["projects"]
+            }
             stem = folder_name(project["name"])
             name, number = stem, 2
-            while (self.folder / name).exists():
+            while (self.folder / name).exists() or name.casefold() in reserved:
                 name, number = f"{stem} ({number})", number + 1
             target = (self.folder / name).resolve()
             temporary = (self.folder / (".import-" + uuid4().hex)).resolve()

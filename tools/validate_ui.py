@@ -11,6 +11,7 @@ import trimesh
 
 from backend.native.documents import write_json
 from backend.v2.workspace import WorkspaceV2
+from backend.v2.projects import Projects
 from tools.build_native import ROOT, build_environment
 from tools.fixtures import write_assembly
 
@@ -66,10 +67,17 @@ def main():
     ]
     reports = []
     for name, size, scale, model, theme in cases:
+        case_home = fixtures / name
+        collection = Projects(case_home / "projects")
+        missing = collection.create("Unavailable fixture")
+        collection.project_path(missing["project_id"]).rename(
+            fixtures / (name + "-moved-project")
+        )
         env = {
             **base,
             "QT_SCALE_FACTOR": scale,
             "CAD_UI_THEME": theme,
+            "CAD_UI_MISSING_PROJECT_FIXTURE": "1",
             "PROMPTCAD_HOME": str(fixtures / name),
             "CAD_UI_LOG": str(ROOT / "tmp" / (name + ".log")),
         }
@@ -114,7 +122,13 @@ def main():
             provider_activity_and_usage_are_fixtures=True,
         )
         shutil.copyfile(ROOT / "tmp/native-workspace.png", output / (name + ".png"))
-        for capture in ("settings", "appearance", "startup", "agent-working", "agent-completed"):
+        for capture in (
+            "settings",
+            "appearance",
+            "startup",
+            "agent-working",
+            "agent-completed",
+        ):
             path = ROOT / ("tmp/native-" + capture + ".png")
             if path.exists():
                 shutil.copyfile(path, output / (name + "-" + capture + ".png"))

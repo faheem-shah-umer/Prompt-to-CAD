@@ -12,6 +12,88 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StorageTests(unittest.TestCase):
+    def test_missing_project_does_not_hide_valid_projects_or_remove_catalog_records(
+        self,
+    ):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            base = Path(temporary)
+            projects = Projects(base / "Projects")
+            missing = projects.create("Missing fixture")
+            healthy = projects.create("Healthy fixture")
+            source = projects.project_path(missing["project_id"])
+            source.rename(base / "temporarily-moved")
+            original_catalog = projects.catalog.read_bytes()
+            listing = Projects(projects.folder).listing()
+            self.assertEqual(
+                [p["project_id"] for p in listing["projects"]], [healthy["project_id"]]
+            )
+            self.assertEqual(
+                listing["unavailable"][0]["project_id"], missing["project_id"]
+            )
+            self.assertEqual(projects.catalog.read_bytes(), original_catalog)
+            self.assertFalse(source.exists())
+            (base / "temporarily-moved").rename(source)
+            restored = Projects(projects.folder).listing()
+            self.assertEqual(restored["unavailable"], [])
+            self.assertEqual(len(restored["projects"]), 2)
+
+    def test_missing_project_folder_names_remain_reserved_for_their_original_identity(
+        self,
+    ):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            base = Path(temporary)
+            projects = Projects(base / "Projects")
+            missing = projects.create("Bracket")
+            source = projects.project_path(missing["project_id"])
+            original = (source / "workspace.json").read_bytes()
+            source.rename(base / "moved-project")
+            replacement = projects.create("Bracket")
+            self.assertEqual(
+                projects.project_path(replacement["project_id"]).name, "Bracket (2)"
+            )
+            external = Projects(base / "external")
+            imported = external.create("Bracket")
+            imported_id = projects.import_project(
+                external.project_path(imported["project_id"])
+            )
+            self.assertEqual(projects.project_path(imported_id).name, "Bracket (3)")
+            self.assertFalse(source.exists())
+            self.assertEqual(
+                projects.listing()["unavailable"][0]["project_id"],
+                missing["project_id"],
+            )
+            (base / "moved-project").rename(source)
+            self.assertEqual((source / "workspace.json").read_bytes(), original)
+            self.assertEqual(len(projects.listing()["projects"]), 3)
+            self.assertEqual(projects.listing()["unavailable"], [])
+
+    def test_unreadable_project_metadata_is_reported_without_replacing_it(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            projects = Projects(temporary)
+            project = projects.create("Damaged fixture")
+            metadata = projects.project_path(project["project_id"]) / "workspace.json"
+            metadata.write_text("{interrupted fixture")
+            listing = Projects(temporary).listing()
+            self.assertEqual(listing["projects"], [])
+            self.assertEqual(
+                listing["unavailable"][0]["project_id"], project["project_id"]
+            )
+            self.assertEqual(metadata.read_text(), "{interrupted fixture")
+
+    def test_orphaned_task_records_do_not_crash_startup_recovery(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            projects = Projects(temporary)
+            project = projects.create("Healthy fixture")
+            folder = Path(temporary) / "orphaned" / "tasks"
+            folder.mkdir(parents=True)
+            (folder / "running.json").write_text(json.dumps({"status": "running"}))
+            (folder / "damaged.json").write_text("{invalid")
+            listing = Projects(temporary).listing()
+            self.assertEqual(
+                listing["projects"][0]["project_id"], project["project_id"]
+            )
+            self.assertFalse((folder.parent / "workspace.json").exists())
+
     def test_opening_an_external_project_preserves_its_chat_and_copies_documents(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
             base = Path(temporary)

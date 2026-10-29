@@ -25,6 +25,42 @@ class V2WorkspaceTests(unittest.TestCase):
         self.workspace.worker.close()
         self.temporary.cleanup()
 
+    def test_missing_active_project_opens_an_empty_workspace_without_losing_the_catalog(
+        self,
+    ):
+        original = self.workspace.state()["project"]
+        source = self.workspace.projects.project_path(original["project_id"])
+        self.workspace.worker.close()
+        source.rename(self.folder / "moved-project")
+        catalog_before = self.workspace.projects.catalog.read_bytes()
+        self.workspace = WorkspaceV2(self.folder)
+        state = self.workspace.dispatch("v2.state", {})
+        self.assertNotIn("project", state)
+        self.assertTrue(state["startup_notice"])
+        self.assertEqual(self.workspace.projects.catalog.read_bytes(), catalog_before)
+        self.assertEqual(
+            state["catalog"]["unavailable"][0]["project_id"], original["project_id"]
+        )
+        created = self.workspace.dispatch(
+            "v2.project.create", {"name": "New usable project"}
+        )
+        self.assertEqual(created["project"]["name"], "New usable project")
+        self.assertEqual(created["startup_notice"], "")
+        self.assertFalse(source.exists())
+
+    def test_failed_activation_preserves_the_open_document_and_accepted_revision(self):
+        document = self.assembly()
+        current = self.workspace.project_id
+        missing = self.workspace.projects.create("Missing fixture")
+        folder = self.workspace.projects.project_path(missing["project_id"])
+        folder.rename(self.folder / "moved-project")
+        with self.assertRaises(FileNotFoundError):
+            self.workspace.activate(missing["project_id"])
+        state = self.workspace.dispatch("v2.state", {})
+        self.assertEqual(state["project"]["project_id"], current)
+        self.assertEqual(state["document"]["revision_id"], document["revision_id"])
+        self.assertEqual(state["document"]["components"], document["components"])
+
     def assembly(self):
         return self.workspace.dispatch(
             "v2.script",

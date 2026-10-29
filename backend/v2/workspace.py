@@ -54,8 +54,17 @@ class WorkspaceV2(Workspace):
             if self.configuration_path.exists()
             else {}
         )
+        self.startup_notice = ""
         if self.project_id:
-            self.activate(self.project_id)
+            try:
+                self.activate(self.project_id)
+            except (OSError, json.JSONDecodeError, WorkspaceError):
+                self.project_id = None
+                self.document = None
+                self.startup_notice = (
+                    "The last project could not be opened. Open another project or restore its files. "
+                    "Your project catalog and saved files have not been removed."
+                )
 
     def emit(self, event):
         event = dict(event)
@@ -119,15 +128,21 @@ class WorkspaceV2(Workspace):
                 )
 
     def activate(self, project_id):
-        project = self.projects.activate(project_id)
-        self.project_id = project_id
+        project = self.projects.project(project_id)
         conversation = self.projects.conversation(project_id)
-        self.document = self.projects.document(project, conversation["document_id"])
+        document = self.projects.document(project, conversation["document_id"])
+        document.index()
         try:
-            with revision_lock(self.document.folder / ".task-lock"):
-                self.document.recover()
+            with revision_lock(document.folder / ".task-lock"):
+                document.recover()
         except RevisionConflict:
             pass
+        # Validate before changing the active project or replacing the current document.
+        self.projects.view(project_id)
+        self.projects.activate(project_id)
+        self.project_id = project_id
+        self.document = document
+        self.startup_notice = ""
         return self.state()
 
     def state(self):
@@ -147,6 +162,7 @@ class WorkspaceV2(Workspace):
             ),
             "provider": provider,
             "projects_root": str(self.projects.folder),
+            "startup_notice": self.startup_notice,
             "task_state": self.task_state
             if self.active_task
             or self.task_state

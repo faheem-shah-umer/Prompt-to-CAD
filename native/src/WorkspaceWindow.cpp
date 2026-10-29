@@ -971,6 +971,13 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                 projects->setCurrentItem(child);
         }
     }
+    for (auto entry : value.value("catalog").toObject().value("unavailable").toArray()) {
+        auto project = entry.toObject();
+        auto *item = new QTreeWidgetItem(projects, {project.value("name").toString() + " · Unavailable"});
+        item->setDisabled(true);
+        item->setToolTip(0, project.value("reason").toString() + "\n" +
+                               QDir::toNativeSeparators(project.value("folder_path").toString()));
+    }
     modelTree->clear();
     QMap<QString, QTreeWidgetItem *> groups;
     for (auto node : document.value("assembly_nodes").toArray()) {
@@ -1017,6 +1024,10 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     activity->setText("mm · " + QString::number(document.value("components").toArray().size()) +
                       " components · " +
                       (active.isEmpty() ? "Agent disconnected" : connection.value("billing").toString()));
+    const auto notice = value.value("startup_notice").toString();
+    const auto unavailable = value.value("catalog").toObject().value("unavailable").toArray().size();
+    if (!notice.isEmpty()) activity->setText(notice);
+    else if (unavailable) activity->setText(activity->text() + " · " + QString::number(unavailable) + " unavailable project(s) · see Projects");
     if (!busy) {
         const auto taskState = value.value("task_state").toString();
         if (QStringList{"completed", "completed_no_change", "failed", "cancelled", "usage_limit"}.contains(
@@ -1365,6 +1376,11 @@ void WorkspaceWindow::smokeCheck() {
         showError("Native V2 viewer import or topology selection failed.");
         return;
     }
+    if (qEnvironmentVariableIsSet("CAD_UI_MISSING_PROJECT_FIXTURE") &&
+        state.value("catalog").toObject().value("unavailable").toArray().size() != 1) {
+        showError("Missing-project startup recovery regression failed.");
+        return;
+    }
     QDir().mkpath(workspace + "/tmp");
     QJsonObject report{
         {"passed", true},
@@ -1380,6 +1396,7 @@ void WorkspaceWindow::smokeCheck() {
         {"settings_display_change_saved", true},
         {"ai_connection_options", 2},
         {"theme", QSettings().value("v2/theme", "dark").toString()},
+        {"unavailable_projects", state.value("catalog").toObject().value("unavailable").toArray().size()},
         {"named_project_folder",
          QFileInfo(state.value("project").toObject().value("folder_path").toString()).fileName() ==
              state.value("project").toObject().value("name").toString()},
