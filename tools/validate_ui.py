@@ -100,9 +100,8 @@ def main():
             mocked=False,
         )
         shutil.copyfile(ROOT / "tmp/native-workspace.png", output / (name + ".png"))
-        shutil.copyfile(
-            ROOT / "tmp/native-settings.png", output / (name + "-settings.png")
-        )
+        if name == "laptop-solid":
+            shutil.copyfile(ROOT / "tmp/native-settings.png", output / "settings.png")
         reports.append(report)
         print(name + ": passed", flush=True)
     write_json(

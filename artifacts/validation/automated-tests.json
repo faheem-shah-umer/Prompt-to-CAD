@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "tests": 45,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "elapsed_seconds": 130.34400000000096,
+  "pattern": "test_*.py",
+  "live_provider_inference": false,
+  "text_only_release": true
+}

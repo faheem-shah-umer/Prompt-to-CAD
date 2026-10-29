@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "mocked": false,
+  "native_ui_submission": true,
+  "billing": "ChatGPT subscription",
+  "model": "gpt-6.1-sol",
+  "one_submission_one_task": true,
+  "frozen_selection": "post",
+  "translation_world_x_mm": 20,
+  "unrelated_plate_preserved": true,
+  "validation": {
+    "geometry": {
+      "passed": true,
+      "solid_count": 2,
+      "names_colors_placements": true,
+      "meshes": [],
+      "mesh_interference": "No meshes"
+    },
+    "scope": {
+      "passed": true,
+      "unrelated_components_checked": 1,
+      "scope": "post",
+      "component_count": 2
+    },
+    "candidate_id": "c0d784e018f640d2b9b6fb6ce14398bd"
+  },
+  "revision": "d7b8f4b2-80be-4f73-aed7-44f635765b93",
+  "task_id": "6265eb9422934f7e84bf73cd8a8cfd75",
+  "conversation_id": "7cbaf06a3a864a54a9e00f0ba84cde49",
+  "conversation_persisted": true,
+  "native_ui_undo_redo": true,
+  "atomic_save_verified_on_disk": true,
+  "live_ui_build_note": "The real UI task exercised the rebuilt submission/provider path before final completion-label and settings-storage polish. Final native release UI checks are retained separately in ui.json.",
+  "evidence_scope": "Retained pre-cleanup real inference; current UI and package checked separately."
+}

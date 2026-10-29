@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "version": "0.4.0",
+  "branch": "codex/prompt-to-cad-v2",
+  "source_recovery_checkpoint": "b2f4ee7",
+  "backend_tests": 45,
+  "native_layout_cases": 3,
+  "packaged_tools": 8,
+  "native_release_build": true,
+  "isolated_package_smoke": true,
+  "live_inference_repeated_for_cleanup": false,
+  "retained_prior_live_acceptance": true,
+  "installer_sha256": "e940ef00ac8f130c8bd7b98531d31f26abcbff55d8d4df75d64bcd494a35a187",
+  "unsigned": true,
+  "limitations": [
+    "Live provider inference was not repeated for repository cleanup.",
+    "Fresh OAuth browser login, API-billed inference and actual usage exhaustion were not repeated.",
+    "Supported geometry and format limitations are documented in docs/setup.md."
+  ],
+  "reports": [
+    "automated-tests.json",
+    "ui.json",
+    "live-text-cad.json",
+    "live-native-ui.json",
+    "packaged.json",
+    "packaged-appserver.json",
+    "cleanup.json"
+  ]
+}

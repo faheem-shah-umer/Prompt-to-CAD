@@ -146,8 +146,6 @@ def copy_sources(destination):
             ".env*", "__pycache__", "*.pyc", "*.dpapi", "auth.json", "credentials*", "*.key", "*.pem"
         ),
     )
-    for obsolete in (app / "backend/v2/image_backend.py", source / "backend/v2/image_backend.py"):
-        obsolete.unlink(missing_ok=True)
     for name in ("requirements.txt", "requirements-dev.txt", "native-app.py"):
         shutil.copy2(ROOT / name, source / name)
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):

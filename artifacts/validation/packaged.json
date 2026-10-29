@@ -1,0 +1,56 @@
+{
+  "passed": true,
+  "version": "0.4.0",
+  "unsigned": true,
+  "source_files_compared": 50,
+  "file_count": 9872,
+  "installer_bytes": 288252186,
+  "installer_sha256": "e940ef00ac8f130c8bd7b98531d31f26abcbff55d8d4df75d64bcd494a35a187",
+  "credential_filename_scan": true,
+  "retired_applications_absent": true,
+  "isolated_packaged_smoke": {
+    "agent_inference_verified": false,
+    "ai_connection_options": 2,
+    "body_count": 3,
+    "device_pixel_ratio": 1.25,
+    "face_selection": true,
+    "occt_viewer": "7.8.1",
+    "passed": true,
+    "product": "Prompt to CAD V2",
+    "qt_version": "6.9.0",
+    "settings_close_reopen_cycles": 5,
+    "settings_display_change_saved": true,
+    "settings_save_requests": 1,
+    "settings_singleton_rapid_clicks": 125,
+    "synthetic_orbit_fps": 30.00570258377605,
+    "topology": {
+      "base": {
+        "edge": 36,
+        "face": 14,
+        "vertex": 24
+      },
+      "cap": {
+        "edge": 3,
+        "face": 3,
+        "vertex": 2
+      },
+      "post": {
+        "edge": 3,
+        "face": 3,
+        "vertex": 2
+      }
+    },
+    "viewport_size": [
+      599,
+      508
+    ],
+    "window_size": [
+      1248,
+      752
+    ]
+  },
+  "runtime_dependencies_verified": true,
+  "packaged_native_and_tools_match": true,
+  "appserver_probe": "packaged-appserver.json",
+  "current_source_rechecked_on": "2026-10-29"
+}
