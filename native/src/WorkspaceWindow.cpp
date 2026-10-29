@@ -43,6 +43,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTimer>
+#include <QEvent>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -65,7 +66,7 @@ QString html(const QString &value) { return value.toHtmlEscaped().replace("\n", 
 WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, const QString &openPath,
                                  bool smokeTest)
     : workspace(source), smoke(smokeTest) {
-    setWindowTitle("Prompt to CAD V2");
+    setWindowTitle("Prompt to CAD");
     resize(1560, 940);
     setMinimumSize(880, 600);
     rpc = new RpcClient(this);
@@ -106,7 +107,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     navigation->setObjectName("navigation");
     auto *nav = new QVBoxLayout(navigation);
     nav->setContentsMargins(12, 14, 12, 12);
-    auto *heading = new QLabel("Prompt to CAD V2");
+    auto *heading = new QLabel("Prompt to CAD");
     heading->setStyleSheet("font-weight:600;font-size:15px;padding:6px 0 16px");
     nav->addWidget(heading);
     setWorkspaceIcon(button("New project", nav, [this] { newProject(); }), "add");
@@ -188,7 +189,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         commandGroups->addTab(toolbar, label);
         return toolbar;
     };
-    auto *commands = commandPage("Create");
+    auto *commands = commandPage("Modify");
     auto add = [this, &commands](const QString &name, const QString &op) {
         auto *a = commands->addAction(name);
         auto icon = op == "block" ? "cube" : op == "move" ? "arrows" : op == "pattern" ? "add" : "edit";
@@ -196,13 +197,6 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         a->setIcon(workspaceIcon(icon));
         connect(a, &QAction::triggered, this, [this, op] { operation(op); });
     };
-    add("Create block", "block");
-    auto *fromText = commands->addAction("Create with agent");
-    connect(fromText, &QAction::triggered, this, [this] {
-        conversationPane->show();
-        composer->setFocus();
-    });
-    commands = commandPage("Modify");
     add("Thickness", "thickness");
     add("Holes", "holes");
     add("Fillet", "fillet");
@@ -372,15 +366,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     models->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     models->setPlaceholderText("Choose model");
     providerRow->addWidget(models, 1);
-    stopButton = button("Stop", providerRow, [this] {
-        rpc->cancel();
-        updateTask("cancelling", "Discarding the unaccepted candidate. Your saved design is preserved.");
-        stopButton->setEnabled(false);
+    sendButton = button("", providerRow, [this] {
+        if (taskRunning) {
+            if (currentTaskState == "cancelling") return;
+            rpc->cancel();
+            updateTask("cancelling", "Discarding the unaccepted candidate. Your saved design is preserved.");
+        } else submit();
     });
-    stopButton->hide();
-    sendButton = button("", providerRow, [this] { submit(); });
     setWorkspaceIcon(sendButton, "arrow-up", true);
-    setWorkspaceIcon(stopButton, "stop");
     sendButton->setObjectName("primaryButton");
     sendButton->setFixedSize(30, 30);
     sendButton->setAccessibleName("Send request");
@@ -411,8 +404,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     connect(composer, &QPlainTextEdit::textChanged, this, [this] {
         composer->setFixedHeight(
             qBound(68, composer->fontMetrics().lineSpacing() * (composer->blockCount() + 1) + 16, 140));
-        sendButton->setEnabled(!busy && !state.value("project").toObject().isEmpty() &&
-                               !composer->toPlainText().trimmed().isEmpty());
+        updateSendControl();
     });
     split->addWidget(conversationPane);
     split->setSizes({245, 915, 360});
@@ -476,7 +468,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *toolsMenu = menuBar()->addMenu("&Tools");
     toolsMenu->addAction("Settings…", this, &WorkspaceWindow::account);
     toolsMenu->addAction("Manage archived and deleted items…", this, &WorkspaceWindow::manageProjects);
-    toolsMenu->addAction("Discover available models", this, &WorkspaceWindow::discoverModels);
+    toolsMenu->addAction("Refresh available models", this, [this] { discoverModels(true); });
     toolsMenu->addAction("Restart provider session for this conversation", this,
                          [this] { call("v2.conversation.restart_session"); });
     toolsMenu->addAction("CAD script…", this, [this] {
@@ -501,10 +493,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *help = menuBar()->addMenu("&Help");
     help->addAction("Credits", this, [this] {
         if (focusOpenDialog()) return;
-        QMessageBox::about(this, "Credits", "<b>Prompt to CAD V2</b><p>Uicons by <a href='https://www.flaticon.com/uicons'>Flaticon</a>.</p><p>See THIRD_PARTY_NOTICES.md for dependency licenses.</p>");
+        QMessageBox::about(this, "Credits", "<b>Prompt to CAD</b><p>Uicons by <a href='https://www.flaticon.com/uicons'>Flaticon</a>.</p><p>See THIRD_PARTY_NOTICES.md for dependency licenses.</p>");
     });
     help->addAction("Supported capabilities", this, [this] {
-        QMessageBox::information(this, "Prompt to CAD V2",
+        QMessageBox::information(this, "Prompt to CAD",
                                  "Engineering: STEP and editable CAD recipes; precise solids, local "
                                  "face/edge operations and "
                                  "restricted CAD scripts.\nAccepted changes are verified and undoable. "
@@ -722,11 +714,12 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             saved->setText("Candidate preview · not accepted");
         } else if (stage == "connection") {
             activity->setText(event.value("message").toString());
-            if (!busy)
-                call("v2.state", {}, [this](auto r) {
-                    if (r.value("provider").toObject().value("state") == "ready")
-                        discoverModels();
-                });
+            if (event.value("provider_status").isObject()) {
+                state["provider"] = event.value("provider_status");
+                updateUsage();
+                if (!busy && state.value("provider").toObject().value("state") == "ready")
+                    discoverModels();
+            }
         } else
             activity->setText(event.value("message").toString());
     });
@@ -736,12 +729,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     });
     connect(rpc, &RpcClient::ready, this, [this, openPath] {
         call("v2.state", {}, [this, openPath](auto r) {
+            startupEmpty = r.value("project").toObject().isEmpty() && r.value("conversation").toObject().isEmpty();
             showState(r);
             Q_EMIT workspaceReady();
             if (!openPath.isEmpty())
                 openFile(openPath);
             else if (smoke)
                 showError("Smoke test requires a model.");
+            if (!smoke) showOnboarding();
         });
     });
     QSettings prefs;
@@ -793,16 +788,16 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
         return;
     }
     busy = true;
-    sendButton->setEnabled(false);
-    stopButton->setEnabled(method == "v2.task");
-    stopButton->setVisible(method == "v2.task");
+    taskRunning = method == "v2.task";
+    updateSendControl();
+    refreshConnectionControls();
     undoAction->setEnabled(false);
     redoAction->setEnabled(false);
     rpc->call(method, params, [this, done](const QJsonObject &result, const QString &failure) {
         busy = false;
-        sendButton->setEnabled(!composer->toPlainText().trimmed().isEmpty());
-        stopButton->setEnabled(false);
-        stopButton->hide();
+        taskRunning = false;
+        updateSendControl();
+        refreshConnectionControls();
         if (!failure.isEmpty()) {
             activeTaskId.clear();
             pendingUser.clear();
@@ -981,8 +976,8 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
         value.value("conversation").toObject().value("title").toString("Design conversation"));
     title->setText(project.value("name").toString("Create a project to begin") + "  /  " +
                    document.value("name").toString());
-    setWindowTitle(project.isEmpty() ? "Prompt to CAD V2"
-                                     : project.value("name").toString() + " · Prompt to CAD V2");
+    setWindowTitle(project.isEmpty() ? "Prompt to CAD"
+                                     : project.value("name").toString() + " · Prompt to CAD");
     saved->setText(document.value("components").toArray().isEmpty()
                        ? "Empty document"
                        : "Saved · " + document.value("revision_id").toString().left(8));
@@ -1017,13 +1012,6 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                 value.value("conversation").toObject().value("conversation_id"))
                 projects->setCurrentItem(child);
         }
-    }
-    for (auto entry : value.value("catalog").toObject().value("unavailable").toArray()) {
-        auto project = entry.toObject();
-        auto *item = new QTreeWidgetItem(projects, {project.value("name").toString() + " · Unavailable"});
-        item->setDisabled(true);
-        item->setToolTip(0, project.value("reason").toString() + "\n" +
-                               QDir::toNativeSeparators(project.value("folder_path").toString()));
     }
     modelTree->clear();
     QMap<QString, QTreeWidgetItem *> groups;
@@ -1072,9 +1060,9 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                       " components · " +
                       (active.isEmpty() ? "Agent disconnected" : connection.value("billing").toString()));
     const auto notice = value.value("startup_notice").toString();
-    const auto unavailable = value.value("catalog").toObject().value("unavailable").toArray().size();
+    const auto unavailable = value.value("catalog").toObject().value("diagnostics").toArray().size();
     if (!notice.isEmpty()) activity->setText(notice);
-    else if (unavailable) activity->setText(activity->text() + " · " + QString::number(unavailable) + " unavailable project(s) · see Projects");
+    else if (unavailable) activity->setText(activity->text() + " · " + QString::number(unavailable) + " project issue(s) · see Settings → Projects");
     if (!busy) {
         const auto taskState = value.value("task_state").toString();
         if (QStringList{"completed", "completed_no_change", "failed", "cancelled", "usage_limit"}.contains(
@@ -1085,7 +1073,7 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                        connection.value("state") == "ready" ? "Select geometry or send a design request."
                                                             : "Sign in from Settings to start a CAD task.");
     }
-    sendButton->setEnabled(!busy && !project.isEmpty() && !composer->toPlainText().trimmed().isEmpty());
+    updateSendControl();
     loading = false;
 }
 void WorkspaceWindow::select(const QJsonObject &selection) {
@@ -1156,6 +1144,14 @@ QString WorkspaceWindow::takeComposerText() {
 void WorkspaceWindow::submit() {
     if (busy || composer->toPlainText().trimmed().isEmpty())
         return;
+    if (state.value("conversation").toObject().isEmpty()) {
+        activity->setText("Create or open a conversation before sending a request.");
+        return;
+    }
+    if (state.value("provider").toObject().value("state") != "ready") {
+        account();
+        return;
+    }
     auto p = base();
     auto capture =
         QDir::tempPath() + "/promptcad-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png";
@@ -1182,8 +1178,17 @@ void WorkspaceWindow::submit() {
         activeTaskId.clear();
     });
 }
-void WorkspaceWindow::discoverModels() {
-    call("provider.models", {}, [this](auto r) {
+void WorkspaceWindow::discoverModels(bool refresh) {
+    if (modelsLoading || busy) return;
+    modelsLoading = true;
+    busy = true;
+    updateSendControl();
+    rpc->call("provider.models", {{"refresh", refresh}}, [this](auto r, auto error) {
+        modelsLoading = false;
+        busy = false;
+        updateSendControl();
+        refreshConnectionControls();
+        if (!error.isEmpty()) { showError(error); return; }
         auto old = models->currentData();
         models->clear();
         for (auto value : r.value("models").toArray()) {
@@ -1336,6 +1341,38 @@ void WorkspaceWindow::applyOperation() {
     call("v2.command", p);
 }
 void WorkspaceWindow::smokeCheck() {
+    if (!onboardingVerified) {
+        if (!startupEmpty) { showError("Normal startup restored a previous project."); return; }
+        QSettings().setValue("v2/onboardingDone", false);
+        for (int click = 0; click < 25; ++click) showOnboarding();
+        if (!onboardingDialog || findChildren<QDialog *>("codexOnboarding").size() != 1) {
+            showError("Onboarding singleton regression failed."); return;
+        }
+        onboardingDialog->grab().save(workspace + "/tmp/native-onboarding.png");
+        onboardingDialog->findChild<QPushButton *>("onboardingSkip")->click();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        showOnboarding();
+        if (onboardingDialog || !QSettings().value("v2/onboardingDone").toBool()) {
+            showError("Skipping onboarding did not persist."); return;
+        }
+        busy = true;
+        taskRunning = true;
+        updateTask("running", "Synthetic cancellation control test");
+        if (sendButton->accessibleName() != "Stop task" || !sendButton->isEnabled()) {
+            showError("Send control did not become Stop."); return;
+        }
+        sendButton->click();
+        if (sendButton->isEnabled() || sendButton->accessibleName() != "Stopping task") {
+            showError("Stop control was not disabled during cancellation."); return;
+        }
+        busy = false;
+        taskRunning = false;
+        updateTask("idle", {});
+        if (sendButton->accessibleName() != "Send request") {
+            showError("Stop control did not return to Send."); return;
+        }
+        onboardingVerified = true;
+    }
     if (!conversationsVerified) {
         auto *trigger = findChild<QPushButton *>("newConversationButton");
         const auto originalState = state;
@@ -1472,14 +1509,17 @@ void WorkspaceWindow::smokeCheck() {
         return;
     }
     if (qEnvironmentVariableIsSet("CAD_UI_MISSING_PROJECT_FIXTURE") &&
-        state.value("catalog").toObject().value("unavailable").toArray().size() != 1) {
+        !state.value("catalog").toObject().value("unavailable").toArray().isEmpty()) {
         showError("Missing-project startup recovery regression failed.");
         return;
     }
     QDir().mkpath(workspace + "/tmp");
     QJsonObject report{
         {"passed", true},
-        {"product", "Prompt to CAD V2"},
+        {"empty_startup", startupEmpty},
+        {"onboarding_skip_and_singleton", onboardingVerified},
+        {"single_send_stop_control", onboardingVerified},
+        {"product", "Prompt to CAD"},
         {"body_count", viewer->bodyCount()},
         {"face_selection", true},
         {"settings_singleton_rapid_clicks", 125},
@@ -1539,8 +1579,8 @@ void WorkspaceWindow::smokeCheck() {
     liveAnswer = "This is a UI validation preview, not live agent inference.";
     currentActivity = {"Inspecting synthetic fixture", "Checking selected component scope"};
     updateTask("running", "UI fixture · inspecting the selected component");
-    stopButton->show();
-    stopButton->setEnabled(true);
+    taskRunning = true;
+    updateSendControl();
     taskClock.restart();
     renderChat();
     updateUsage();
@@ -1551,6 +1591,7 @@ void WorkspaceWindow::smokeCheck() {
     workingPainter.end();
     working.save(workspace + "/tmp/native-agent-working.png");
     busy = false;
+    taskRunning = false;
     pendingUser.clear();
     liveAnswer.clear();
     updateTask("completed_no_change", {});
@@ -1615,51 +1656,74 @@ void WorkspaceWindow::smokeCheck() {
 }
 
 void WorkspaceWindow::manageProjects() {
-    if (busy || focusOpenDialog())
-        return;
+    if (busy || focusOpenDialog()) return;
     auto *dialog = new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setObjectName("projectCatalogue");
     dialog->setWindowModality(Qt::WindowModal);
-    dialog->setWindowTitle("Project catalogue · restore archived or deleted items");
+    dialog->setWindowTitle("Projects · Archive and trash");
     auto *layout = new QVBoxLayout(dialog);
     auto *tree = new QTreeWidget;
+    tree->setObjectName("trashTree");
     tree->setHeaderLabels({"Project / conversation", "State"});
     layout->addWidget(tree);
-    for (auto projectValue : state.value("catalog").toObject().value("projects").toArray()) {
-        auto p = projectValue.toObject();
-        auto *project = new QTreeWidgetItem(
-            tree, {p.value("name").toString(), p.value("trashed").toBool()    ? "Trash"
-                                               : p.value("archived").toBool() ? "Archived"
-                                                                              : "Active"});
-        project->setData(0, Qt::UserRole, p.value("project_id"));
-        for (auto conversationValue : p.value("conversation_summaries").toArray()) {
-            auto c = conversationValue.toObject();
-            auto *conversationItem = new QTreeWidgetItem(
-                project, {c.value("title").toString(), c.value("trashed").toBool()    ? "Trash"
-                                                       : c.value("archived").toBool() ? "Archived"
-                                                                                      : "Active"});
-            conversationItem->setData(0, Qt::UserRole, p.value("project_id"));
-            conversationItem->setData(0, Qt::UserRole + 1, c.value("conversation_id"));
+    for (auto value : state.value("catalog").toObject().value("projects").toArray()) {
+        auto project = value.toObject();
+        auto status = [](const QJsonObject &item) {
+            return item.value("trashed").toBool() ? "Trash" : item.value("archived").toBool() ? "Archived" : "Active";
+        };
+        auto *parent = new QTreeWidgetItem(tree, {project.value("name").toString(), status(project)});
+        parent->setData(0, Qt::UserRole, project.value("project_id"));
+        for (auto entry : project.value("conversation_summaries").toArray()) {
+            auto chat = entry.toObject();
+            auto *item = new QTreeWidgetItem(parent, {chat.value("title").toString(), status(chat)});
+            item->setData(0, Qt::UserRole, project.value("project_id"));
+            item->setData(0, Qt::UserRole + 1, chat.value("conversation_id"));
         }
-        project->setExpanded(true);
+        parent->setExpanded(true);
     }
-    auto *note = new QLabel("Trash is recoverable. Project files and accepted "
-                            "revisions remain on disk.");
+    auto *note = new QLabel("Trash keeps local files until you delete them permanently. Deleting a conversation preserves its CAD document and revisions.");
     note->setWordWrap(true);
     layout->addWidget(note);
-    button("Restore selected item", layout, [this, tree, dialog] {
+    auto *actions = new QHBoxLayout;
+    auto perform = [this, tree, dialog](bool purge) {
         auto *item = tree->currentItem();
-        if (!item)
-            return;
-        QJsonObject p{
-            {"project_id", item->data(0, Qt::UserRole).toString()}, {"archived", false}, {"trashed", false}};
-        auto cid = item->data(0, Qt::UserRole + 1).toString();
-        if (!cid.isEmpty())
-            p["conversation_id"] = cid;
-        call(cid.isEmpty() ? "v2.project.update" : "v2.conversation.update", p);
+        if (!item || busy) return;
+        const bool project = item->data(0, Qt::UserRole + 1).toString().isEmpty();
+        if (purge && QMessageBox::question(dialog, "Delete permanently",
+                "Permanently delete “" + item->text(0) + "”? " +
+                (project ? "Its local project folder, models and conversations will be removed." : "Its conversation and task records will be removed. CAD geometry and revisions will be kept.") +
+                " This cannot be undone.") != QMessageBox::Yes) return;
+        QJsonObject args{{"project_id", item->data(0, Qt::UserRole).toString()}};
+        if (!project) args["conversation_id"] = item->data(0, Qt::UserRole + 1).toString();
+        if (!purge) { args["archived"] = false; args["trashed"] = false; }
+        const auto method = QString(project ? "v2.project." : "v2.conversation.") + (purge ? "purge" : "update");
         dialog->close();
+        call(method, args, [this](auto) { manageProjects(); });
+    };
+    auto *restore = button("Restore", actions, [perform] { perform(false); });
+    restore->setObjectName("restoreTrashItem");
+    auto *purge = button("Delete permanently…", actions, [perform] { perform(true); });
+    purge->setObjectName("purgeTrashItem");
+    restore->setEnabled(false);
+    purge->setEnabled(false);
+    connect(tree, &QTreeWidget::currentItemChanged, dialog, [restore, purge](QTreeWidgetItem *item) {
+        restore->setEnabled(item && item->text(1) != "Active");
+        purge->setEnabled(item && item->text(1) == "Trash");
     });
-    dialog->resize(600, 440);
+    actions->addStretch();
+    button("Close", actions, [dialog] { dialog->close(); });
+    layout->addLayout(actions);
+    dialog->resize(640, 460);
     dialog->show();
+}
+
+void WorkspaceWindow::changeEvent(QEvent *event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() != QEvent::WindowActivate || refreshScheduled || state.isEmpty() || smoke) return;
+    refreshScheduled = true;
+    QTimer::singleShot(250, this, [this] {
+        refreshScheduled = false;
+        if (!busy && !loading) call("v2.projects.refresh");
+    });
 }

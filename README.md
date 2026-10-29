@@ -1,10 +1,10 @@
-# Prompt to CAD V2
+# Prompt to CAD
 
 <img src="assets/app-icon.svg" alt="Prompt to CAD purple pyramid logo" width="80">
 
 The current Windows desktop CAD workspace, with distinct dark/light workspace panels, rounded conversation bubbles, inline task activity and a startup loading screen, for text-driven creation and selected-part editing with Codex.
 
-Open **Prompt to CAD V2.lnk** (created by the native build with our logo), **Prompt to CAD V2.vbs**, or run `.venv\Scripts\python.exe native-app.py`.
+Open **Prompt to CAD.lnk** (created by the native build with our logo), **Prompt to CAD.vbs**, or run `.venv\Scripts\python.exe native-app.py`.
 
 For a fresh checkout, install [requirements-dev.txt](requirements-dev.txt), configure the Qt/OpenCascade SDKs, and run `.venv\Scripts\python.exe -m tools.build_native --test`.
 

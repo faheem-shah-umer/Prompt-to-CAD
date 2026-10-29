@@ -2,6 +2,7 @@
 
 import base64
 import ctypes
+import copy
 import hashlib
 import hmac
 import json
@@ -19,7 +20,7 @@ import httpx
 from backend.native.project_lock import revision_lock
 from backend.native.contracts import WorkspaceError
 
-APP_NAME = "Prompt to CAD V2"
+APP_NAME = "Prompt to CAD"
 AUTH = "https://auth.openai.com"
 RESOURCE = "https://api.openai.com/v1"
 SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
@@ -170,10 +171,26 @@ class Connections:
         self.pending = None
         self.lock = threading.RLock()
         self.last_error = ""
+        self.model_lock = threading.Lock()
+        self.model_cache = {}
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
             if "tripo_key" in data:
                 data.pop("tripo_key")
+            if not data.get("preferred"):
+                active = data.get("active")
+                data["preferred"] = (
+                    active
+                    if data["accounts"].get(active, {}).get("mode") == "chatgpt"
+                    else next(
+                        (
+                            key
+                            for key, account in reversed(list(data["accounts"].items()))
+                            if account["mode"] == "chatgpt"
+                        ),
+                        None,
+                    )
+                )
             self.vault.write(data)
 
     def status(self):
@@ -182,6 +199,7 @@ class Connections:
         accounts = [
             {
                 "id": key,
+                "label": a.get("email", "API key") + " · " + key[-6:],
                 "email": a.get("email", "API key"),
                 "workspace": a.get("workspace", "Workspace not reported"),
                 "connection": a["mode"],
@@ -190,7 +208,10 @@ class Connections:
             }
             for key, a in data["accounts"].items()
         ]
-        active = next((a for a in accounts if a["id"] == data["active"]), None)
+        selected = data.get("active") or data.get("preferred")
+        active = next((dict(a) for a in accounts if a["id"] == selected), None)
+        if active and not data.get("active"):
+            active["connected"] = False
         billing = "Disconnected"
         if active and active["connected"]:
             if active["connection"] == "chatgpt":
@@ -205,6 +226,7 @@ class Connections:
             billing = "Disconnected · reconnect required"
         return {
             "accounts": accounts,
+            "preferred": data.get("preferred"),
             "active": active,
             "signing_in": self.pending is not None,
             "state": "connecting"
@@ -231,6 +253,7 @@ class Connections:
                 )
             with self.vault.lock:
                 data = self.vault.read()
+            account_id = account_id or data.get("preferred")
             old = data["accounts"].get(account_id) if account_id else None
             if account_id and (not old or old["mode"] != "chatgpt"):
                 raise WorkspaceError("Choose a saved ChatGPT registration.")
@@ -283,7 +306,7 @@ class Connections:
                             tokens, issued, nonce, old, attempt=server
                         )
                         message = (
-                            "Connected. You can return to Prompt to CAD V2."
+                            "Connected. You can return to Prompt to CAD."
                             if enabled
                             else "Identity connected, but ChatGPT plan use is disabled. Reconnect and authorize plan use before running tasks."
                         )
@@ -301,7 +324,7 @@ class Connections:
                     self.wfile.write(message.encode())
                     if owner.pending is server:
                         owner.pending = None
-                    owner.notify({"stage": "connection", "message": message})
+                    owner.connection_event(message)
                     threading.Thread(target=server.shutdown, daemon=True).start()
 
             server = HTTPServer(("127.0.0.1", 0), Callback)
@@ -341,10 +364,7 @@ class Connections:
 
             def expire():
                 time.sleep(300)
-                if self.pending is server:
-                    self.pending = None
-                    self.last_error = "Sign-in expired. Try again."
-                    server.shutdown()
+                self.expire_login(server)
 
             threading.Thread(target=expire, daemon=True).start()
             return {
@@ -402,14 +422,35 @@ class Connections:
             data = self.vault.read()
             data["accounts"][key_id] = record
             data["active"] = key_id
+            data["preferred"] = key_id
             self.vault.write(data)
+            self.model_cache.pop(key_id, None)
         return "chatgpt.tokens.use.direct" in scopes
+
+    def connection_event(self, message):
+        self.notify(
+            {
+                "stage": "connection",
+                "message": message,
+                "provider_status": self.status(),
+            }
+        )
+
+    def expire_login(self, server):
+        with self.lock:
+            if self.pending is not server:
+                return
+            self.pending = None
+            self.last_error = "Sign-in expired. Try again."
+        server.shutdown()
+        self.connection_event(self.last_error)
 
     def cancel_login(self):
         with self.lock:
             server, self.pending = self.pending, None
         if server:
             server.shutdown()
+            self.connection_event("Sign-in cancelled.")
         return self.status()
 
     def api_key(self, key):
@@ -439,6 +480,8 @@ class Connections:
             if key_id not in data["accounts"]:
                 raise WorkspaceError("Unknown account registration.")
             data["active"] = key_id
+            if data["accounts"][key_id]["mode"] == "chatgpt":
+                data["preferred"] = key_id
             self.vault.write(data)
         return self.status()
 
@@ -513,42 +556,60 @@ class Connections:
                 self.vault.write(data)
             return data["active"], dict(account)
 
-    def models(self):
-        _, account = self.credential()
-        response = request_json(
-            "GET",
-            RESOURCE + "/models",
-            headers={
-                "Authorization": "Bearer "
-                + account.get("access_token", account.get("api_key", ""))
-            },
-        )
-        if account["mode"] == "chatgpt":
-            models = [
-                {
-                    "id": m["slug"],
-                    "name": m.get("display_name", m["slug"]),
-                    "access": "Not yet verified by inference",
-                }
-                for m in response.get("models", [])
-                if m.get("visibility") == "list"
-            ]
-        else:
-            models = [
-                {
-                    "id": m["id"],
-                    "name": m["id"],
-                    "access": "Catalogue entry; inference not verified",
-                }
-                for m in response.get("data", [])
-            ]
-        return {"models": models, "billing": self.status()["billing"]}
+    def models(self, refresh=False):
+        requested = time.perf_counter()
+        with self.model_lock:
+            key, account = self.credential()
+            cached = self.model_cache.get(key)
+            if cached and (
+                (not refresh and requested - cached[0] < 600) or cached[0] >= requested
+            ):
+                return copy.deepcopy(cached[1])
+            response = request_json(
+                "GET",
+                RESOURCE + "/models",
+                headers={
+                    "Authorization": "Bearer "
+                    + account.get("access_token", account.get("api_key", ""))
+                },
+            )
+            if account["mode"] == "chatgpt":
+                models = [
+                    {
+                        "id": m["slug"],
+                        "name": m.get("display_name", m["slug"]),
+                        "access": "Not yet verified by inference",
+                    }
+                    for m in response.get("models", [])
+                    if m.get("visibility") == "list"
+                ]
+            else:
+                models = [
+                    {
+                        "id": m["id"],
+                        "name": m["id"],
+                        "access": "Catalogue entry; inference not verified",
+                    }
+                    for m in response.get("data", [])
+                ]
+            result = {"models": models, "billing": self.status()["billing"]}
+            self.model_cache[key] = (time.perf_counter(), result)
+            return copy.deepcopy(result)
 
-    def disconnect(self):
+    def disconnect(self, account_id=None):
         confirmed = True
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
-            account = data["accounts"].get(data["active"])
+            selected = account_id or data.get("active") or data.get("preferred")
+            account = data["accounts"].get(selected)
+            if account_id and not account:
+                raise WorkspaceError("Unknown account registration.")
+            if (
+                account
+                and account["mode"] == "chatgpt"
+                and not account.get("refresh_token")
+            ):
+                confirmed = account.get("revocation_confirmed", False)
             if (
                 account
                 and account["mode"] == "chatgpt"
@@ -576,9 +637,12 @@ class Connections:
                 except Exception:
                     confirmed = False
             if account:
+                account["revocation_confirmed"] = confirmed
                 for key in ("access_token", "refresh_token", "id_token", "api_key"):
                     account.pop(key, None)
-            data["active"] = None
+            if data.get("active") == selected:
+                data["active"] = None
+            self.model_cache.pop(selected, None)
             self.vault.write(data)
         return {
             **self.status(),

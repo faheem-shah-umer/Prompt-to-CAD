@@ -25,7 +25,7 @@ void StartupSplash::paintEvent(QPaintEvent *) {
     p.drawPixmap((width() - logo.width()) / 2, 42, logo);
     p.setPen(QColor(light ? "#242428" : "#eeeeef"));
     p.setFont(QFont("Segoe UI", 17, QFont::DemiBold));
-    p.drawText(QRect(0, 137, width(), 34), Qt::AlignCenter, "Prompt to CAD V2");
+    p.drawText(QRect(0, 137, width(), 34), Qt::AlignCenter, "Prompt to CAD");
     p.setPen(QColor(light ? "#71717a" : "#a1a1aa"));
     p.setFont(QFont("Segoe UI", 10));
     p.drawText(QRect(0, 176, width(), 28), Qt::AlignCenter, "Opening your design workspace");

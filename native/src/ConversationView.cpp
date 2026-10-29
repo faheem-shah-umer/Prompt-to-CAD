@@ -131,7 +131,7 @@ void ConversationView::rebuild() {
         bubble->setProperty("user", user);
         bubble->setMaximumWidth(user ? int(viewport()->width() * 0.87) : viewport()->width() - 12);
         auto *body = new QVBoxLayout(bubble);
-        body->setContentsMargins(14, 12, 14, 12);
+        body->setContentsMargins(user ? 14 : 0, user ? 12 : 0, user ? 14 : 0, user ? 12 : 0);
         body->setSpacing(10);
         body->setAlignment(Qt::AlignTop);
         auto *author = new QLabel(user ? "You" : assistant ? "Codex" : "Notice");

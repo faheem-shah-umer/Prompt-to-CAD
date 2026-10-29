@@ -148,8 +148,8 @@ class CodexAppServer:
                 "initialize",
                 {
                     "clientInfo": {
-                        "name": "Prompt to CAD V2",
-                        "title": "Prompt to CAD V2",
+                        "name": "Prompt to CAD",
+                        "title": "Prompt to CAD",
                         "version": "0.4.0",
                     }
                 },

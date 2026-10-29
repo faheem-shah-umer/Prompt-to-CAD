@@ -184,7 +184,7 @@ def copy_sources(destination):
     (app / "tmp").mkdir(exist_ok=True)
     copy_public("docs", destination / "docs")
     (destination / "README.md").write_text(
-        '# Prompt to CAD V2\n\n<img src="assets/app-icon.svg" alt="Prompt to CAD logo" width="80">\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n',
+        '# Prompt to CAD\n\n<img src="assets/app-icon.svg" alt="Prompt to CAD logo" width="80">\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n',
         encoding="utf-8",
     )
     source = destination / "source"
@@ -256,7 +256,7 @@ def installer(bundle, compiler, output):
         "Unicode true",
         "RequestExecutionLevel user",
         "SetCompressor zlib",
-        'Name "Prompt to CAD V2"',
+        'Name "Prompt to CAD"',
         f'Icon "{nsis_string(bundle / "assets/app-icon.ico")}"',
         f'UninstallIcon "{nsis_string(bundle / "assets/app-icon.ico")}"',
         f'OutFile "{nsis_string(output)}"',
@@ -282,8 +282,8 @@ def installer(bundle, compiler, output):
     script += [
         'SetOutPath "$INSTDIR"',
         'WriteUninstaller "$INSTDIR\\Uninstall.exe"',
-        'CreateShortcut "$SMPROGRAMS\\Prompt to CAD V2.lnk" "$INSTDIR\\bin\\PromptToCAD.exe" "" "$INSTDIR\\bin\\PromptToCAD.exe" 0',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayName" "Prompt to CAD V2"',
+        'CreateShortcut "$SMPROGRAMS\\Prompt to CAD.lnk" "$INSTDIR\\bin\\PromptToCAD.exe" "" "$INSTDIR\\bin\\PromptToCAD.exe" 0',
+        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayName" "Prompt to CAD"',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayVersion" "0.4.0"',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayIcon" \'"$INSTDIR\\bin\\PromptToCAD.exe",0\'',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "UninstallString" \'"$INSTDIR\\Uninstall.exe"\'',
@@ -301,7 +301,7 @@ def installer(bundle, compiler, output):
     script += [
         'Delete "$INSTDIR\\Uninstall.exe"',
         'RMDir "$INSTDIR"',
-        'Delete "$SMPROGRAMS\\Prompt to CAD V2.lnk"',
+        'Delete "$SMPROGRAMS\\Prompt to CAD.lnk"',
         'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2"',
         "SectionEnd",
     ]
@@ -313,7 +313,7 @@ def installer(bundle, compiler, output):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output", type=Path, default=ROOT / "dist-native/PromptToCAD-V2-0.4.0"
+        "--output", type=Path, default=ROOT / "dist-native/PromptToCAD-0.4.0"
     )
     parser.add_argument(
         "--qt-prefix",
@@ -475,7 +475,7 @@ def main():
         )
     if args.installer:
         installer(
-            bundle, args.installer, bundle.parent / "PromptToCAD-V2-0.4.0-Setup.exe"
+            bundle, args.installer, bundle.parent / "PromptToCAD-0.4.0-Setup.exe"
         )
     print(bundle, flush=True)
 

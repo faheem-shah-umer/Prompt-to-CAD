@@ -1,1 +1,1 @@
-"""Prompt to CAD V2 application services."""
+"""Prompt to CAD application services."""

@@ -39,6 +39,7 @@ class WorkspaceWindow : public QMainWindow {
 
   protected:
     void resizeEvent(QResizeEvent *) override;
+    void changeEvent(QEvent *) override;
 
   private:
     void call(const QString &, QJsonObject = {}, std::function<void(QJsonObject)> done = {});
@@ -50,7 +51,10 @@ class WorkspaceWindow : public QMainWindow {
     void revealConversation();
     void manageProjects();
     void account();
-    void discoverModels();
+    void discoverModels(bool refresh = false);
+    void updateSendControl();
+    void beginSignIn(const QString &registration = {});
+    void showOnboarding();
     void submit();
     QString takeComposerText();
     void select(const QJsonObject &);
@@ -77,7 +81,7 @@ class WorkspaceWindow : public QMainWindow {
     ConversationView *chat;
     QTextBrowser *properties;
     QPlainTextEdit *composer;
-    QPushButton *sendButton, *stopButton, *selectionChip, *accountBadge;
+    QPushButton *sendButton, *selectionChip, *accountBadge;
     QPushButton *usageBadge;
     QTimer *taskPulse, *chatRefresh;
     QElapsedTimer taskClock;
@@ -85,7 +89,7 @@ class WorkspaceWindow : public QMainWindow {
     QStringList currentActivity, liveOrder;
     QHash<QString, QString> liveMessages, livePhases;
     QLabel *activity, *title, *saved, *conversationTitle;
-    QPointer<QDialog> settingsDialog;
+    QPointer<QDialog> settingsDialog, onboardingDialog;
     QString activeTaskId;
     QComboBox *models, *selectionMode;
     QLineEdit *search, *treeFilter;
@@ -94,7 +98,8 @@ class WorkspaceWindow : public QMainWindow {
     QAction *undoAction, *redoAction;
     QJsonObject state, document, selected, operationSelection;
     QString workspace, currentOperation;
-    bool settingsVerified = false, conversationsVerified = false;
+    bool settingsVerified = false, conversationsVerified = false, onboardingVerified = false, startupEmpty = false;
     int settingsSaves = 0;
+    bool taskRunning = false, modelsLoading = false, refreshScheduled = false;
     bool busy = false, smoke = false, viewerFailed = false, loading = false;
 };

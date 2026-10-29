@@ -12,60 +12,44 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StorageTests(unittest.TestCase):
-    def test_missing_project_does_not_hide_valid_projects_or_remove_catalog_records(
-        self,
-    ):
+    def test_folder_discovery_removal_and_rename_rebuild_the_catalog(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
             base = Path(temporary)
             projects = Projects(base / "Projects")
-            missing = projects.create("Missing fixture")
+            missing = projects.create("Moving fixture")
             healthy = projects.create("Healthy fixture")
             source = projects.project_path(missing["project_id"])
-            source.rename(base / "temporarily-moved")
-            original_catalog = projects.catalog.read_bytes()
-            listing = Projects(projects.folder).listing()
+            snapshot = (source / "workspace.json").read_bytes()
+            moved = base / "removed-from-collection"
+            source.rename(moved)
+            listing = projects.reconcile()
             self.assertEqual(
                 [p["project_id"] for p in listing["projects"]], [healthy["project_id"]]
             )
-            self.assertEqual(
-                listing["unavailable"][0]["project_id"], missing["project_id"]
-            )
-            self.assertEqual(projects.catalog.read_bytes(), original_catalog)
-            self.assertFalse(source.exists())
-            (base / "temporarily-moved").rename(source)
-            restored = Projects(projects.folder).listing()
-            self.assertEqual(restored["unavailable"], [])
-            self.assertEqual(len(restored["projects"]), 2)
+            self.assertEqual(listing["unavailable"], [])
+            restored = projects.folder / "Renamed fixture"
+            moved.rename(restored)
+            listing = projects.reconcile()
+            self.assertEqual(len(listing["projects"]), 2)
+            self.assertEqual(projects.project_path(missing["project_id"]), restored)
+            self.assertEqual((restored / "workspace.json").read_bytes(), snapshot)
+            projects.catalog.write_text("{damaged cache")
+            self.assertEqual(len(Projects(projects.folder).listing()["projects"]), 2)
 
-    def test_missing_project_folder_names_remain_reserved_for_their_original_identity(
-        self,
-    ):
+    def test_removed_folder_name_can_be_used_by_a_new_distinct_project(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
             base = Path(temporary)
             projects = Projects(base / "Projects")
-            missing = projects.create("Bracket")
-            source = projects.project_path(missing["project_id"])
-            original = (source / "workspace.json").read_bytes()
-            source.rename(base / "moved-project")
+            previous = projects.create("Bracket")
+            projects.project_path(previous["project_id"]).rename(
+                base / "outside-collection"
+            )
             replacement = projects.create("Bracket")
+            self.assertNotEqual(replacement["project_id"], previous["project_id"])
             self.assertEqual(
-                projects.project_path(replacement["project_id"]).name, "Bracket (2)"
+                projects.project_path(replacement["project_id"]).name, "Bracket"
             )
-            external = Projects(base / "external")
-            imported = external.create("Bracket")
-            imported_id = projects.import_project(
-                external.project_path(imported["project_id"])
-            )
-            self.assertEqual(projects.project_path(imported_id).name, "Bracket (3)")
-            self.assertFalse(source.exists())
-            self.assertEqual(
-                projects.listing()["unavailable"][0]["project_id"],
-                missing["project_id"],
-            )
-            (base / "moved-project").rename(source)
-            self.assertEqual((source / "workspace.json").read_bytes(), original)
-            self.assertEqual(len(projects.listing()["projects"]), 3)
-            self.assertEqual(projects.listing()["unavailable"], [])
+            self.assertEqual(len(projects.listing()["projects"]), 1)
 
     def test_unreadable_project_metadata_is_reported_without_replacing_it(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
@@ -75,9 +59,7 @@ class StorageTests(unittest.TestCase):
             metadata.write_text("{interrupted fixture")
             listing = Projects(temporary).listing()
             self.assertEqual(listing["projects"], [])
-            self.assertEqual(
-                listing["unavailable"][0]["project_id"], project["project_id"]
-            )
+            self.assertEqual(listing["diagnostics"][0]["name"], "Damaged fixture")
             self.assertEqual(metadata.read_text(), "{interrupted fixture")
 
     def test_orphaned_task_records_do_not_crash_startup_recovery(self):
@@ -185,6 +167,72 @@ class StorageTests(unittest.TestCase):
             )
             self.assertEqual(adopted.index(), original.index())
             self.assertTrue(original.index_path.is_file())
+
+    def test_purge_last_chat_preserves_document_and_deletes_its_tasks_only(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            projects = Projects(temporary)
+            project = projects.create("Fixture")
+            pid = project["project_id"]
+            chat = projects.conversation(pid)
+            cid = chat["conversation_id"]
+            doc = projects.document(project)
+            original = doc.index_path.read_bytes()
+            projects.task(pid, {"task_id": "chat-task", "conversation_id": cid})
+            projects.task(
+                pid, {"task_id": "other-task", "conversation_id": "other-chat"}
+            )
+            with self.assertRaises(WorkspaceError):
+                projects.purge(pid, cid)
+            chat["trashed"] = True
+            projects.save_conversation(pid, chat)
+            projects.purge(pid, cid)
+            base = projects.project_path(pid)
+            self.assertFalse((base / "conversations" / (cid + ".json")).exists())
+            self.assertFalse((base / "tasks/chat-task.json").exists())
+            self.assertTrue((base / "tasks/other-task.json").exists())
+            view = projects.view(pid)
+            self.assertIsNone(view["conversation"])
+            self.assertEqual(view["conversations"], [])
+            self.assertEqual(doc.index_path.read_bytes(), original)
+
+    def test_legacy_trashed_active_chat_is_hidden_and_catalog_schema_can_recover(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            projects = Projects(temporary)
+            project = projects.create("Fixture")
+            pid = project["project_id"]
+            chat = projects.conversation(pid)
+            chat["trashed"] = True
+            projects.save_conversation(pid, chat)
+            self.assertIsNone(projects.view(pid)["conversation"])
+            for malformed in ([], {"projects": [{}], "folders": []}):
+                projects.catalog.write_text(json.dumps(malformed))
+                self.assertEqual(len(projects.reconcile()["projects"]), 1)
+
+    def test_project_purge_requires_trash_and_rejects_busy_documents_and_escape(self):
+        from backend.native.project_lock import revision_lock, RevisionConflict
+
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            projects = Projects(Path(temporary) / "Projects")
+            project = projects.create("Remove fixture")
+            pid = project["project_id"]
+            base = projects.project_path(pid)
+            with self.assertRaises(WorkspaceError):
+                projects.purge(pid)
+            projects.update(pid, trashed=True)
+            with revision_lock(projects.document(project).folder / ".task-lock"):
+                with self.assertRaises(RevisionConflict):
+                    projects.purge(pid)
+            self.assertTrue(base.is_dir())
+            catalog = projects.read(projects.catalog)
+            catalog["folders"][pid] = "../outside"
+            projects.catalog.write_text(json.dumps(catalog))
+            with self.assertRaises(WorkspaceError):
+                projects.purge(pid)
+            catalog["folders"][pid] = base.name
+            projects.catalog.write_text(json.dumps(catalog))
+            projects.purge(pid)
+            self.assertFalse(base.exists())
+            self.assertEqual(projects.reconcile()["projects"], [])
 
 
 class PackagingPrivacyTests(unittest.TestCase):

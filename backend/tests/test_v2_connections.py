@@ -131,7 +131,7 @@ class ConnectionTests(unittest.TestCase):
         result = self.connections.begin()
         query = parse_qs(urlsplit(result["authorization_url"]).query)
         self.assertEqual(query["client_id"], ["dynamic_agent_client"])
-        self.assertEqual(query["agent_name_hint"], ["Prompt to CAD V2"])
+        self.assertEqual(query["agent_name_hint"], ["Prompt to CAD"])
         self.assertEqual(query["code_challenge_method"], ["S256"])
         callback = urlsplit(query["redirect_uri"][0])
         self.assertEqual(callback.hostname, "127.0.0.1")
@@ -142,6 +142,123 @@ class ConnectionTests(unittest.TestCase):
         again = parse_qs(urlsplit(self.connections.begin()["authorization_url"]).query)
         self.assertEqual(again["ext_agent_host_id"][0], host)
         self.assertNotEqual(query["state"], again["state"])
+
+    def test_primary_sign_in_reuses_client_after_disconnect_and_serializes_attempts(
+        self,
+    ):
+        self.complete(self.tokens())
+        before = self.connections.vault.read()
+        query = parse_qs(urlsplit(self.connections.begin()["authorization_url"]).query)
+        self.assertEqual(query["client_id"], ["fixture-client"])
+        self.assertNotIn("agent_name_hint", query)
+        self.assertEqual(query["ext_agent_host_id"], [before["host_id"]])
+        with self.assertRaises(WorkspaceError) as pending:
+            self.connections.begin()
+        self.assertEqual(pending.exception.code, "sign_in_pending")
+        self.connections.cancel_login()
+        with patch(
+            "backend.v2.auth.request_json",
+            return_value={"revocation_endpoint": AUTH + "/revoke"},
+        ):
+            result = self.connections.disconnect()
+        self.assertTrue(result["remote_revocation_confirmed"])
+        self.assertEqual(result["state"], "disconnected")
+        query = parse_qs(urlsplit(self.connections.begin()["authorization_url"]).query)
+        self.assertEqual(query["client_id"], ["fixture-client"])
+        self.connections.cancel_login()
+        self.complete(self.tokens())
+        self.assertEqual(len(self.connections.status()["accounts"]), 1)
+        self.assertEqual(self.connections.vault.read()["host_id"], before["host_id"])
+
+    def test_duplicate_email_registrations_remain_distinct_and_old_revoke_preserves_primary(
+        self,
+    ):
+        self.complete(self.tokens())
+        data = self.connections.vault.read()
+        primary = data["active"]
+        data["accounts"]["legacy-registration"] = {
+            **data["accounts"][primary],
+            "client_id": "legacy-client",
+        }
+        self.connections.vault.write(data)
+        accounts = self.connections.status()["accounts"]
+        self.assertEqual(len(accounts), 2)
+        self.assertNotEqual(accounts[0]["label"], accounts[1]["label"])
+        with patch(
+            "backend.v2.auth.request_json", side_effect=WorkspaceError("offline")
+        ):
+            result = self.connections.disconnect("legacy-registration")
+        self.assertFalse(result["remote_revocation_confirmed"])
+        self.assertIn("not confirmed", result["message"])
+        self.assertFalse(
+            self.connections.disconnect("legacy-registration")[
+                "remote_revocation_confirmed"
+            ]
+        )
+        self.assertEqual(self.connections.credential()[0], primary)
+        self.assertNotIn(
+            "refresh_token",
+            self.connections.vault.read()["accounts"]["legacy-registration"],
+        )
+
+    def test_model_discovery_is_coalesced_cached_and_account_scoped(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        self.complete(self.tokens())
+        response = {"models": [{"slug": "fixture-model", "visibility": "list"}]}
+        with patch("backend.v2.auth.request_json", return_value=response) as request:
+            self.connections.models()
+            self.connections.models()
+            self.assertEqual(request.call_count, 1)
+            self.connections.models(refresh=True)
+            self.assertEqual(request.call_count, 2)
+            data = self.connections.vault.read()
+            primary = data["active"]
+            data["accounts"]["other-registration"] = {
+                **data["accounts"][primary],
+                "client_id": "other-client",
+            }
+            self.connections.vault.write(data)
+            self.connections.select("other-registration")
+            self.connections.models()
+            self.assertEqual(request.call_count, 3)
+            self.connections.select(primary)
+            self.connections.models()
+            self.assertEqual(request.call_count, 3)
+        started, release = threading.Event(), threading.Event()
+
+        def fetch(*args, **kwargs):
+            started.set()
+            self.assertTrue(release.wait(5))
+            return response
+
+        with (
+            patch("backend.v2.auth.request_json", side_effect=fetch) as request,
+            ThreadPoolExecutor(max_workers=4) as executor,
+        ):
+            futures = [executor.submit(self.connections.models, True)]
+            self.assertTrue(started.wait(5))
+            futures.extend(executor.submit(self.connections.models) for _ in range(3))
+            release.set()
+            for future in futures:
+                self.assertEqual(future.result()["models"][0]["id"], "fixture-model")
+            self.assertEqual(request.call_count, 1)
+
+    def test_expired_or_cancelled_login_emits_local_status_without_provider_requests(
+        self,
+    ):
+        events = []
+        self.connections.notify = events.append
+        with patch("backend.v2.auth.request_json") as request:
+            self.connections.begin()
+            self.connections.expire_login(self.connections.pending)
+            self.assertFalse(events[-1]["provider_status"]["signing_in"])
+            self.assertIn("expired", events[-1]["message"])
+            self.connections.begin()
+            self.connections.cancel_login()
+            self.assertFalse(events[-1]["provider_status"]["signing_in"])
+            self.assertEqual(request.call_count, 0)
 
     def test_refresh_rotates_atomically_and_terminal_revocation_never_switches_billing(
         self,

@@ -24,7 +24,7 @@ def serve(input_stream=sys.stdin, output_stream=sys.stdout):
                 result = {
                     "protocolVersion": request.get("params", {}).get("protocolVersion", "2024-11-05"),
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "Prompt to CAD V2 tools", "version": "0.3.0"},
+                    "serverInfo": {"name": "Prompt to CAD tools", "version": "0.3.0"},
                 }
             elif method == "ping":
                 result = {}

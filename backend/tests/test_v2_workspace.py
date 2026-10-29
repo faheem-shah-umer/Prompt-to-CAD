@@ -32,15 +32,11 @@ class V2WorkspaceTests(unittest.TestCase):
         source = self.workspace.projects.project_path(original["project_id"])
         self.workspace.worker.close()
         source.rename(self.folder / "moved-project")
-        catalog_before = self.workspace.projects.catalog.read_bytes()
         self.workspace = WorkspaceV2(self.folder)
         state = self.workspace.dispatch("v2.state", {})
         self.assertNotIn("project", state)
-        self.assertTrue(state["startup_notice"])
-        self.assertEqual(self.workspace.projects.catalog.read_bytes(), catalog_before)
-        self.assertEqual(
-            state["catalog"]["unavailable"][0]["project_id"], original["project_id"]
-        )
+        self.assertEqual(state["catalog"]["projects"], [])
+        self.assertEqual(state["catalog"]["unavailable"], [])
         created = self.workspace.dispatch(
             "v2.project.create", {"name": "New usable project"}
         )
@@ -93,6 +89,53 @@ class V2WorkspaceTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "project_required")
         self.assertEqual(self.workspace.projects.catalog.read_bytes(), before)
 
+    def test_trash_purge_and_external_removal_clear_active_context(self):
+        pid = self.workspace.project_id
+        cid = self.workspace.state()["conversation"]["conversation_id"]
+        state = self.workspace.dispatch(
+            "v2.conversation.update", {"conversation_id": cid, "trashed": True}
+        )
+        self.assertIsNone(state["conversation"])
+        self.workspace.dispatch(
+            "v2.conversation.purge", {"project_id": pid, "conversation_id": cid}
+        )
+        self.assertEqual(self.workspace.state()["conversations"], [])
+        with self.assertRaises(WorkspaceError) as error:
+            self.workspace.dispatch("v2.task", {"prompt": "fixture"})
+        self.assertEqual(error.exception.code, "conversation_required")
+        self.workspace.active_task = {"task_id": "fixture"}
+        with self.assertRaises(WorkspaceError) as busy:
+            self.workspace.dispatch("v2.project.purge", {"project_id": pid})
+        self.assertEqual(busy.exception.code, "busy")
+        self.workspace.active_task = None
+        self.workspace.dispatch(
+            "v2.project.update", {"project_id": pid, "trashed": True}
+        )
+        self.assertNotIn("document", self.workspace.state())
+        self.workspace.dispatch(
+            "v2.project.update", {"project_id": pid, "trashed": False}
+        )
+        self.workspace.dispatch("v2.project.open", {"project_id": pid})
+        self.workspace.projects.project_path(pid).rename(
+            self.folder / "externally-removed"
+        )
+        refreshed = self.workspace.dispatch("v2.projects.refresh", {})
+        self.assertNotIn("project", refreshed)
+        self.assertEqual(refreshed["catalog"]["projects"], [])
+
+    def test_refresh_rebinds_the_active_document_after_renaming_its_folder(self):
+        pid = self.workspace.project_id
+        original = self.workspace.document.index()
+        old = self.workspace.projects.project_path(pid)
+        target = old.with_name("Renamed fixture")
+        old.rename(target)
+        state = self.workspace.dispatch("v2.projects.refresh", {})
+        self.assertEqual(state["project"]["project_id"], pid)
+        self.assertEqual(self.workspace.document.index(), original)
+        self.assertTrue(self.workspace.document.folder.is_relative_to(target))
+        self.workspace.dispatch("v2.conversation.new", {})
+        self.assertEqual(self.workspace.document.index(), original)
+
     def assembly(self):
         return self.workspace.dispatch(
             "v2.script",
@@ -129,7 +172,15 @@ class V2WorkspaceTests(unittest.TestCase):
         relocated = self.folder / "Relocated projects"
         shutil.move(str(previous_root), str(relocated))
         self.workspace = WorkspaceV2(self.folder, projects_dir=relocated)
-        current = self.workspace.state()
+        self.assertNotIn("document", self.workspace.state())
+        current = self.workspace.dispatch(
+            "v2.project.open",
+            {
+                "project_id": self.workspace.projects.listing()["projects"][0][
+                    "project_id"
+                ]
+            },
+        )
         self.assertEqual(current["document"]["revision_id"], original["revision_id"])
         self.assertEqual(current["conversation"]["conversation_id"], conversation)
         self.assertTrue(
@@ -202,6 +253,10 @@ class V2WorkspaceTests(unittest.TestCase):
         self.workspace.worker.close()
         reopened = WorkspaceV2(self.folder)
         try:
+            self.assertNotIn("document", reopened.state())
+            reopened.dispatch(
+                "v2.project.open", {"project_id": self.workspace.project_id}
+            )
             self.assertEqual(
                 reopened.state()["document"]["revision_id"], changed["revision_id"]
             )
@@ -483,6 +538,7 @@ class V2WorkspaceTests(unittest.TestCase):
         doc = self.assembly()
         with revision_lock(self.workspace.document.folder / ".task-lock"):
             other = WorkspaceV2(self.folder)
+            other.activate(self.workspace.project_id)
             try:
                 with self.assertRaises(RevisionConflict):
                     other.dispatch(

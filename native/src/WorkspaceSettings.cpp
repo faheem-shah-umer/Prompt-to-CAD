@@ -12,6 +12,7 @@
 #include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QListWidget>
 #include <QPushButton>
 #include <QScreen>
@@ -50,12 +51,21 @@ QVBoxLayout *card(QVBoxLayout *parent, const QString &title) {
 } // namespace
 
 void WorkspaceWindow::refreshConnectionControls() {
-    if (!settingsDialog)
-        return;
     auto connection = state.value("provider").toObject();
     auto active = connection.value("active").toObject();
     const bool ready = connection.value("state") == "ready";
     const bool signingIn = connection.value("signing_in").toBool();
+    if (onboardingDialog) {
+        if (auto *start = onboardingDialog->findChild<QPushButton *>("onboardingConnect")) start->setEnabled(!busy && !signingIn);
+        if (auto *status = onboardingDialog->findChild<QLabel *>("onboardingStatus")) status->setText(signingIn ? "Finish authorization in your browser." : connection.value("error").toString());
+        if (ready) onboardingDialog->accept();
+    }
+    if (!settingsDialog) return;
+    if (auto *start = settingsDialog->findChild<QPushButton *>("connectChatGPT")) {
+        start->setVisible(!ready || active.value("connection") != "chatgpt");
+        start->setText(active.value("connection") == "chatgpt" ? "Reconnect ChatGPT" : "Continue with ChatGPT");
+        start->setEnabled(!busy && !signingIn);
+    }
     if (auto *info = settingsDialog->findChild<QLabel *>("connectionInfo")) {
         QString text = signingIn ? "Waiting for browser authorization"
                        : ready   ? "Connected"
@@ -79,13 +89,12 @@ void WorkspaceWindow::refreshConnectionControls() {
         for (auto a : connection.value("accounts").toArray()) {
             auto item = a.toObject();
             if (item.value("connection") == "chatgpt")
-                accounts->addItem(item.value("email").toString(), item.value("id"));
+                accounts->addItem(item.value("label").toString(), item.value("id"));
         }
         const int at = accounts->findData(previous);
         if (at >= 0)
             accounts->setCurrentIndex(at);
-        if (auto *toggle = settingsDialog->findChild<QToolButton *>("savedAccountsToggle"))
-            toggle->setVisible(accounts->count() > 0);
+        accounts->setEnabled(!busy && !signingIn);
     }
     if (auto *usage = settingsDialog->findChild<QLabel *>("usageInfo"))
         usage->setText(usageBadge->toolTip().isEmpty()
@@ -105,7 +114,7 @@ void WorkspaceWindow::account() {
     settingsDialog = dialog;
     dialog->setObjectName("workspaceSettings");
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle("Settings · Prompt to CAD V2");
+    dialog->setWindowTitle("Settings · Prompt to CAD");
     dialog->resize(820, qBound(500, dialog->screen()->availableGeometry().height() - 90, 680));
     dialog->setMinimumSize(660, 500);
     auto *outer = new QVBoxLayout(dialog);
@@ -152,57 +161,13 @@ void WorkspaceWindow::account() {
     auto *planLayout = new QVBoxLayout(plan);
     planLayout->setContentsMargins(0, 0, 0, 0);
     auto *connectRow = new QHBoxLayout;
-    auto signIn = [this](const QString &registration) {
-        QJsonObject args;
-        if (!registration.isEmpty())
-            args["account_id"] = registration;
-        call("provider.login", args, [this](auto r) {
-            auto provider = state.value("provider").toObject();
-            provider["signing_in"] = true;
-            state["provider"] = provider;
-            refreshConnectionControls();
-            QDesktopServices::openUrl(QUrl(r.value("authorization_url").toString()));
-        });
-    };
-    action("Continue with ChatGPT", connectRow, [signIn] { signIn({}); })->setObjectName("primaryButton");
+    action("Continue with ChatGPT", connectRow, [this] { beginSignIn(); })->setObjectName("connectChatGPT");
     auto *cancelSignIn = action("Cancel sign-in", connectRow, [this] {
         call("provider.cancel_login", {}, [this](auto) { call("v2.state"); });
     });
     cancelSignIn->setObjectName("cancelSignIn");
     connectRow->addStretch();
     planLayout->addLayout(connectRow);
-    auto *savedToggle = new QToolButton;
-    savedToggle->setText("Saved accounts");
-    savedToggle->setObjectName("savedAccountsToggle");
-    savedToggle->setCheckable(true);
-    savedToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    savedToggle->setArrowType(Qt::RightArrow);
-    planLayout->addWidget(savedToggle);
-    auto *savedPanel = new QWidget;
-    auto *savedLayout = new QVBoxLayout(savedPanel);
-    savedLayout->setContentsMargins(0, 4, 0, 0);
-    auto *accounts = new QComboBox;
-    accounts->setObjectName("savedAccounts");
-    accounts->setPlaceholderText("No saved registrations");
-    savedLayout->addWidget(accounts);
-    auto *savedActions = new QHBoxLayout;
-    action("Use selected", savedActions, [this, accounts] {
-        if (accounts->currentIndex() >= 0)
-            call("provider.select", {{"account_id", accounts->currentData().toString()}},
-                 [this](auto) { call("v2.state"); });
-    });
-    action("Reconnect", savedActions, [accounts, signIn] {
-        if (accounts->currentIndex() >= 0)
-            signIn(accounts->currentData().toString());
-    });
-    savedActions->addStretch();
-    savedLayout->addLayout(savedActions);
-    savedPanel->hide();
-    planLayout->addWidget(savedPanel);
-    connect(savedToggle, &QToolButton::toggled, dialog, [savedPanel, savedToggle](bool show) {
-        savedPanel->setVisible(show);
-        savedToggle->setArrowType(show ? Qt::DownArrow : Qt::RightArrow);
-    });
     accountCard->addWidget(plan);
     auto *api = new QWidget;
     auto *apiLayout = new QVBoxLayout(api);
@@ -232,7 +197,10 @@ void WorkspaceWindow::account() {
     api->setVisible(mode->currentIndex() == 1);
     auto *accountActions = new QHBoxLayout;
     action("Disconnect", accountActions, [this] {
-        call("provider.disconnect", {}, [this](auto) { call("v2.state"); });
+        call("provider.disconnect", {}, [this](auto r) {
+            const auto message = r.value("message").toString();
+            call("v2.state", {}, [this, message](auto) { activity->setText(message); });
+        });
     })->setObjectName("disconnectAccount");
     accountActions->addStretch();
     accountCard->addLayout(accountActions);
@@ -247,7 +215,7 @@ void WorkspaceWindow::account() {
     usage->addLayout(usageActions);
     auto *modelRow = new QHBoxLayout;
     modelRow->addWidget(label("Choose a model in the conversation panel."), 1);
-    action("Discover models", modelRow, [this] { discoverModels(); });
+    action("Refresh models", modelRow, [this] { discoverModels(true); });
     usage->addLayout(modelRow);
     ai->addWidget(
         label("Tasks consume allowance or API credits. Long tasks can use more. A limit stops the request; "
@@ -290,6 +258,10 @@ void WorkspaceWindow::account() {
     storage->addWidget(label(
         "New project folders use the name you enter. Duplicate names receive a number. Models, revisions and "
         "conversations are stored together; account credentials are protected separately by Windows."));
+    for (auto value : state.value("catalog").toObject().value("diagnostics").toArray()) {
+        auto diagnostic = value.toObject();
+        storage->addWidget(label(diagnostic.value("name").toString() + ": " + diagnostic.value("reason").toString()));
+    }
     storage->addStretch();
     auto *display = page("CAD display", "Adjust the model workspace without changing the design.");
     auto *displayCard = card(display, "Viewport");
@@ -327,7 +299,29 @@ void WorkspaceWindow::account() {
     });
     probeRow->addStretch();
     runtimeCard->addLayout(probeRow);
-    advanced->addWidget(label("Prompt to CAD V2 · Local OpenCascade geometry"));
+    auto *registrations = card(advanced, "Previous account registrations");
+    registrations->addWidget(label("Older sign-ins are kept separately to protect their credentials. Reconnecting reuses the primary registration. Revoking a session does not delete the app registration in ChatGPT."));
+    auto *accounts = new QComboBox;
+    accounts->setObjectName("savedAccounts");
+    registrations->addWidget(accounts);
+    auto *legacyActions = new QHBoxLayout;
+    action("Use selected", legacyActions, [this, accounts] {
+        if (accounts->currentIndex() >= 0)
+            call("provider.select", {{"account_id", accounts->currentData().toString()}}, [this](auto) { call("v2.state"); });
+    });
+    action("Revoke session…", legacyActions, [this, accounts] {
+        if (accounts->currentIndex() < 0 || busy) return;
+        if (QMessageBox::question(settingsDialog, "Revoke session", "Revoke the session for " + accounts->currentText() + "? Its registration is retained for reconnecting.") != QMessageBox::Yes) return;
+        call("provider.disconnect", {{"account_id", accounts->currentData().toString()}}, [this](auto r) {
+            const auto message = r.value("message").toString();
+            call("v2.state", {}, [this, message](auto) { activity->setText(message); });
+        });
+    });
+    registrations->addLayout(legacyActions);
+    auto *accessActions = new QHBoxLayout;
+    action("Manage ChatGPT access ↗", accessActions, [] { QDesktopServices::openUrl(QUrl("https://chatgpt.com/settings")); });
+    registrations->addLayout(accessActions);
+    advanced->addWidget(label("Prompt to CAD · Local OpenCascade geometry"));
     advanced->addStretch();
     connect(sections, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
     sections->setCurrentRow(0);
@@ -353,7 +347,7 @@ void WorkspaceWindow::account() {
                     "provider.configure", {{"codex_path", runtime->text()}},
                     [this, guard, choice, size, showNav, showModel, showEdges](auto r, auto e) {
                         busy = false;
-                        sendButton->setEnabled(true);
+                        updateSendControl();
                         if (!e.isEmpty()) {
                             if (guard)
                                 guard->findChild<QDialogButtonBox *>("settingsActions")
@@ -385,22 +379,57 @@ void WorkspaceWindow::account() {
                             guard->accept();
                     });
             });
-    auto *poll = new QTimer(dialog);
-    poll->setInterval(2500);
-    connect(poll, &QTimer::timeout, dialog, [this, guard = QPointer<QDialog>(dialog)] {
-        if (busy || !guard || !state.value("provider").toObject().value("signing_in").toBool())
-            return;
-        rpc->call("provider.status", {}, [this, guard](auto r, auto e) {
-            if (!guard || !e.isEmpty())
-                return;
-            state["provider"] = r;
-            updateUsage();
-            refreshConnectionControls();
-            if (r.value("state") == "ready")
-                discoverModels();
-        });
+    refreshConnectionControls();
+    dialog->show();
+}
+
+void WorkspaceWindow::beginSignIn(const QString &registration) {
+    if (busy || state.value("provider").toObject().value("signing_in").toBool()) return;
+    QJsonObject args;
+    if (!registration.isEmpty()) args["account_id"] = registration;
+    call("provider.login", args, [this](auto result) {
+        auto connection = state.value("provider").toObject();
+        connection["signing_in"] = true;
+        state["provider"] = connection;
+        refreshConnectionControls();
+        if (!QDesktopServices::openUrl(QUrl(result.value("authorization_url").toString()))) {
+            activity->setText("Could not open the browser. Cancel sign-in and try again.");
+        }
     });
-    poll->start();
+}
+
+void WorkspaceWindow::showOnboarding() {
+    QSettings preferences;
+    if (preferences.value("v2/onboardingDone", false).toBool()) return;
+    if (state.value("provider").toObject().value("state") == "ready") {
+        preferences.setValue("v2/onboardingDone", true);
+        return;
+    }
+    if (onboardingDialog) { onboardingDialog->raise(); return; }
+    auto *dialog = new QDialog(this);
+    onboardingDialog = dialog;
+    dialog->setObjectName("codexOnboarding");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowModality(Qt::WindowModal);
+    dialog->setWindowTitle("Welcome to Prompt to CAD");
+    dialog->resize(540, 440);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(28, 26, 28, 24);
+    layout->setSpacing(18);
+    layout->addWidget(label("Your CAD workspace, with Codex", "pageTitle"));
+    layout->addWidget(label("Codex is OpenAI’s coding agent. In Prompt to CAD it inspects your document and uses CAD tools to create and refine designs. Connect your own eligible ChatGPT plan in your browser."));
+    auto *details = card(layout, "Your account and usage");
+    details->addWidget(label("Agent tasks consume your plan allowance or authorized credits. Longer tasks may use more. Limits stop the task; the app never switches billing automatically."));
+    details->addWidget(label("Credentials stay in Windows-protected local storage, outside your projects. Optional API keys are available in Settings and are billed separately by OpenAI."));
+    details->addWidget(label("You can skip setup to inspect and edit local CAD files. Connect later from Settings → AI connection to use the agent."));
+    layout->addWidget(label({}, "onboardingStatus"));
+    auto *actions = new QHBoxLayout;
+    action("Skip for now", actions, [dialog] { dialog->reject(); })->setObjectName("onboardingSkip");
+    actions->addStretch();
+    auto *start = action("Continue with ChatGPT", actions, [this] { beginSignIn(); });
+    start->setObjectName("onboardingConnect");
+    layout->addLayout(actions);
+    connect(dialog, &QDialog::finished, this, [](int) { QSettings().setValue("v2/onboardingDone", true); });
     refreshConnectionControls();
     dialog->show();
 }

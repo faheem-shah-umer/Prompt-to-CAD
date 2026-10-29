@@ -14,12 +14,12 @@ def create_launcher():
         return "'" + str(path).replace("'", "''") + "'"
     script = (
         "$shell = New-Object -ComObject WScript.Shell; "
-        "$shortcut = $shell.CreateShortcut(" + literal(ROOT / "Prompt to CAD V2.lnk") + "); "
+        "$shortcut = $shell.CreateShortcut(" + literal(ROOT / "Prompt to CAD.lnk") + "); "
         "$shortcut.TargetPath = " + literal(Path(os.environ["SystemRoot"]) / "System32/wscript.exe") + "; "
-        "$shortcut.Arguments = " + literal('"' + str(ROOT / "Prompt to CAD V2.vbs") + '"') + "; "
+        "$shortcut.Arguments = " + literal('"' + str(ROOT / "Prompt to CAD.vbs") + '"') + "; "
         "$shortcut.WorkingDirectory = " + literal(ROOT) + "; "
         "$shortcut.IconLocation = " + literal(str(ROOT / "assets/app-icon.ico") + ",0") + "; "
-        "$shortcut.Description = 'Prompt to CAD V2'; $shortcut.Save()"
+        "$shortcut.Description = 'Prompt to CAD'; $shortcut.Save()"
     )
     subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                    check=True, creationflags=subprocess.CREATE_NO_WINDOW)

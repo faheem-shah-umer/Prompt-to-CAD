@@ -61,8 +61,9 @@ void WorkspaceWindow::updateTask(const QString &status, const QString &message) 
         taskPulse->start();
     } else {
         taskPulse->stop();
-        stopButton->hide();
+
     }
+    updateSendControl();
     if (!chatRefresh->isActive())
         chatRefresh->start();
 }
@@ -112,4 +113,14 @@ void WorkspaceWindow::updateUsage() {
     }
     accountBadge->setToolTip("Account and connection settings");
     refreshConnectionControls();
+}
+
+void WorkspaceWindow::updateSendControl() {
+    const bool stopping = currentTaskState == "cancelling";
+    setWorkspaceIcon(sendButton, taskRunning ? "stop" : "arrow-up", true);
+    sendButton->setAccessibleName(taskRunning ? (stopping ? "Stopping task" : "Stop task") : "Send request");
+    sendButton->setToolTip(taskRunning ? (stopping ? "Stopping…" : "Stop task") : "Send · Ctrl+Enter");
+    const bool finished = QStringList{"completed", "completed_no_change", "cancelled", "failed", "usage_limit"}.contains(currentTaskState);
+    sendButton->setEnabled(taskRunning ? !stopping && !finished : !busy && !state.value("conversation").toObject().isEmpty() &&
+                           !composer->toPlainText().trimmed().isEmpty());
 }

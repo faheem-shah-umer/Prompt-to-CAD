@@ -124,6 +124,7 @@ def main():
         shutil.copyfile(ROOT / "tmp/native-workspace.png", output / (name + ".png"))
         for capture in (
             "settings",
+            "onboarding",
             "appearance",
             "startup",
             "agent-working",

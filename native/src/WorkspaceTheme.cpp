@@ -12,7 +12,6 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
     const QString sidebar = light ? "#dde4ee" : "#202023";
     const QString toolbar = light ? "#f3f5f8" : "#242427";
     const QString userBubble = light ? "#dae6f3" : "#303843";
-    const QString assistantBubble = light ? "#ffffff" : "#242427";
     const QString panel = light ? "#ffffff" : "#222224";
     const QString text = light ? "#242428" : "#ececee";
     const QString muted = light ? "#67676f" : "#a1a1aa";
@@ -62,8 +61,8 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton, QToolButton { background:transparent; border:1px solid @line@; border-radius:7px; padding:7px 12px; }
         QPushButton:hover, QToolButton:hover { background:@hover@; }
         QPushButton:disabled { color:@muted@; border-color:@line@; }
-        QPushButton#primaryButton { color:@primaryText@; background:@primary@; border-color:@primary@; font-weight:600; }
-        QPushButton#primaryButton:disabled { color:@muted@; background:@hover@; border-color:@line@; }
+        QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect { color:@primaryText@; background:@primary@; border-color:@primary@; font-weight:600; }
+        QPushButton#primaryButton:disabled, QPushButton#connectChatGPT:disabled, QPushButton#onboardingConnect:disabled { color:@muted@; background:@hover@; border-color:@line@; }
         QPushButton#commandSearchButton { padding:0; }
         QPushButton#quietButton { border:0; color:@muted@; }
         QPushButton#usageBadge { border:1px solid @line@; padding:4px 9px; font-size:11px; text-align:left; }
@@ -71,8 +70,8 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         #rail QPushButton#accountBadge[connected="true"] { background:#d39b38; color:#ffffff; border:0; }
         QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@panel@; border:1px solid @line@; border-radius:7px; padding:7px; selection-background-color:@selected@; }
         QScrollArea#conversationHistory, #chatContents { background:transparent; border:0; }
-        QFrame#messageBubble { background:@assistantBubble@; border:1px solid @line@; border-radius:14px; }
-        QFrame#messageBubble[user="true"] { background:@userBubble@; border:0; }
+        QFrame#messageBubble { background:transparent; border:0; }
+        QFrame#messageBubble[user="true"] { background:@userBubble@; border:0; border-radius:14px; }
         QTextBrowser#messageText { background:transparent; border:0; border-radius:0; padding:0; }
         QLabel#messageAuthor { color:@muted@; font-size:11px; font-weight:600; }
         QToolButton#workDisclosure { border:0; background:transparent; padding:3px 0; color:@muted@; }
@@ -103,7 +102,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
     )");
     for (const auto &entry :
          {qMakePair("@bg@", bg), qMakePair("@sidebar@", sidebar), qMakePair("@toolbar@", toolbar),
-          qMakePair("@userBubble@", userBubble), qMakePair("@assistantBubble@", assistantBubble), qMakePair("@panel@", panel), qMakePair("@text@", text),
+          qMakePair("@userBubble@", userBubble), qMakePair("@panel@", panel), qMakePair("@text@", text),
           qMakePair("@muted@", muted), qMakePair("@line@", line), qMakePair("@hover@", hover),
           qMakePair("@selected@", selected), qMakePair("@primary@", primary),
           qMakePair("@primaryText@", primaryText), qMakePair("@size@", QString::number(textSize))})

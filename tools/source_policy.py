@@ -11,7 +11,7 @@ ROOT_FILES = {
     "requirements.txt",
     "requirements-dev.txt",
     "native-app.py",
-    "Prompt to CAD V2.vbs",
+    "Prompt to CAD.vbs",
 }
 BRANDING = {
     "assets/README.md",

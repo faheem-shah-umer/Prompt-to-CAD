@@ -46,7 +46,8 @@ class WorkspaceV2(Workspace):
         self.connections = Connections(
             Path(identity_home) if identity_home else self.home / "identity", self.emit
         )
-        self.project_id = self.projects.read(self.projects.catalog)["active"]
+        self.project_id = None
+        self.document = None
         self.runtime = None
         self.configuration_path = self.home / "settings.json"
         self.configuration = (
@@ -55,16 +56,6 @@ class WorkspaceV2(Workspace):
             else {}
         )
         self.startup_notice = ""
-        if self.project_id:
-            try:
-                self.activate(self.project_id)
-            except (OSError, json.JSONDecodeError, WorkspaceError):
-                self.project_id = None
-                self.document = None
-                self.startup_notice = (
-                    "The last project could not be opened. Open another project or restore its files. "
-                    "Your project catalog and saved files have not been removed."
-                )
 
     def emit(self, event):
         event = dict(event)
@@ -129,8 +120,20 @@ class WorkspaceV2(Workspace):
 
     def activate(self, project_id):
         project = self.projects.project(project_id)
-        conversation = self.projects.conversation(project_id)
-        document = self.projects.document(project, conversation["document_id"])
+        if project.get("trashed") or project.get("archived"):
+            raise WorkspaceError("Restore this project before opening it.")
+        conversation = (
+            self.projects.conversation(project_id)
+            if project.get("active_conversation_id")
+            else None
+        )
+        if conversation and (
+            conversation.get("archived") or conversation.get("trashed")
+        ):
+            conversation = None
+        document = self.projects.document(
+            project, conversation["document_id"] if conversation else None
+        )
         document.index()
         try:
             with revision_lock(document.folder / ".task-lock"):
@@ -182,37 +185,72 @@ class WorkspaceV2(Workspace):
         }
 
     def dispatch(self, method, params):
-        writers = {
-            "v2.task",
-            "v2.command",
-            "v2.script",
-            "v2.undo",
-            "v2.redo",
-            "v2.restore",
-        }
-        if method in writers and self.document:
-            with revision_lock(self.document.folder / ".task-lock"):
-                try:
-                    return self._dispatch(method, params)
-                except WorkspaceError as error:
-                    if method == "v2.task":
-                        self.emit(
-                            {
-                                "stage": "task_state",
-                                "state": "usage_limit"
-                                if error.code == "usage_limit"
-                                else "cancelled"
-                                if error.code == "cancelled"
-                                else "failed",
-                                "message": str(error),
-                            }
-                        )
-                    raise
+        if method.startswith("v2.") and method != "v2.state":
+            if self.active_task:
+                raise WorkspaceError(
+                    "Wait for the active task or stop it before changing projects.",
+                    "busy",
+                )
+            with self.projects.write_lock():
+                if (
+                    method
+                    in {
+                        "v2.task",
+                        "v2.command",
+                        "v2.script",
+                        "v2.undo",
+                        "v2.redo",
+                        "v2.restore",
+                    }
+                    and self.document
+                ):
+                    with revision_lock(self.document.folder / ".task-lock"):
+                        try:
+                            return self._dispatch(method, params)
+                        except WorkspaceError as error:
+                            if method == "v2.task":
+                                self.emit(
+                                    {
+                                        "stage": "task_state",
+                                        "state": "usage_limit"
+                                        if error.code == "usage_limit"
+                                        else "cancelled"
+                                        if error.code == "cancelled"
+                                        else "failed",
+                                        "message": str(error),
+                                    }
+                                )
+                            raise
+                return self._dispatch(method, params)
         return self._dispatch(method, params)
 
     def _dispatch(self, method, params):
         self.task_deadline = None
         if method == "v2.state":
+            return self.state()
+        if method == "v2.projects.refresh":
+            catalog = self.projects.reconcile()
+            if self.project_id:
+                if self.project_id not in {
+                    p["project_id"] for p in catalog["projects"]
+                }:
+                    self.project_id = None
+                    self.document = None
+                else:
+                    project = self.projects.project(self.project_id)
+                    self.document = self.projects.document(project)
+            return self.state()
+        if method in ("v2.project.purge", "v2.conversation.purge"):
+            pid = params["project_id"]
+            self.projects.purge(
+                pid,
+                params["conversation_id"]
+                if method == "v2.conversation.purge"
+                else None,
+            )
+            if pid == self.project_id and method == "v2.project.purge":
+                self.project_id = None
+                self.document = None
             return self.state()
         if method == "v2.project.create":
             return self.activate(
@@ -230,6 +268,11 @@ class WorkspaceV2(Workspace):
             if "name" in values:
                 values["name"] = str(values["name"]).strip()[:120] or "Untitled project"
             self.projects.update(project_id, **values)
+            if project_id == self.project_id and (
+                values.get("trashed") or values.get("archived")
+            ):
+                self.project_id = None
+                self.document = None
             return self.state()
         if method == "v2.conversation.new":
             if not self.project_id:
@@ -242,6 +285,8 @@ class WorkspaceV2(Workspace):
         if method == "v2.conversation.open":
             pid = params.get("project_id", self.project_id)
             chat = self.projects.conversation(pid, params["conversation_id"])
+            if chat.get("trashed") or chat.get("archived"):
+                raise WorkspaceError("Restore this conversation before opening it.")
             self.projects.update(
                 pid,
                 active_conversation_id=chat["conversation_id"],
@@ -273,7 +318,9 @@ class WorkspaceV2(Workspace):
                     active_conversation_id=chat["conversation_id"],
                 )
             else:
-                self.projects.new_conversation(self.project_id, did)
+                self.projects.update(
+                    self.project_id, active_document_id=did, active_conversation_id=None
+                )
             return self.activate(self.project_id)
         if method == "v2.conversation.restart_session":
             chat = self.projects.conversation(self.project_id)
@@ -292,6 +339,11 @@ class WorkspaceV2(Workspace):
                         str(params[key])[:120] if key == "title" else bool(params[key])
                     )
             self.projects.save_conversation(pid, chat)
+            project = self.projects.project(pid)
+            if project.get("active_conversation_id") == chat["conversation_id"] and (
+                chat.get("trashed") or chat.get("archived")
+            ):
+                self.projects.update(pid, active_conversation_id=None)
             return self.state()
         if method == "provider.status":
             return self.state()["provider"]
@@ -304,9 +356,9 @@ class WorkspaceV2(Workspace):
         if method == "provider.select":
             return self.connections.select(params["account_id"])
         if method == "provider.disconnect":
-            return self.connections.disconnect()
+            return self.connections.disconnect(params.get("account_id"))
         if method == "provider.models":
-            return self.connections.models()
+            return self.connections.models(bool(params.get("refresh")))
         if method == "provider.usage":
             return self.read_usage()
         if method == "provider.configure":
@@ -414,6 +466,8 @@ class WorkspaceV2(Workspace):
             self.projects.adopt(self.project_id, document)
             return self.activate(self.project_id)
         if method in ("v2.command", "v2.script"):
+            if not self.document:
+                raise WorkspaceError("Open or create a document first.", "no_document")
             snapshot = (
                 self.state()["document"]
                 if self.document.index()["cursor"] < 0
@@ -477,13 +531,24 @@ class WorkspaceV2(Workspace):
             return {
                 **super().dispatch(method, params),
                 "application_version": "0.4.0",
-                "product_name": "Prompt to CAD V2",
+                "product_name": "Prompt to CAD",
             }
         raise WorkspaceError("Unknown V2 method: " + method, "method_not_found")
 
     def run_task(self, params):
         if not self.project_id:
             raise WorkspaceError("Create a project first.")
+        if not self.projects.project(self.project_id).get("active_conversation_id"):
+            raise WorkspaceError(
+                "Start or open a conversation before sending a request.",
+                "conversation_required",
+            )
+        chat = self.projects.conversation(self.project_id)
+        if chat.get("trashed") or chat.get("archived"):
+            raise WorkspaceError(
+                "Restore or start a conversation before sending a request.",
+                "conversation_required",
+            )
         prompt = str(params.get("prompt", "")).strip()
         if not 1 <= len(prompt) <= 16000:
             raise WorkspaceError("Describe the task in 1–16,000 characters.")

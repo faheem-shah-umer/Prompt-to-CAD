@@ -1,10 +1,13 @@
 """Atomic local project metadata, independent conversations and durable task links."""
 
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
+import threading
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,8 +45,11 @@ class Projects:
         self.folder = Path(folder).resolve()
         self.folder.mkdir(parents=True, exist_ok=True)
         self.catalog = self.folder / "catalog.json"
+        self._mutex = threading.RLock()
+        self._lock_depth = 0
         if not self.catalog.exists():
             write_json(self.catalog, {"version": 1, "projects": [], "active": None})
+        self.reconcile()
         # An interrupted task never becomes an accepted revision on restart.
         for path in self.folder.glob("*/tasks/*.json"):
             try:
@@ -72,16 +78,32 @@ class Projects:
                                 write_json(path, record)
                         except RevisionConflict:
                             pass
-            except (OSError, json.JSONDecodeError, WorkspaceError):
+            except (OSError, ValueError, KeyError, TypeError, WorkspaceError):
                 # A missing project must not prevent recovery of the other projects.
                 continue
+
+    @contextmanager
+    def write_lock(self):
+        with self._mutex:
+            if self._lock_depth:
+                yield
+            else:
+                with revision_lock(self.folder):
+                    self._lock_depth = 1
+                    try:
+                        yield
+                    finally:
+                        self._lock_depth = 0
 
     def read(self, path):
         return json.loads(Path(path).read_text(encoding="utf-8"))
 
     def project_path(self, project_id):
         project_id = identifier(project_id)
-        name = self.read(self.catalog).get("folders", {}).get(project_id, project_id)
+        catalog = self.read(self.catalog)
+        if project_id not in catalog["projects"]:
+            raise WorkspaceError("Unknown project.")
+        name = catalog.get("folders", {}).get(project_id, project_id)
         path = (self.folder / name).resolve()
         if path.parent != self.folder:
             raise WorkspaceError("Invalid project folder.")
@@ -90,9 +112,113 @@ class Projects:
     def project(self, project_id):
         return self.read(self.project_path(project_id) / "workspace.json")
 
+    def reconcile(self):
+        """Project folders are authoritative; the catalogue is only an index."""
+        try:
+            return self._reconcile()
+        except RevisionConflict:
+            return self.listing()
+
+    def _reconcile(self):
+        with self.write_lock():
+            try:
+                catalog = self.read(self.catalog)
+            except (OSError, ValueError):
+                catalog = {"version": 1, "projects": [], "active": None}
+            if not isinstance(catalog, dict):
+                catalog = {}
+            if not isinstance(catalog.get("projects"), list) or not all(
+                isinstance(p, str) for p in catalog.get("projects", [])
+            ):
+                catalog["projects"] = []
+            found, diagnostics = {}, []
+            preferred = catalog.get("folders", {})
+            if not isinstance(preferred, dict):
+                preferred = {}
+            folders = sorted(self.folder.iterdir(), key=lambda p: p.name.casefold())
+            folders.sort(key=lambda p: p.name not in preferred.values())
+            for base in folders:
+                if not base.is_dir() or base.name.startswith("."):
+                    continue
+                try:
+                    if base.resolve().parent != self.folder or base.is_symlink():
+                        raise WorkspaceError("Project folder links are not supported.")
+                    project = self.read(base / "workspace.json")
+                    pid = identifier(project["project_id"])
+                    if not isinstance(project["name"], str) or not isinstance(
+                        project["conversations"], list
+                    ):
+                        raise WorkspaceError("Invalid project metadata.")
+                    if pid in found:
+                        raise WorkspaceError(
+                            "Duplicate project ID; open or import a distinct project copy."
+                        )
+                    if (
+                        not isinstance(project["documents"], list)
+                        or not project["documents"]
+                    ):
+                        raise WorkspaceError("A project must contain a document.")
+                    for entry in project["documents"]:
+                        identifier(entry["document_id"])
+                        path = Path(entry["path"])
+                        path = path if path.is_absolute() else base / path
+                        if (
+                            not path.is_dir()
+                            or Document(path).index()["document_id"]
+                            != entry["document_id"]
+                        ):
+                            raise WorkspaceError(
+                                "A project document is missing or does not match its index."
+                            )
+                    for cid in project["conversations"]:
+                        chat = self.read(
+                            base / "conversations" / (identifier(cid) + ".json")
+                        )
+                        if chat["conversation_id"] != cid or chat[
+                            "document_id"
+                        ] not in {d["document_id"] for d in project["documents"]}:
+                            raise WorkspaceError(
+                                "A conversation does not match its project."
+                            )
+                    found[pid] = base.name
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    WorkspaceError,
+                ) as error:
+                    # Unrelated folders without project metadata are not projects.
+                    if (
+                        base / "workspace.json"
+                    ).exists() or base.name in preferred.values():
+                        diagnostics.append(
+                            {
+                                "name": base.name,
+                                "folder_path": str(base),
+                                "reason": str(error)
+                                if isinstance(error, WorkspaceError)
+                                else "Project metadata could not be read.",
+                            }
+                        )
+            order = [pid for pid in catalog.get("projects", []) if pid in found]
+            order.extend(pid for pid in found if pid not in order)
+            updated = {
+                "version": 1,
+                "projects": order,
+                "folders": found,
+                "active": catalog.get("active")
+                if catalog.get("active") in found
+                else None,
+            }
+            if updated != catalog:
+                write_json(self.catalog, updated)
+            self.diagnostics = diagnostics
+        return self.listing()
+
     def listing(self):
         catalog = self.read(self.catalog)
-        projects, unavailable = [], []
+        projects = []
         for pid in catalog["projects"]:
             try:
                 project = self.project(pid)
@@ -113,27 +239,83 @@ class Projects:
                     )
                 ]
                 projects.append(project)
-            except (OSError, json.JSONDecodeError, WorkspaceError) as error:
-                try:
-                    location = str(self.project_path(pid))
-                except WorkspaceError:
-                    location = ""
-                unavailable.append(
-                    {
-                        "project_id": pid,
-                        "name": catalog.get("folders", {}).get(pid, pid),
-                        "folder_path": location,
-                        "reason": "Project files are missing from the saved location."
-                        if isinstance(error, FileNotFoundError)
-                        else "Project files could not be read. Check the folder and its metadata.",
-                    }
-                )
-        return {**catalog, "projects": projects, "unavailable": unavailable}
+            except (OSError, ValueError, KeyError, TypeError, WorkspaceError):
+                continue
+        return {
+            **catalog,
+            "projects": projects,
+            "unavailable": [],
+            "diagnostics": getattr(self, "diagnostics", []),
+        }
+
+    def purge(self, project_id, conversation_id=None):
+        # Workspace writers take the same root lock before document locks.
+        with self.write_lock():
+            base = self.project_path(project_id)
+            project = self.project(project_id)
+            with ExitStack() as locks:
+                for entry in project["documents"]:
+                    document = self.document(project, entry["document_id"])
+                    if document.folder.exists():
+                        locks.enter_context(
+                            revision_lock(document.folder / ".task-lock")
+                        )
+            if conversation_id:
+                cid = identifier(conversation_id)
+                chat = self.conversation(project_id, cid)
+                if not chat.get("trashed"):
+                    raise WorkspaceError(
+                        "Move the conversation to trash before deleting it permanently."
+                    )
+                paths = [base / "conversations" / (cid + ".json")]
+                for path in (base / "tasks").glob("*.json"):
+                    record = self.read(path)
+                    if record.get("conversation_id") == cid:
+                        paths.append(path)
+                for path in paths:
+                    if not path.resolve().is_relative_to(base):
+                        raise WorkspaceError("Invalid conversation file path.")
+                for path in paths:
+                    path.unlink(missing_ok=True)
+                project["conversations"].remove(cid)
+                if project.get("active_conversation_id") == cid:
+                    project["active_conversation_id"] = None
+                write_json(base / "workspace.json", project)
+            else:
+                if not project.get("trashed"):
+                    raise WorkspaceError(
+                        "Move the project to trash before deleting it permanently."
+                    )
+                # Refuse junctions and symlinks before recursively removing a project.
+                for parent, directories, files in os.walk(base, followlinks=False):
+                    for path in [
+                        Path(parent),
+                        *(Path(parent) / name for name in directories + files),
+                    ]:
+                        if (
+                            path.is_symlink()
+                            or getattr(path.lstat(), "st_file_attributes", 0) & 0x400
+                        ):
+                            raise WorkspaceError(
+                                "Remove filesystem links before permanently deleting this project."
+                            )
+                if base.resolve().parent != self.folder:
+                    raise WorkspaceError("Invalid project folder.")
+                shutil.rmtree(base)
+                catalog = self.read(self.catalog)
+                catalog["projects"] = [
+                    p for p in catalog["projects"] if p != project_id
+                ]
+                catalog.get("folders", {}).pop(project_id, None)
+                if catalog.get("active") == project_id:
+                    catalog["active"] = None
+                write_json(self.catalog, catalog)
 
     def create(self, name):
+        self.reconcile()
         name = str(name).strip()[:120] or "Untitled project"
         project_id = uuid4().hex[:16]
-        with revision_lock(self.folder):
+        with self.write_lock():
             catalog = self.read(self.catalog)
             reserved = {
                 catalog.get("folders", {}).get(pid, pid).casefold()
@@ -185,10 +367,11 @@ class Projects:
         return project
 
     def import_project(self, source):
+        self.reconcile()
         source = Path(source).resolve()
         project = self.read(source / "workspace.json")
         pid = identifier(project["project_id"])
-        with revision_lock(self.folder):
+        with self.write_lock():
             catalog = self.read(self.catalog)
             if pid in catalog["projects"]:
                 if self.project_path(pid) == source:
@@ -248,7 +431,7 @@ class Projects:
 
     def activate(self, project_id):
         project = self.project(project_id)
-        with revision_lock(self.folder):
+        with self.write_lock():
             catalog = self.read(self.catalog)
             catalog["active"] = project_id
             catalog["projects"] = [project_id] + [
@@ -371,8 +554,18 @@ class Projects:
     def view(self, project_id):
         project = self.project(project_id)
         project["folder_path"] = str(self.project_path(project_id))
-        conversation = self.conversation(project_id)
-        doc = self.document(project, conversation["document_id"])
+        conversation = (
+            self.conversation(project_id)
+            if project.get("active_conversation_id")
+            else None
+        )
+        if conversation and (
+            conversation.get("archived") or conversation.get("trashed")
+        ):
+            conversation = None
+        doc = self.document(
+            project, conversation["document_id"] if conversation else None
+        )
         if doc.index()["cursor"] < 0:
             snapshot = {
                 "components": [],

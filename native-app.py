@@ -33,6 +33,6 @@ if __name__ == "__main__":
         main()
     except Exception as error:
         if os.name == "nt":
-            ctypes.windll.user32.MessageBoxW(None, str(error), "Prompt to CAD V2", 0x10)
+            ctypes.windll.user32.MessageBoxW(None, str(error), "Prompt to CAD", 0x10)
         else:
             raise
