@@ -54,7 +54,7 @@ The image renders the supplied CAD geometry. Opening the file rebuilds the assem
 Open PowerShell:
 
 ```powershell
-git clone https://github.com/faheem-shah-umer/Prompt-to-CAD.git
+git clone https://github.com/repository-owner/Prompt-to-CAD.git
 Set-Location Prompt-to-CAD
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
