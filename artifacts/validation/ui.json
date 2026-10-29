@@ -15,7 +15,7 @@
       "settings_display_change_saved": true,
       "settings_save_requests": 1,
       "settings_singleton_rapid_clicks": 125,
-      "synthetic_orbit_fps": 30.073582538075037,
+      "synthetic_orbit_fps": 29.96789988403921,
       "topology": {
         "base": {
           "edge": 36,
@@ -61,13 +61,13 @@
       "settings_display_change_saved": true,
       "settings_save_requests": 1,
       "settings_singleton_rapid_clicks": 125,
-      "synthetic_orbit_fps": 30.214882199224444,
+      "synthetic_orbit_fps": 30.02349638827346,
       "topology": {
-        "73f1537e07f7418f": {
-          "triangles": 12
-        },
-        "b6846c068b204283": {
+        "0952655a40864646": {
           "triangles": 320
+        },
+        "f95b6965504b467d": {
+          "triangles": 12
         }
       },
       "viewport_size": [
@@ -98,7 +98,7 @@
       "settings_display_change_saved": true,
       "settings_save_requests": 1,
       "settings_singleton_rapid_clicks": 125,
-      "synthetic_orbit_fps": 30.06126335164749,
+      "synthetic_orbit_fps": 30.004242599903627,
       "topology": {
         "base": {
           "edge": 36,

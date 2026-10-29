@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QIcon>
 #include <QSettings>
 #include <QUuid>
 #include <cstdio>
@@ -20,6 +21,7 @@ int main(int argc, char **argv) {
             fflush(stderr);
     });
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(":/brand/app-icon.png"));
     QCoreApplication::setOrganizationName("PromptToCAD");
     QCoreApplication::setApplicationName("PromptToCADV2");
     QCoreApplication::setApplicationVersion("0.4.0");

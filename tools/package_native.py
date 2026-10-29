@@ -132,10 +132,12 @@ def copy_sources(destination):
     (app / "tmp").mkdir(exist_ok=True)
     shutil.copytree(ROOT / "docs", destination / "docs", dirs_exist_ok=True)
     (destination / "README.md").write_text(
-        "# Prompt to CAD V2\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n",
+        '# Prompt to CAD V2\n\n<img src="assets/app-icon.svg" alt="Prompt to CAD logo" width="80">\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n',
         encoding="utf-8",
     )
     source = destination / "source"
+    shutil.copytree(ROOT / "assets", destination / "assets", dirs_exist_ok=True)
+    shutil.copytree(ROOT / "assets", source / "assets", dirs_exist_ok=True)
     shutil.copytree(ROOT / "native", source / "native", dirs_exist_ok=True)
     shutil.copytree(ROOT / "tools", source / "tools", dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(
@@ -166,6 +168,8 @@ def installer(bundle, compiler, output):
         "RequestExecutionLevel user",
         "SetCompressor zlib",
         'Name "Prompt to CAD V2"',
+        f'Icon "{nsis_string(bundle / "assets/app-icon.ico")}"',
+        f'UninstallIcon "{nsis_string(bundle / "assets/app-icon.ico")}"',
         f'OutFile "{nsis_string(output)}"',
         'InstallDir "$LOCALAPPDATA\\Programs\\PromptToCADV2"',
         "Page directory",
@@ -176,9 +180,10 @@ def installer(bundle, compiler, output):
         'SetOutPath "$INSTDIR"',
         f'File /r "{nsis_string(bundle)}\\*"',
         'WriteUninstaller "$INSTDIR\\Uninstall.exe"',
-        'CreateShortcut "$SMPROGRAMS\\Prompt to CAD V2.lnk" "$INSTDIR\\bin\\PromptToCAD.exe"',
+        'CreateShortcut "$SMPROGRAMS\\Prompt to CAD V2.lnk" "$INSTDIR\\bin\\PromptToCAD.exe" "" "$INSTDIR\\bin\\PromptToCAD.exe" 0',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayName" "Prompt to CAD V2"',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayVersion" "0.4.0"',
+        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayIcon" \'"$INSTDIR\\bin\\PromptToCAD.exe",0\'',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "UninstallString" \'"$INSTDIR\\Uninstall.exe"\'',
         "SectionEnd",
         'Section "Uninstall"',

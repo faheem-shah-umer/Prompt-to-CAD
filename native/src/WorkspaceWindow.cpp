@@ -102,9 +102,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     rail->setFixedWidth(46);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(3, 10, 3, 8);
-    auto *brand = new QLabel("P²");
+    auto *brand = new QLabel;
+    brand->setObjectName("brandLogo");
+    brand->setPixmap(QPixmap(":/brand/app-icon.png").scaled(32, 32, Qt::KeepAspectRatio,
+                                                          Qt::SmoothTransformation));
+    brand->setAccessibleName("Prompt to CAD logo");
+    brand->setToolTip("Prompt to CAD V2");
     brand->setAlignment(Qt::AlignCenter);
-    brand->setStyleSheet("font-size:21px;font-weight:600;color:#c5b4ee;padding:12px 0");
+    brand->setContentsMargins(0, 10, 0, 10);
     railLayout->addWidget(brand);
     auto *projectsToggle =
         button("", railLayout, [this] { navigation->setVisible(!navigation->isVisible()); });

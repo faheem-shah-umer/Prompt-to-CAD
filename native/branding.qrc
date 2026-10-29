@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/brand">
+        <file alias="app-icon.png">../assets/app-icon.png</file>
+    </qresource>
+</RCC>

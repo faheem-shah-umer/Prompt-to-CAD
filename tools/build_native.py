@@ -7,6 +7,24 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def create_launcher():
+    if os.name != "nt":
+        return
+    def literal(path):
+        return "'" + str(path).replace("'", "''") + "'"
+    script = (
+        "$shell = New-Object -ComObject WScript.Shell; "
+        "$shortcut = $shell.CreateShortcut(" + literal(ROOT / "Prompt to CAD V2.lnk") + "); "
+        "$shortcut.TargetPath = " + literal(Path(os.environ["SystemRoot"]) / "System32/wscript.exe") + "; "
+        "$shortcut.Arguments = " + literal('"' + str(ROOT / "Prompt to CAD V2.vbs") + '"') + "; "
+        "$shortcut.WorkingDirectory = " + literal(ROOT) + "; "
+        "$shortcut.IconLocation = " + literal(str(ROOT / "assets/app-icon.ico") + ",0") + "; "
+        "$shortcut.Description = 'Prompt to CAD V2'; $shortcut.Save()"
+    )
+    subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                   check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+
+
 def build_environment(qt_prefix, occt_prefix):
     env = os.environ.copy()
     if os.name == "nt" and not shutil.which("cl"):
@@ -48,6 +66,7 @@ def main():
                     "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, (args.qt_prefix, args.occt_prefix))),
                     "-DCMAKE_MAKE_PROGRAM=" + str(ROOT / ".venv/Scripts/ninja.exe")], env=env, check=True)
     subprocess.run([cmake, "--build", str(build), "--parallel", "4"], env=env, check=True)
+    create_launcher()
     if args.test:
         ctest = str(ROOT / ".venv/Scripts/ctest.exe")
         subprocess.run([ctest, "--test-dir", str(build), "--output-on-failure"], env=env, check=True)

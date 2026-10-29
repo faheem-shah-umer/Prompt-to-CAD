@@ -10,7 +10,7 @@
   "isolated_package_smoke": true,
   "live_inference_repeated_for_cleanup": false,
   "retained_prior_live_acceptance": true,
-  "installer_sha256": "e940ef00ac8f130c8bd7b98531d31f26abcbff55d8d4df75d64bcd494a35a187",
+  "installer_sha256": "31663da894d8e7a0b801a054758cb70f55a3cda81ff0755c5c727ed3ee2a9ae8",
   "unsigned": true,
   "limitations": [
     "Live provider inference was not repeated for repository cleanup.",
@@ -24,6 +24,8 @@
     "live-native-ui.json",
     "packaged.json",
     "packaged-appserver.json",
-    "cleanup.json"
-  ]
+    "cleanup.json",
+    "branding.json"
+  ],
+  "original_branding_verified": true
 }
