@@ -111,14 +111,6 @@ def dispatch(method, params):
             return {"path": str(destination), "verification": verification}
         finally:
             Path(temporary).unlink(missing_ok=True)
-    if method == "generate":
-        from backend.app import design_planner
-        plan, inference = design_planner.interpret(params["prompt"], progress=lambda event: emit("progress", event))
-        if plan.status != "ready":
-            return {"status": plan.status, "message": plan.description, "questions": plan.questions}
-        snapshot = geometry.from_recipe(plan.design.model_dump(mode="json"), folder)
-        return {"status": "ready", "snapshot": snapshot, "inference": inference,
-                "message": plan.description, "assumptions": plan.assumptions}
     raise WorkspaceError("Unknown geometry method: " + method, "method_not_found")
 
 

@@ -1,0 +1,9 @@
+cadquery==2.7.0
+cadquery-ocp==7.8.1.1.post1
+pydantic==2.11.5
+httpx==0.28.1
+PyJWT[crypto]==2.15.1
+cryptography==50.0.2
+trimesh==4.12.2
+scipy==1.17.1
+Pillow==13.0.0

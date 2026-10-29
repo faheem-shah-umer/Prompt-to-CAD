@@ -1,6 +1,6 @@
 import json
-import tempfile
 import os
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -37,7 +37,9 @@ class ConnectionTests(unittest.TestCase):
         self.connections.cancel_login()
         self.temporary.cleanup()
 
-    def tokens(self, claims=None, scopes="openid chatgpt.tokens.use.direct offline_access"):
+    def tokens(
+        self, claims=None, scopes="openid chatgpt.tokens.use.direct offline_access"
+    ):
         return {
             "id_token": jwt.encode(claims or self.claims, self.key, algorithm="RS256"),
             "access_token": "fixture-access",
@@ -48,11 +50,48 @@ class ConnectionTests(unittest.TestCase):
 
     def complete(self, tokens, old=None):
         with (
-            patch("backend.v2.auth.request_json", return_value={"issuer": AUTH, "jwks_uri": AUTH + "/jwks"}),
+            patch(
+                "backend.v2.auth.request_json",
+                return_value={"issuer": AUTH, "jwks_uri": AUTH + "/jwks"},
+            ),
             patch("jwt.PyJWKClient") as jwks,
         ):
-            jwks.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key=self.key.public_key())
-            return self.connections.complete(tokens, "fixture-client", "fixture-nonce", old)
+            jwks.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(
+                key=self.key.public_key()
+            )
+            return self.connections.complete(
+                tokens, "fixture-client", "fixture-nonce", old
+            )
+
+    def test_invalid_api_connection_does_not_replace_the_selected_registration(self):
+        self.complete(self.tokens())
+        before = self.connections.status()["active"]["id"]
+        with patch(
+            "backend.v2.auth.request_json",
+            side_effect=WorkspaceError("Invalid API key", "invalid_api_key"),
+        ):
+            with self.assertRaises(WorkspaceError):
+                self.connections.api_key("fixture-invalid-key-never-transmitted")
+        self.assertEqual(self.connections.status()["active"]["id"], before)
+        with patch(
+            "backend.v2.auth.request_json", return_value={"data": []}
+        ) as request:
+            self.connections.api_key("fixture-validated-key-never-transmitted")
+        self.assertEqual(
+            request.call_args.args[:2], ("GET", "https://api.openai.com/v1/models")
+        )
+        self.assertEqual(self.connections.status()["active"]["connection"], "api")
+
+    def test_retired_image_key_migration_preserves_accounts_and_host(self):
+        self.complete(self.tokens())
+        data = self.connections.vault.read()
+        data["tripo_key"] = "retired-fixture-secret"
+        self.connections.vault.write(data)
+        migrated = Connections(self.connections.vault.folder)
+        result = migrated.vault.read()
+        self.assertNotIn("tripo_key", result)
+        self.assertEqual(result["accounts"], data["accounts"])
+        self.assertEqual(result["host_id"], data["host_id"])
 
     def test_signed_identity_scope_nonce_and_returning_account_binding(self):
         tokens = self.tokens()
@@ -64,10 +103,14 @@ class ConnectionTests(unittest.TestCase):
         with self.assertRaises(WorkspaceError):
             self.complete(self.tokens({**self.claims, "nonce": "wrong"}))
         with self.assertRaises(WorkspaceError):
-            self.complete(self.tokens({**self.claims, "sub": "another-subject"}), account)
+            self.complete(
+                self.tokens({**self.claims, "sub": "another-subject"}), account
+            )
         bad = self.tokens()
         bad["id_token"] = jwt.encode(
-            self.claims, rsa.generate_private_key(public_exponent=65537, key_size=2048), algorithm="RS256"
+            self.claims,
+            rsa.generate_private_key(public_exponent=65537, key_size=2048),
+            algorithm="RS256",
         )
         with self.assertRaises(jwt.InvalidSignatureError):
             self.complete(bad)
@@ -100,7 +143,9 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(again["ext_agent_host_id"][0], host)
         self.assertNotEqual(query["state"], again["state"])
 
-    def test_refresh_rotates_atomically_and_terminal_revocation_never_switches_billing(self):
+    def test_refresh_rotates_atomically_and_terminal_revocation_never_switches_billing(
+        self,
+    ):
         self.complete(self.tokens())
         with self.connections.vault.lock:
             data = self.connections.vault.read()
@@ -109,16 +154,26 @@ class ConnectionTests(unittest.TestCase):
             self.connections.vault.write(data)
         with patch(
             "backend.v2.auth.request_json",
-            return_value={"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600},
+            return_value={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "expires_in": 3600,
+            },
         ):
-            self.assertEqual(self.connections.credential()[1]["refresh_token"], "new-refresh")
-        self.connections.api_key("fixture-api-credential-not-real")
+            self.assertEqual(
+                self.connections.credential()[1]["refresh_token"], "new-refresh"
+            )
+        with patch("backend.v2.auth.request_json", return_value={"data": []}):
+            self.connections.api_key("fixture-api-credential-not-real")
         self.connections.select(aid)
         with self.connections.vault.lock:
             data = self.connections.vault.read()
             data["accounts"][aid]["expires_at"] = 0
             self.connections.vault.write(data)
-        with patch("backend.v2.auth.request_json", side_effect=WorkspaceError("revoked", "invalid_grant")):
+        with patch(
+            "backend.v2.auth.request_json",
+            side_effect=WorkspaceError("revoked", "invalid_grant"),
+        ):
             with self.assertRaises(WorkspaceError) as revoked:
                 self.connections.credential()
         self.assertEqual(revoked.exception.code, "reauthorization_required")

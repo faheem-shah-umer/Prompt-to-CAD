@@ -20,24 +20,39 @@ class ProviderProtocolTests(unittest.TestCase):
             runtime.events.put(event)
         runtime.request = Mock(return_value={"turn": {"id": "fixture-turn"}})
         runtime.send = Mock()
-        runtime.receive = Mock(side_effect=AssertionError("Unexpected extra protocol read"))
+        runtime.receive = Mock(
+            side_effect=AssertionError("Unexpected extra protocol read")
+        )
         return runtime
 
     def test_stream_forwards_visible_messages_and_ignores_reasoning(self):
         runtime = self.runtime(
             [
-                {"method": "item/reasoning/textDelta", "params": {"delta": "private reasoning fixture"}},
-                {"method": "item/agentMessage/delta", "params": {"itemId": "message", "delta": "Inspected the plate."}},
-                {"method": "turn/completed", "params": {"turn": {"status": "completed"}}},
+                {
+                    "method": "item/reasoning/textDelta",
+                    "params": {"delta": "private reasoning fixture"},
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"itemId": "message", "delta": "Inspected the plate."},
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                },
             ]
         )
         events = []
-        message = runtime.run("inspect", "fixture-model", threading.Event(), events.append)
+        message = runtime.run(
+            "inspect", "fixture-model", threading.Event(), events.append
+        )
         self.assertEqual(message, "Inspected the plate.")
         self.assertNotIn("private reasoning", str(events))
 
     def test_cancellation_interrupts_the_active_turn_and_rejects_completion(self):
-        runtime = self.runtime([{"method": "turn/completed", "params": {"turn": {"status": "completed"}}}])
+        runtime = self.runtime(
+            [{"method": "turn/completed", "params": {"turn": {"status": "completed"}}}]
+        )
         cancelled = threading.Event()
 
         def on_progress(event):
@@ -56,15 +71,78 @@ class ProviderProtocolTests(unittest.TestCase):
                 {
                     "method": "turn/completed",
                     "params": {
-                        "turn": {"status": "failed", "error": {"message": "Usage limit reached fixture-secret"}}
+                        "turn": {
+                            "status": "failed",
+                            "error": {"message": "Usage limit reached fixture-secret"},
+                        }
                     },
                 }
             ]
         )
         with self.assertRaises(WorkspaceError) as failed:
-            runtime.run("change", "fixture-model", threading.Event(), lambda event: None)
+            runtime.run(
+                "change", "fixture-model", threading.Event(), lambda event: None
+            )
         self.assertIn("Usage limit", str(failed.exception))
         self.assertNotIn("fixture-secret", str(failed.exception))
+
+    def test_foreign_thread_and_old_turn_events_cannot_complete_current_task(self):
+        runtime = self.runtime(
+            [
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"threadId": "other", "delta": "wrong conversation"},
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "fixture-thread",
+                        "turn": {"id": "old-turn", "status": "failed"},
+                    },
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "fixture-thread",
+                        "turnId": "fixture-turn",
+                        "delta": "Current result",
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "fixture-thread",
+                        "turn": {"id": "fixture-turn", "status": "completed"},
+                    },
+                },
+            ]
+        )
+        self.assertEqual(
+            runtime.run("inspect", "fixture-model", threading.Event(), lambda e: None),
+            "Current result",
+        )
+
+    def test_structured_usage_limit_stops_without_inventing_geometry_success(self):
+        runtime = self.runtime(
+            [
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "turn": {
+                            "status": "failed",
+                            "error": {
+                                "message": "provider diagnostic",
+                                "codexErrorInfo": "usageLimitExceeded",
+                            },
+                        }
+                    },
+                }
+            ]
+        )
+        with self.assertRaises(WorkspaceError) as failed:
+            runtime.run("change", "fixture-model", threading.Event(), lambda e: None)
+        self.assertEqual(failed.exception.code, "usage_limit")
+        self.assertIn("Billing was not changed", str(failed.exception))
 
     def test_malformed_clarification_answer_does_not_consume_the_pending_question(self):
         runtime = self.runtime([])
@@ -72,7 +150,9 @@ class ProviderProtocolTests(unittest.TestCase):
         with self.assertRaises(WorkspaceError):
             runtime.respond(7, {"wrong": {"answers": ["4 mm"]}})
         self.assertIn(7, runtime.pending_inputs)
-        self.assertTrue(runtime.respond(7, {"dimension": {"answers": ["4 mm"]}})["answered"])
+        self.assertTrue(
+            runtime.respond(7, {"dimension": {"answers": ["4 mm"]}})["answered"]
+        )
         self.assertNotIn(7, runtime.pending_inputs)
 
 

@@ -20,8 +20,8 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ColorType
 
-from backend.app.design_schema import Design
-from backend.app.modelling import Builder, measure, verify_assembly
+from backend.native.design_schema import Design
+from backend.native.modelling import Builder, measure, verify_assembly
 from .contracts import Command, WorkspaceError
 from .documents import asset_path
 from pydantic import TypeAdapter

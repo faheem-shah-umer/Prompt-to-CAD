@@ -37,8 +37,9 @@ RpcClient::RpcClient(QObject* parent) : QObject(parent) {
     });
     connect(&process, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
         const QString message = "The document service stopped. Reopen the application to recover the last accepted revision.";
+        bool hadPending = !callbacks.isEmpty();
         failPending(message);
-        Q_EMIT stopped(message);
+        if (!hadPending) Q_EMIT stopped(message);
     });
 }
 

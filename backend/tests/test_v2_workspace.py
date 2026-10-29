@@ -1,7 +1,7 @@
 import json
 import math
-import tempfile
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -36,9 +36,19 @@ class V2WorkspaceTests(unittest.TestCase):
         )["document"]
 
     def tools(self, document, **selection):
-        selected = {"revision_id": document["revision_id"], "instance_id": "plate", "kind": "body", **selection}
+        selected = {
+            "revision_id": document["revision_id"],
+            "instance_id": "plate",
+            "kind": "body",
+            **selection,
+        }
         return TaskTools(
-            self.workspace, self.workspace.document, document, selected, self.workspace.project_id, "test-task"
+            self.workspace,
+            self.workspace.document,
+            document,
+            selected,
+            self.workspace.project_id,
+            "test-task",
         )
 
     def test_selected_plate_thickening_scope_undo_reopen_and_conversation_switch(self):
@@ -46,40 +56,69 @@ class V2WorkspaceTests(unittest.TestCase):
         first_chat = self.workspace.state()["conversation"]["conversation_id"]
         tools = self.tools(doc)
         context = tools.context()
-        observation = tools.call("cad_inspect", {"candidate_id": context["candidate_id"], "instance_id": "plate"})
-        face = next(f for f in observation["components"][0]["faces"] if f["normal"] == [0.0, 0.0, 1.0])
+        observation = tools.call(
+            "cad_inspect",
+            {"candidate_id": context["candidate_id"], "instance_id": "plate"},
+        )
+        face = next(
+            f
+            for f in observation["components"][0]["faces"]
+            if f["normal"] == [0.0, 0.0, 1.0]
+        )
         old_token = tools.candidate_id
         result = tools.call(
             "cad_apply",
             {
                 "candidate_id": old_token,
-                "command": {"type": "offset_face", "instance_id": "plate", "face_index": face["index"], "distance": 4},
+                "command": {
+                    "type": "offset_face",
+                    "instance_id": "plate",
+                    "face_index": face["index"],
+                    "distance": 4,
+                },
             },
         )
         with self.assertRaises(WorkspaceError) as stale:
             tools.call("cad_inspect", {"candidate_id": old_token})
         self.assertEqual(stale.exception.code, "stale_selection")
         self.assertEqual(tools.candidate["components"][1], doc["components"][1])
-        self.assertAlmostEqual(tools.candidate["components"][0]["metrics"]["dimensions_mm"][2], 12)
+        self.assertAlmostEqual(
+            tools.candidate["components"][0]["metrics"]["dimensions_mm"][2], 12
+        )
         report = tools.call("cad_validate", result)
         self.assertTrue(report["geometry"]["passed"])
         self.assertEqual(report["scope"]["unrelated_components_checked"], 1)
         self.workspace.document.commit(
-            tools.candidate, doc["revision_id"], summary="Plate +4 mm", commands=tools.commands
+            tools.candidate,
+            doc["revision_id"],
+            summary="Plate +4 mm",
+            commands=tools.commands,
         )
         changed = self.workspace.document.current()
         self.workspace.dispatch("v2.conversation.new", {})
         self.workspace.dispatch("v2.conversation.open", {"conversation_id": first_chat})
-        self.assertEqual(self.workspace.document.current()["revision_id"], changed["revision_id"])
-        undo = self.workspace.dispatch("v2.undo", {"base_revision_id": changed["revision_id"]})["document"]
-        redo = self.workspace.dispatch("v2.redo", {"base_revision_id": undo["revision_id"]})["document"]
+        self.assertEqual(
+            self.workspace.document.current()["revision_id"], changed["revision_id"]
+        )
+        undo = self.workspace.dispatch(
+            "v2.undo", {"base_revision_id": changed["revision_id"]}
+        )["document"]
+        redo = self.workspace.dispatch(
+            "v2.redo", {"base_revision_id": undo["revision_id"]}
+        )["document"]
         self.assertEqual(redo["revision_id"], changed["revision_id"])
         self.workspace.worker.close()
         reopened = WorkspaceV2(self.folder)
         try:
-            self.assertEqual(reopened.state()["document"]["revision_id"], changed["revision_id"])
-            self.assertEqual(reopened.state()["conversation"]["conversation_id"], first_chat)
-            self.assertEqual(reopened.state()["document"]["components"][1], doc["components"][1])
+            self.assertEqual(
+                reopened.state()["document"]["revision_id"], changed["revision_id"]
+            )
+            self.assertEqual(
+                reopened.state()["conversation"]["conversation_id"], first_chat
+            )
+            self.assertEqual(
+                reopened.state()["document"]["components"][1], doc["components"][1]
+            )
         finally:
             reopened.worker.close()
 
@@ -91,7 +130,11 @@ class V2WorkspaceTests(unittest.TestCase):
                 "cad_apply",
                 {
                     "candidate_id": tools.candidate_id,
-                    "command": {"type": "transform", "instance_id": "post", "translation": [20, 0, 0]},
+                    "command": {
+                        "type": "transform",
+                        "instance_id": "post",
+                        "translation": [20, 0, 0],
+                    },
                 },
             )
         self.assertEqual(scope.exception.code, "scope_violation")
@@ -104,8 +147,12 @@ class V2WorkspaceTests(unittest.TestCase):
     def test_face_holes_have_expected_volume_and_import_history_is_honest(self):
         doc = self.assembly()
         tools = self.tools(doc)
-        info = tools.call("cad_inspect", {"candidate_id": tools.candidate_id, "instance_id": "plate"})
-        face = next(f for f in info["components"][0]["faces"] if f["normal"] == [0.0, 0.0, 1.0])
+        info = tools.call(
+            "cad_inspect", {"candidate_id": tools.candidate_id, "instance_id": "plate"}
+        )
+        face = next(
+            f for f in info["components"][0]["faces"] if f["normal"] == [0.0, 0.0, 1.0]
+        )
         tools.call(
             "cad_apply",
             {
@@ -122,7 +169,11 @@ class V2WorkspaceTests(unittest.TestCase):
         )
         volume = tools.candidate["components"][0]["metrics"]["volume_mm3"]
         self.assertAlmostEqual(volume, 80 * 60 * 8 - 4 * math.pi * 3**2 * 8, places=4)
-        self.assertTrue(tools.call("cad_validate", {"candidate_id": tools.candidate_id})["geometry"]["passed"])
+        self.assertTrue(
+            tools.call("cad_validate", {"candidate_id": tools.candidate_id})[
+                "geometry"
+            ]["passed"]
+        )
 
     def test_script_denies_os_access_and_preserves_accepted_geometry(self):
         doc = self.assembly()
@@ -135,13 +186,23 @@ class V2WorkspaceTests(unittest.TestCase):
             "parts = {'plate': eval('1')}",
         ):
             with self.subTest(source=source), self.assertRaises(WorkspaceError):
-                tools.call("cad_script", {"candidate_id": tools.candidate_id, "source": source, "instance_id": "plate"})
-        self.assertEqual(self.workspace.document.current()["revision_id"], doc["revision_id"])
+                tools.call(
+                    "cad_script",
+                    {
+                        "candidate_id": tools.candidate_id,
+                        "source": source,
+                        "instance_id": "plate",
+                    },
+                )
+        self.assertEqual(
+            self.workspace.document.current()["revision_id"], doc["revision_id"]
+        )
         self.assertEqual(tools.candidate, doc)
 
     def test_failed_or_cancelled_provider_turn_never_accepts_partial_tools(self):
         doc = self.assembly()
-        self.workspace.connections.api_key("fixture-only-key-not-a-real-credential")
+        with patch("backend.v2.auth.request_json", return_value={"data": []}):
+            self.workspace.connections.api_key("fixture-only-key-not-a-real-credential")
         workspace = self.workspace
 
         class FailedProvider:
@@ -159,10 +220,16 @@ class V2WorkspaceTests(unittest.TestCase):
                     "cad_apply",
                     {
                         "candidate_id": tools.candidate_id,
-                        "command": {"type": "transform", "instance_id": "plate", "translation": [0, 0, 20]},
+                        "command": {
+                            "type": "transform",
+                            "instance_id": "plate",
+                            "translation": [0, 0, 20],
+                        },
                     },
                 )
-                raise WorkspaceError("Fixture stream failed after tool success", "provider_task_failed")
+                raise WorkspaceError(
+                    "Fixture stream failed after tool success", "provider_task_failed"
+                )
 
             def close(self):
                 pass
@@ -185,16 +252,79 @@ class V2WorkspaceTests(unittest.TestCase):
                     "v2.task",
                     {
                         "base_revision_id": doc["revision_id"],
-                        "selection": {"revision_id": doc["revision_id"], "instance_id": "plate", "kind": "body"},
+                        "selection": {
+                            "revision_id": doc["revision_id"],
+                            "instance_id": "plate",
+                            "kind": "body",
+                        },
                         "model": "fixture-model",
                         "prompt": "Move the plate",
                     },
                 )
-        self.assertEqual(workspace.document.current()["revision_id"], doc["revision_id"])
+        self.assertEqual(
+            workspace.document.current()["revision_id"], doc["revision_id"]
+        )
         chat = workspace.state()["conversation"]
         self.assertEqual(len(chat["messages"]), 2)
-        task_file = workspace.projects.project_path(workspace.project_id) / "tasks" / (chat["tasks"][0] + ".json")
+        task_file = (
+            workspace.projects.project_path(workspace.project_id)
+            / "tasks"
+            / (chat["tasks"][0] + ".json")
+        )
         self.assertEqual(json.loads(task_file.read_text())["status"], "failed")
+
+    def test_duplicate_submission_and_bridge_failure_are_persisted_without_geometry(
+        self,
+    ):
+        from unittest.mock import Mock
+
+        with patch("backend.v2.auth.request_json", return_value={"data": []}):
+            self.workspace.connections.api_key("fixture-only-key-not-a-real-credential")
+        provider = Mock()
+        provider.start_thread.return_value = "fixture-session"
+        provider.run.return_value = "Inspected. No change requested."
+        request = {
+            "base_revision_id": None,
+            "model": "fixture",
+            "prompt": "Inspect",
+            "task_id": "a" * 32,
+        }
+        observed = []
+        self.workspace.output = observed.append
+        with patch(
+            "backend.v2.workspace.CodexAppServer", return_value=provider
+        ) as factory:
+            result = self.workspace.dispatch("v2.task", request)
+            with self.assertRaises(WorkspaceError) as duplicate:
+                self.workspace.dispatch("v2.task", request)
+            self.assertEqual(factory.call_count, 1)
+        self.assertEqual(duplicate.exception.code, "duplicate_submission")
+        self.assertEqual(result["task"]["status"], "completed_no_change")
+        self.assertIsNone(result["document"]["revision_id"])
+        task_events = [e for e in observed if e.get("task_id")]
+        self.assertTrue(task_events)
+        self.assertTrue(
+            all(
+                e["conversation_id"] == result["conversation"]["conversation_id"]
+                for e in task_events
+            )
+        )
+        request["task_id"] = "b" * 32
+        with patch(
+            "backend.v2.workspace.ToolBridge",
+            side_effect=RuntimeError("fixture bridge failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.workspace.dispatch("v2.task", request)
+        chat = self.workspace.state()["conversation"]
+        path = (
+            self.workspace.projects.project_path(self.workspace.project_id)
+            / "tasks"
+            / (request["task_id"] + ".json")
+        )
+        self.assertEqual(json.loads(path.read_text())["status"], "failed")
+        self.assertIsNone(self.workspace.active_task)
+        self.assertEqual(len(chat["tasks"]), 2)
 
     def test_script_parameters_keep_other_instances_and_guard_downstream_edits(self):
         doc = self.assembly()
@@ -202,17 +332,32 @@ class V2WorkspaceTests(unittest.TestCase):
             "v2.command",
             {
                 "base_revision_id": doc["revision_id"],
-                "selection": {"revision_id": doc["revision_id"], "instance_id": "plate", "kind": "body"},
-                "command": {"type": "parameters", "instance_id": "plate", "values": {"width": 100}},
+                "selection": {
+                    "revision_id": doc["revision_id"],
+                    "instance_id": "plate",
+                    "kind": "body",
+                },
+                "command": {
+                    "type": "parameters",
+                    "instance_id": "plate",
+                    "values": {"width": 100},
+                },
             },
         )["document"]
-        self.assertAlmostEqual(changed["components"][0]["metrics"]["dimensions_mm"][0], 100)
+        self.assertAlmostEqual(
+            changed["components"][0]["metrics"]["dimensions_mm"][0], 100
+        )
         self.assertEqual(changed["components"][1], doc["components"][1])
         drilled = self.workspace.dispatch(
             "v2.command",
             {
                 "base_revision_id": changed["revision_id"],
-                "command": {"type": "hole", "instance_id": "plate", "diameter": 4, "centres": [[0, 0]]},
+                "command": {
+                    "type": "hole",
+                    "instance_id": "plate",
+                    "diameter": 4,
+                    "centres": [[0, 0]],
+                },
             },
         )["document"]
         with self.assertRaises(WorkspaceError):
@@ -220,14 +365,20 @@ class V2WorkspaceTests(unittest.TestCase):
                 "v2.command",
                 {
                     "base_revision_id": drilled["revision_id"],
-                    "command": {"type": "parameters", "instance_id": "plate", "values": {"width": 90}},
+                    "command": {
+                        "type": "parameters",
+                        "instance_id": "plate",
+                        "values": {"width": 90},
+                    },
                 },
             )
-        self.assertEqual(self.workspace.document.current()["revision_id"], drilled["revision_id"])
+        self.assertEqual(
+            self.workspace.document.current()["revision_id"], drilled["revision_id"]
+        )
 
     def test_other_window_cannot_write_a_document_with_an_active_task_lock(self):
-        from backend.app.project_lock import revision_lock
-        from backend.app.projects import RevisionConflict
+        from backend.native.project_lock import revision_lock
+        from backend.native.project_lock import RevisionConflict
 
         doc = self.assembly()
         with revision_lock(self.workspace.document.folder / ".task-lock"):
@@ -238,12 +389,18 @@ class V2WorkspaceTests(unittest.TestCase):
                         "v2.command",
                         {
                             "base_revision_id": doc["revision_id"],
-                            "command": {"type": "transform", "instance_id": "plate", "translation": [20, 0, 0]},
+                            "command": {
+                                "type": "transform",
+                                "instance_id": "plate",
+                                "translation": [20, 0, 0],
+                            },
                         },
                     )
             finally:
                 other.worker.close()
-        self.assertEqual(self.workspace.document.current()["revision_id"], doc["revision_id"])
+        self.assertEqual(
+            self.workspace.document.current()["revision_id"], doc["revision_id"]
+        )
 
     def test_task_revision_link_can_restore_a_snapshot_after_a_new_history_branch(self):
         original = self.assembly()
@@ -251,7 +408,11 @@ class V2WorkspaceTests(unittest.TestCase):
             "v2.command",
             {
                 "base_revision_id": original["revision_id"],
-                "command": {"type": "transform", "instance_id": "plate", "translation": [20, 0, 0]},
+                "command": {
+                    "type": "transform",
+                    "instance_id": "plate",
+                    "translation": [20, 0, 0],
+                },
             },
         )["document"]
         self.workspace.dispatch("v2.undo", {"base_revision_id": moved["revision_id"]})
@@ -259,12 +420,22 @@ class V2WorkspaceTests(unittest.TestCase):
             "v2.command",
             {
                 "base_revision_id": original["revision_id"],
-                "command": {"type": "transform", "instance_id": "plate", "translation": [0, 20, 0]},
+                "command": {
+                    "type": "transform",
+                    "instance_id": "plate",
+                    "translation": [0, 20, 0],
+                },
             },
         )["document"]
-        self.assertNotIn(moved["revision_id"], [r["revision_id"] for r in branch["history"]])
+        self.assertNotIn(
+            moved["revision_id"], [r["revision_id"] for r in branch["history"]]
+        )
         restored = self.workspace.dispatch(
-            "v2.restore", {"base_revision_id": branch["revision_id"], "revision_id": moved["revision_id"]}
+            "v2.restore",
+            {
+                "base_revision_id": branch["revision_id"],
+                "revision_id": moved["revision_id"],
+            },
         )["document"]
         self.assertEqual(restored["components"], moved["components"])
         self.assertEqual(restored["revision_id"], moved["revision_id"])
@@ -275,22 +446,31 @@ class V2WorkspaceTests(unittest.TestCase):
         context = tools.context()
         self.assertIn("assembly_nodes", context)
         self.assertEqual(context["components"][0]["parameters"]["width"], 80)
-        definition = tools.call("cad_definition", {"candidate_id": tools.candidate_id, "instance_id": "plate"})
+        definition = tools.call(
+            "cad_definition",
+            {"candidate_id": tools.candidate_id, "instance_id": "plate"},
+        )
         self.assertIn("cq.Workplane", definition["script"]["source"])
         self.assertEqual(definition["parameters"]["width"], 80)
-        observation = tools.call("cad_inspect", {"candidate_id": tools.candidate_id, "instance_id": "plate"})
+        observation = tools.call(
+            "cad_inspect", {"candidate_id": tools.candidate_id, "instance_id": "plate"}
+        )
         self.assertEqual(observation["components"][0]["parameters"]["width"], 80)
 
     def test_dpapi_vault_contains_no_plaintext_credentials(self):
         key = "fixture-only-secret-value-123456"
-        self.workspace.connections.api_key(key)
+        with patch("backend.v2.auth.request_json", return_value={"data": []}):
+            self.workspace.connections.api_key(key)
         path = self.workspace.connections.vault.path
         self.assertNotIn(key.encode(), path.read_bytes())
         self.assertNotIn(key, json.dumps(self.workspace.connections.status()))
         _, account = self.workspace.connections.credential()
         self.assertEqual(account["api_key"], key)
         self.workspace.connections.disconnect()
-        self.assertNotIn("api_key", next(iter(self.workspace.connections.vault.read()["accounts"].values())))
+        self.assertNotIn(
+            "api_key",
+            next(iter(self.workspace.connections.vault.read()["accounts"].values())),
+        )
 
 
 if __name__ == "__main__":

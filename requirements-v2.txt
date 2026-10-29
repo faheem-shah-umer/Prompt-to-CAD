@@ -1,5 +1,0 @@
--r backend/requirements-native.txt
-PyJWT[crypto]==2.15.1
-cryptography==50.0.2
-trimesh==4.12.2
-scipy==1.17.1

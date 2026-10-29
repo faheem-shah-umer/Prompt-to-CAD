@@ -11,6 +11,43 @@ from pathlib import Path
 
 from backend.native.contracts import WorkspaceError
 
+from .process_limits import ProcessTree
+
+
+def discover_executable(configured=None):
+    if configured:
+        return str(configured) if Path(configured).is_file() else None
+    explicit = os.getenv("PROMPTCAD_CODEX")
+    if explicit:
+        return explicit if Path(explicit).is_file() else None
+    installed = shutil.which("codex.exe" if os.name == "nt" else "codex")
+    if installed:
+        return installed
+    if os.name == "nt":
+        folder = Path(os.getenv("LOCALAPPDATA", "")) / "OpenAI" / "Codex" / "bin"
+        candidates = list(folder.glob("*/codex.exe"))
+        if candidates:
+            return str(max(candidates, key=lambda p: p.stat().st_mtime))
+    return None
+
+
+def provider_failure(error):
+    info = error.get("codexErrorInfo", "")
+    code = info if isinstance(info, str) else next(iter(info), "")
+    if code in ("usageLimitExceeded", "rateLimitExceeded", "insufficientQuota"):
+        return (
+            "The connected account has reached its usage limit. Manage its allowance or credits, then retry. Billing was not changed.",
+            "usage_limit",
+        )
+    if code in ("unauthorized", "authenticationError"):
+        return (
+            "Authorization expired or was revoked. Reconnect the same account in Settings.",
+            "reauthorization_required",
+        )
+    return error.get(
+        "message", "The agent task failed. Unaccepted changes were discarded."
+    ), "provider_task_failed"
+
 
 class CodexAppServer:
     def __init__(self, home, executable=None, token=None, mode="chatgpt", mcp=None):
@@ -18,10 +55,11 @@ class CodexAppServer:
         self.home.mkdir(parents=True, exist_ok=True)
         self.cwd = self.home / "workspace"
         self.cwd.mkdir(exist_ok=True)
-        self.executable = executable or os.getenv("PROMPTCAD_CODEX") or shutil.which("codex")
+        self.executable = discover_executable(executable)
         if not self.executable:
             raise WorkspaceError(
-                "Install the Codex CLI and select its executable in Account settings.", "runtime_missing"
+                "Install the Codex CLI and select its executable in Account settings.",
+                "runtime_missing",
             )
         config = {
             "model_provider": "promptcad",
@@ -47,12 +85,24 @@ class CodexAppServer:
             # TOML accepts JSON strings/booleans/arrays; tables need inline TOML syntax.
             def toml(v):
                 if isinstance(v, dict):
-                    return "{ " + ", ".join(json.dumps(k) + " = " + toml(x) for k, x in v.items()) + " }"
+                    return (
+                        "{ "
+                        + ", ".join(
+                            json.dumps(k) + " = " + toml(x) for k, x in v.items()
+                        )
+                        + " }"
+                    )
                 return json.dumps(v)
 
             args += ["-c", key + "=" + toml(value)]
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI_", "CODEX_", "ANTHROPIC_", "LLM_"))}
-        env.update(CODEX_HOME=str(self.home), PROMPTCAD_PROVIDER_TOKEN=token or "not-connected")
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith(("OPENAI_", "CODEX_", "ANTHROPIC_", "LLM_"))
+        }
+        env.update(
+            CODEX_HOME=str(self.home), PROMPTCAD_PROVIDER_TOKEN=token or "not-connected"
+        )
         self.secret = token
         self.process = subprocess.Popen(
             args,
@@ -66,6 +116,12 @@ class CodexAppServer:
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        try:
+            self.process_tree = ProcessTree(self.process)
+        except Exception:
+            self.process.kill()
+            self.process.wait(timeout=2)
+            raise
         self.inbox = queue.Queue()
         self.events = queue.Queue()
         self.sequence = 0
@@ -85,11 +141,18 @@ class CodexAppServer:
             finally:
                 self.inbox.put(None)
 
-        threading.Thread(target=reader, daemon=True).start()
+        self.reader = threading.Thread(target=reader, daemon=True)
+        self.reader.start()
         try:
             self.info = self.request(
                 "initialize",
-                {"clientInfo": {"name": "Prompt to CAD V2", "title": "Prompt to CAD V2", "version": "0.3.0"}},
+                {
+                    "clientInfo": {
+                        "name": "Prompt to CAD V2",
+                        "title": "Prompt to CAD V2",
+                        "version": "0.4.0",
+                    }
+                },
             )
             self.send({"method": "initialized", "params": {}})
         except Exception:
@@ -102,7 +165,9 @@ class CodexAppServer:
                 self.process.stdin.write(json.dumps(message, allow_nan=False) + "\n")
                 self.process.stdin.flush()
             except (OSError, ValueError):
-                raise WorkspaceError("The Codex runtime disconnected.", "runtime_disconnected") from None
+                raise WorkspaceError(
+                    "The Codex runtime disconnected.", "runtime_disconnected"
+                ) from None
 
     def receive(self, timeout=0.2):
         try:
@@ -111,7 +176,8 @@ class CodexAppServer:
             return {}
         if event is None:
             raise WorkspaceError(
-                "The Codex runtime stopped. Reconnect and resume the conversation.", "runtime_disconnected"
+                "The Codex runtime stopped. Reconnect and resume the conversation.",
+                "runtime_disconnected",
             )
         return event
 
@@ -124,14 +190,18 @@ class CodexAppServer:
             event = self.receive()
             if event.get("id") == identity and "method" not in event:
                 if "error" in event:
-                    message = event["error"].get("message", "App Server rejected the request.")
+                    message = event["error"].get(
+                        "message", "App Server rejected the request."
+                    )
                     if self.secret:
                         message = message.replace(self.secret, "[credential]")
                     raise WorkspaceError(message, "app_server_error")
                 return event.get("result", {})
             if event:
                 self.events.put(event)
-        raise WorkspaceError("The Codex runtime did not respond in time.", "runtime_timeout")
+        raise WorkspaceError(
+            "The Codex runtime did not respond in time.", "runtime_timeout"
+        )
 
     def start_thread(self, instructions, model, thread_id=None):
         params = {
@@ -144,7 +214,9 @@ class CodexAppServer:
         }
         if thread_id:
             params["threadId"] = thread_id
-        result = self.request("thread/resume" if thread_id else "thread/start", params, timeout=60)
+        result = self.request(
+            "thread/resume" if thread_id else "thread/start", params, timeout=60
+        )
         self.thread_id = result["thread"]["id"]
         return self.thread_id
 
@@ -152,15 +224,26 @@ class CodexAppServer:
         if cancelled.is_set():
             raise WorkspaceError("Task cancelled before inference.", "cancelled")
         inputs = [{"type": "text", "text": text}]
-        inputs += [{"type": "localImage", "path": str(Path(p).resolve())} for p in images]
-        result = self.request("turn/start", {"threadId": self.thread_id, "input": inputs, "model": model})
+        inputs += [
+            {"type": "localImage", "path": str(Path(p).resolve())} for p in images
+        ]
+        result = self.request(
+            "turn/start", {"threadId": self.thread_id, "input": inputs, "model": model}
+        )
         self.turn_id = result["turn"]["id"]
-        notify({"stage": "agent_running", "message": "Codex is working with the current CAD document."})
+        notify(
+            {
+                "stage": "agent_running",
+                "message": "Codex is working with the current CAD document.",
+            }
+        )
         deadline = time.monotonic() + timeout
         interrupted_at = None
         messages = {}
         while True:
-            if (cancelled.is_set() or time.monotonic() >= deadline) and interrupted_at is None:
+            if (
+                cancelled.is_set() or time.monotonic() >= deadline
+            ) and interrupted_at is None:
                 self.sequence += 1
                 self.send(
                     {
@@ -171,9 +254,21 @@ class CodexAppServer:
                 )
                 interrupted_at = time.monotonic()
             if interrupted_at and time.monotonic() - interrupted_at > 5:
-                raise WorkspaceError("Task stopped; candidate changes were discarded.", "cancelled")
+                raise WorkspaceError(
+                    "Task stopped; candidate changes were discarded.",
+                    "cancelled" if cancelled.is_set() else "runtime_timeout",
+                )
             event = self.events.get() if not self.events.empty() else self.receive()
             method, params = event.get("method"), event.get("params", {})
+            if params.get("threadId", self.thread_id) != self.thread_id:
+                continue
+            if params.get("turnId", self.turn_id) != self.turn_id:
+                continue
+            if (
+                method == "turn/completed"
+                and params.get("turn", {}).get("id", self.turn_id) != self.turn_id
+            ):
+                continue
             if "id" in event and method:
                 if method == "item/tool/requestUserInput" and not any(
                     q.get("isSecret") for q in params.get("questions", [])
@@ -187,7 +282,10 @@ class CodexAppServer:
                             "questions": params.get("questions", []),
                         }
                     )
-                elif method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+                elif method in (
+                    "item/commandExecution/requestApproval",
+                    "item/fileChange/requestApproval",
+                ):
                     self.send({"id": event["id"], "result": {"decision": "decline"}})
                     notify(
                         {
@@ -212,17 +310,29 @@ class CodexAppServer:
                 key = params.get("itemId", "message")
                 messages[key] = messages.get(key, "") + delta
                 notify({"stage": "assistant_delta", "message": delta, "item_id": key})
-            elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
+            elif (
+                method == "item/completed"
+                and params.get("item", {}).get("type") == "agentMessage"
+            ):
                 item = params["item"]
                 messages[item["id"]] = item.get("text", messages.get(item["id"], ""))
             elif method == "turn/completed":
                 turn = params["turn"]
                 if interrupted_at or turn["status"] != "completed":
                     error = turn.get("error") or {}
-                    message = error.get("message", "Task failed or was interrupted. Candidate changes were discarded.")
+                    message, failure_code = provider_failure(error)
+                    if cancelled.is_set() or turn["status"] == "interrupted":
+                        message = "Task cancelled; unaccepted changes were discarded."
                     if self.secret:
                         message = message.replace(self.secret, "[credential]")
-                    raise WorkspaceError(message, "cancelled" if interrupted_at else "provider_task_failed")
+                    raise WorkspaceError(
+                        message,
+                        ("cancelled" if cancelled.is_set() else "runtime_timeout")
+                        if interrupted_at
+                        else "cancelled"
+                        if turn["status"] == "interrupted"
+                        else failure_code,
+                    )
                 return "\n\n".join(messages.values())
             elif method == "error":
                 notify(
@@ -243,7 +353,9 @@ class CodexAppServer:
             if (
                 not isinstance(answer, dict)
                 or not isinstance(answer.get("answers"), list)
-                or not all(isinstance(v, str) and len(v) <= 4000 for v in answer["answers"])
+                or not all(
+                    isinstance(v, str) and len(v) <= 4000 for v in answer["answers"]
+                )
             ):
                 raise WorkspaceError("Clarification answers must be short text values.")
         self.pending_inputs.pop(identity)
@@ -258,3 +370,10 @@ class CodexAppServer:
             except (OSError, subprocess.TimeoutExpired):
                 self.process.kill()
                 self.process.wait(timeout=2)
+            finally:
+                if getattr(self, "process_tree", None):
+                    self.process_tree.close()
+                if getattr(self, "reader", None):
+                    self.reader.join(timeout=1)
+                self.process.stdout.close()
+                self.pending_inputs.clear()

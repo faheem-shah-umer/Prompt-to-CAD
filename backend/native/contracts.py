@@ -124,18 +124,6 @@ Command = Annotated[Hole | EdgeTreatment | Extrusion | FaceOffset | FaceHoles | 
                     Field(discriminator="type")]
 
 
-class AgentAction(Contract):
-    status: Literal["tool", "done", "needs_input", "unsupported"]
-    message: str = Field(min_length=1, max_length=3000)
-    command: Command | None = None
-
-    @model_validator(mode="after")
-    def tool_has_command(self):
-        if (self.status == "tool") != (self.command is not None):
-            raise ValueError("Only a tool action must contain a command.")
-        return self
-
-
 class WorkspaceError(Exception):
     def __init__(self, message, code="invalid_operation"):
         super().__init__(message)

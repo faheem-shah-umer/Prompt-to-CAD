@@ -10,8 +10,8 @@ from uuid import uuid4
 
 from backend.native.documents import Document, write_json
 from backend.native.contracts import WorkspaceError
-from backend.app.project_lock import revision_lock
-from backend.app.projects import RevisionConflict
+from backend.native.project_lock import revision_lock
+from backend.native.project_lock import RevisionConflict
 
 
 def identifier(value):

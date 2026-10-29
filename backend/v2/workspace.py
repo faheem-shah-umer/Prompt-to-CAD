@@ -2,35 +2,86 @@ import copy
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from uuid import uuid4
 
-from backend.native.service import Workspace
-from backend.native.documents import write_json, Document
+from backend.native.project_lock import revision_lock
+from backend.native.project_lock import RevisionConflict
 from backend.native.contracts import WorkspaceError
-from backend.app.project_lock import revision_lock
-from backend.app.projects import RevisionConflict
+from backend.native.documents import Document, write_json
+from backend.native.workspace import Workspace
+
 from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
-from .provider import CodexAppServer
+from .provider import CodexAppServer, discover_executable
 
-INSTRUCTIONS = Path(__file__).with_name("CAD_INSTRUCTIONS.md").read_text(encoding="utf-8")
+INSTRUCTIONS = (
+    Path(__file__).with_name("CAD_INSTRUCTIONS.md").read_text(encoding="utf-8")
+)
 
 
 class WorkspaceV2(Workspace):
-    def __init__(self, home, notify=lambda event: None):
+    def __init__(self, home, notify=lambda event: None, identity_home=None):
         self.home = Path(home).resolve()
-        super().__init__(self.home / "geometry", notify, load_model=False)
+        self.active_task = None
+        self.task_state = "disconnected"
+        self.acceptance_lock = threading.RLock()
+        self.output = notify
+        super().__init__(self.home / "geometry", self.emit)
         self.projects = Projects(self.home / "projects")
-        self.connections = Connections(self.home / "identity", notify)
+        self.connections = Connections(
+            Path(identity_home) if identity_home else self.home / "identity", self.emit
+        )
         self.project_id = self.projects.read(self.projects.catalog)["active"]
         self.runtime = None
         self.configuration_path = self.home / "settings.json"
-        self.configuration = self.projects.read(self.configuration_path) if self.configuration_path.exists() else {}
+        self.configuration = (
+            self.projects.read(self.configuration_path)
+            if self.configuration_path.exists()
+            else {}
+        )
         if self.project_id:
             self.activate(self.project_id)
+
+    def emit(self, event):
+        event = dict(event)
+        stages = {
+            "connecting": "connecting",
+            "agent_running": "running",
+            "clarification": "waiting_for_input",
+            "verifying": "running",
+        }
+        if event.get("stage") in stages:
+            event["state"] = stages[event["stage"]]
+        if "state" in event:
+            self.task_state = event["state"]
+        if self.active_task:
+            task = self.active_task
+            event.update(
+                task_id=task["task_id"],
+                conversation_id=task["conversation_id"],
+                document_id=task["document_id"],
+            )
+            if event.get("stage") not in ("assistant_delta", "candidate"):
+                task.setdefault("activity", []).append(
+                    {k: event[k] for k in ("stage", "state", "message") if k in event}
+                )
+        self.output(event)
+
+    def cancel(self):
+        with self.acceptance_lock:
+            self.cancelled.set()
+            if self.active_task:
+                self.emit(
+                    {
+                        "stage": "task_state",
+                        "state": "cancelling",
+                        "message": "Stopping; unaccepted changes will be discarded.",
+                    }
+                )
 
     def activate(self, project_id):
         project = self.projects.activate(project_id)
@@ -46,16 +97,57 @@ class WorkspaceV2(Workspace):
 
     def state(self):
         return {
-            **(self.projects.view(self.project_id) if self.project_id else {"catalog": self.projects.listing()}),
+            **(
+                self.projects.view(self.project_id)
+                if self.project_id
+                else {"catalog": self.projects.listing()}
+            ),
             "provider": self.connections.status(),
-            "runtime": {"executable": self.configuration.get("codex_path", ""), "provider": "Codex App Server"},
+            "task_state": self.task_state
+            if self.active_task
+            or self.task_state
+            in (
+                "completed",
+                "completed_no_change",
+                "cancelled",
+                "failed",
+                "usage_limit",
+            )
+            else self.connections.status()["state"],
+            "runtime": {
+                "executable": discover_executable(self.configuration.get("codex_path"))
+                or "",
+                "provider": "Codex App Server",
+            },
         }
 
     def dispatch(self, method, params):
-        writers = {"v2.task", "v2.command", "v2.script", "v2.undo", "v2.redo", "v2.restore", "v2.image_generate"}
+        writers = {
+            "v2.task",
+            "v2.command",
+            "v2.script",
+            "v2.undo",
+            "v2.redo",
+            "v2.restore",
+        }
         if method in writers and self.document:
             with revision_lock(self.document.folder / ".task-lock"):
-                return self._dispatch(method, params)
+                try:
+                    return self._dispatch(method, params)
+                except WorkspaceError as error:
+                    if method == "v2.task":
+                        self.emit(
+                            {
+                                "stage": "task_state",
+                                "state": "usage_limit"
+                                if error.code == "usage_limit"
+                                else "cancelled"
+                                if error.code == "cancelled"
+                                else "failed",
+                                "message": str(error),
+                            }
+                        )
+                    raise
         return self._dispatch(method, params)
 
     def _dispatch(self, method, params):
@@ -63,12 +155,18 @@ class WorkspaceV2(Workspace):
         if method == "v2.state":
             return self.state()
         if method == "v2.project.create":
-            return self.activate(self.projects.create(params.get("name", "Untitled project"))["project_id"])
+            return self.activate(
+                self.projects.create(params.get("name", "Untitled project"))[
+                    "project_id"
+                ]
+            )
         if method == "v2.project.open":
             return self.activate(params["project_id"])
         if method == "v2.project.update":
             project_id = params.get("project_id", self.project_id)
-            values = {k: params[k] for k in ("name", "archived", "trashed") if k in params}
+            values = {
+                k: params[k] for k in ("name", "archived", "trashed") if k in params
+            }
             if "name" in values:
                 values["name"] = str(values["name"]).strip()[:120] or "Untitled project"
             self.projects.update(project_id, **values)
@@ -80,25 +178,34 @@ class WorkspaceV2(Workspace):
             pid = params.get("project_id", self.project_id)
             chat = self.projects.conversation(pid, params["conversation_id"])
             self.projects.update(
-                pid, active_conversation_id=chat["conversation_id"], active_document_id=chat["document_id"]
+                pid,
+                active_conversation_id=chat["conversation_id"],
+                active_document_id=chat["document_id"],
             )
             return self.activate(pid)
         if method == "v2.document.open":
             project = self.projects.project(self.project_id)
             did = params["document_id"]
             self.projects.document(project, did)
-            chats = [self.projects.conversation(self.project_id, cid) for cid in project["conversations"]]
+            chats = [
+                self.projects.conversation(self.project_id, cid)
+                for cid in project["conversations"]
+            ]
             chat = next(
                 (
                     c
                     for c in reversed(chats)
-                    if c["document_id"] == did and not c.get("archived") and not c.get("trashed")
+                    if c["document_id"] == did
+                    and not c.get("archived")
+                    and not c.get("trashed")
                 ),
                 None,
             )
             if chat:
                 self.projects.update(
-                    self.project_id, active_document_id=did, active_conversation_id=chat["conversation_id"]
+                    self.project_id,
+                    active_document_id=did,
+                    active_conversation_id=chat["conversation_id"],
                 )
             else:
                 self.projects.new_conversation(self.project_id, did)
@@ -116,13 +223,11 @@ class WorkspaceV2(Workspace):
             chat = self.projects.conversation(pid, params["conversation_id"])
             for key in ("title", "archived", "trashed"):
                 if key in params:
-                    chat[key] = str(params[key])[:120] if key == "title" else bool(params[key])
+                    chat[key] = (
+                        str(params[key])[:120] if key == "title" else bool(params[key])
+                    )
             self.projects.save_conversation(pid, chat)
             return self.state()
-        if method == "v2.reference.add":
-            if not self.project_id:
-                raise WorkspaceError("Create a project before adding references.")
-            return self.projects.reference(self.project_id, params["path"])
         if method == "provider.status":
             return self.connections.status()
         if method == "provider.login":
@@ -146,7 +251,8 @@ class WorkspaceV2(Workspace):
             return self.state()
         if method == "provider.probe":
             runtime = CodexAppServer(
-                self.home / "runtime" / "probe", executable=self.configuration.get("codex_path") or None
+                self.home / "runtime" / "probe",
+                executable=self.configuration.get("codex_path") or None,
             )
             try:
                 return {
@@ -157,30 +263,20 @@ class WorkspaceV2(Workspace):
                 }
             finally:
                 runtime.close()
-        if method == "image.configure":
-            with self.connections.vault.lock, revision_lock(self.connections.vault.folder):
-                data = self.connections.vault.read()
-                key = str(params.get("key", "")).strip()
-                if key and len(key) < 20:
-                    raise WorkspaceError("Enter a valid Tripo API key.")
-                data["tripo_key"] = key
-                self.connections.vault.write(data)
-            return {"connected": bool(key), "billing": "Separate Tripo API credits"}
-        if method == "image.status":
-            with self.connections.vault.lock:
-                connected = bool(self.connections.vault.read().get("tripo_key"))
-            return {
-                "connected": connected,
-                "provider": "Tripo v3",
-                "billing": "Separate Tripo API credits",
-                "live_generation_verified": False,
-            }
-        if method == "v2.image_generate":
-            return self.generate_image(params)
         if method == "v2.import":
             source = Path(params["path"]).resolve()
-            if source.suffix.lower() not in (".step", ".stp", ".json", ".glb", ".stl", ".obj", ".ply"):
-                raise WorkspaceError("Choose a supported engineering CAD or visual mesh file.")
+            if source.suffix.lower() not in (
+                ".step",
+                ".stp",
+                ".json",
+                ".glb",
+                ".stl",
+                ".obj",
+                ".ply",
+            ):
+                raise WorkspaceError(
+                    "Choose a supported engineering CAD or visual mesh file."
+                )
             if source.stat().st_size > 100 * 1024 * 1024:
                 raise WorkspaceError("This build supports source files up to 100 MB.")
             if not self.project_id:
@@ -189,7 +285,10 @@ class WorkspaceV2(Workspace):
                 self.document
                 if self.document.index()["cursor"] < 0
                 else Document.create(
-                    self.projects.project_path(self.project_id) / "documents" / uuid4().hex[:16], source.stem
+                    self.projects.project_path(self.project_id)
+                    / "documents"
+                    / uuid4().hex[:16],
+                    source.stem,
                 )
             )
             if source.suffix.lower() in (".glb", ".stl", ".obj", ".ply"):
@@ -197,15 +296,24 @@ class WorkspaceV2(Workspace):
                     raise WorkspaceError("Specify source mesh units before import.")
                 candidate = self.geometry(
                     "import_mesh",
-                    {"project_dir": str(doc.folder), "path": str(source), "mm_per_unit": params["mm_per_unit"]},
+                    {
+                        "project_dir": str(doc.folder),
+                        "path": str(source),
+                        "mm_per_unit": params["mm_per_unit"],
+                    },
                 )
             elif source.suffix.lower() == ".json":
                 candidate = self.geometry(
                     "from_recipe",
-                    {"project_dir": str(doc.folder), "recipe": json.loads(source.read_text(encoding="utf-8"))},
+                    {
+                        "project_dir": str(doc.folder),
+                        "recipe": json.loads(source.read_text(encoding="utf-8")),
+                    },
                 )
             else:
-                candidate = self.geometry("import_step", {"project_dir": str(doc.folder), "path": str(source)})
+                candidate = self.geometry(
+                    "import_step", {"project_dir": str(doc.folder), "path": str(source)}
+                )
             self.verify(doc, candidate)
             import hashlib
             import shutil
@@ -215,7 +323,9 @@ class WorkspaceV2(Workspace):
             shutil.copyfile(source, original)
             candidate.update(
                 original_source="source/" + original.name,
-                original_source_sha256=hashlib.sha256(original.read_bytes()).hexdigest(),
+                original_source_sha256=hashlib.sha256(
+                    original.read_bytes()
+                ).hexdigest(),
             )
             index = doc.index()
             index["name"] = source.stem
@@ -228,14 +338,30 @@ class WorkspaceV2(Workspace):
             super().dispatch("document.open", params)
             document = self.document
             if not self.project_id:
-                self.activate(self.projects.create(document.index()["name"])["project_id"])
+                self.activate(
+                    self.projects.create(document.index()["name"])["project_id"]
+                )
             self.projects.adopt(self.project_id, document)
             return self.activate(self.project_id)
         if method in ("v2.command", "v2.script"):
-            snapshot = self.state()["document"] if self.document.index()["cursor"] < 0 else self.required(params)
-            tools = TaskTools(self, self.document, snapshot, params.get("selection"), self.project_id, uuid4().hex)
+            snapshot = (
+                self.state()["document"]
+                if self.document.index()["cursor"] < 0
+                else self.required(params)
+            )
+            tools = TaskTools(
+                self,
+                self.document,
+                snapshot,
+                params.get("selection"),
+                self.project_id,
+                uuid4().hex,
+            )
             if method == "v2.command":
-                tools.call("cad_apply", {"candidate_id": tools.candidate_id, "command": params["command"]})
+                tools.call(
+                    "cad_apply",
+                    {"candidate_id": tools.candidate_id, "command": params["command"]},
+                )
             else:
                 tools.call(
                     "cad_script",
@@ -256,7 +382,9 @@ class WorkspaceV2(Workspace):
             )
             return self.state()
         if method in ("v2.undo", "v2.redo"):
-            super().dispatch("document.undo" if method.endswith("undo") else "document.redo", params)
+            super().dispatch(
+                "document.undo" if method.endswith("undo") else "document.redo", params
+            )
             return self.state()
         if method == "v2.export":
             return super().dispatch("document.export", params)
@@ -278,7 +406,7 @@ class WorkspaceV2(Workspace):
         if method == "workspace.hello":
             return {
                 **super().dispatch(method, params),
-                "application_version": "0.3.0",
+                "application_version": "0.4.0",
                 "product_name": "Prompt to CAD V2",
             }
         raise WorkspaceError("Unknown V2 method: " + method, "method_not_found")
@@ -291,41 +419,58 @@ class WorkspaceV2(Workspace):
             raise WorkspaceError("Describe the task in 1–16,000 characters.")
         model = str(params.get("model", "")).strip()
         if not model:
-            raise WorkspaceError("Discover and select a model in the conversation panel.", "model_required")
+            raise WorkspaceError(
+                "Discover and select a model in the conversation panel.",
+                "model_required",
+            )
         account_id, account = self.connections.credential()
         state = self.projects.view(self.project_id)
         original = state["document"]
         if params.get("base_revision_id") != original.get("revision_id"):
             raise WorkspaceError(
-                "The document changed before task submission. Inspect and submit again.", "revision_conflict"
+                "The document changed before task submission. Inspect and submit again.",
+                "revision_conflict",
             )
-        images = copy.deepcopy(params.get("attachments", []))
+        if params.get("attachments"):
+            raise WorkspaceError(
+                "This release accepts text requests and internal viewport observations only."
+            )
         viewport = (
-            self.projects.reference(self.project_id, params["viewport_path"]) if params.get("viewport_path") else None
+            self.projects.reference(self.project_id, params["viewport_path"])
+            if params.get("viewport_path")
+            else None
         )
-        # Only previously imported application-owned references are accepted.
-        reference_root = (self.projects.project_path(self.project_id) / "references").resolve()
-        for reference in images:
-            if not Path(reference["path"]).resolve().is_relative_to(reference_root):
-                raise WorkspaceError("Attach reference images through the application first.")
-            self.projects.check_reference(reference)
+        task_id = str(params.get("task_id") or uuid4().hex)
+        if len(task_id) != 32 or any(c not in "0123456789abcdef" for c in task_id):
+            raise WorkspaceError("Invalid task submission identifier.")
+        if (
+            self.projects.project_path(self.project_id) / "tasks" / (task_id + ".json")
+        ).exists():
+            raise WorkspaceError(
+                "This submission has already been received. Reopen the conversation to inspect its outcome.",
+                "duplicate_submission",
+            )
         task = {
-            "task_id": uuid4().hex,
+            "task_id": task_id,
             "document_id": original["document_id"],
             "conversation_id": state["conversation"]["conversation_id"],
             "base_revision_id": original.get("revision_id"),
             "status": "running",
             "prompt": prompt,
-            "attachments": images,
             "submitted_selection": copy.deepcopy(params.get("selection")),
             "started_at": time.time(),
             "model": model,
             "provider_account": account_id,
         }
-        tools = TaskTools(self, self.document, original, task["submitted_selection"], self.project_id, task["task_id"])
+        tools = TaskTools(
+            self,
+            self.document,
+            original,
+            task["submitted_selection"],
+            self.project_id,
+            task["task_id"],
+        )
         tools.viewport = viewport
-        tools.references = images
-        tools.allow_images = params.get("authorize_image_billing") is True
         task["viewport"] = viewport
         task["submitted_selection"] = tools.selection
         conversation = state["conversation"]
@@ -334,7 +479,6 @@ class WorkspaceV2(Workspace):
                 "role": "user",
                 "content": prompt,
                 "selection": tools.selection,
-                "attachments": images,
                 "task_id": task["task_id"],
             }
         )
@@ -343,12 +487,17 @@ class WorkspaceV2(Workspace):
             conversation["title"] = prompt[:60]
         self.projects.save_conversation(self.project_id, conversation)
         self.projects.task(self.project_id, task)
-        bridge = ToolBridge(tools)
+        self.active_task = task
+        bridge = None
         self.task_deadline = time.monotonic() + 600
         self.document.journal(
-            "running", action="codex", task_id=task["task_id"], base_revision_id=original.get("revision_id")
+            "running",
+            action="codex",
+            task_id=task["task_id"],
+            base_revision_id=original.get("revision_id"),
         )
         try:
+            bridge = ToolBridge(tools)
             source_root = Path(__file__).resolve().parents[2]
             # Use the real interpreter, avoiding the Windows venv launcher process.
             python = getattr(sys, "_base_executable", sys.executable)
@@ -371,7 +520,11 @@ class WorkspaceV2(Workspace):
                 {
                     "stage": "connecting",
                     "message": "Starting Codex App Server · "
-                    + ("ChatGPT plan" if account["mode"] == "chatgpt" else "API billing"),
+                    + (
+                        "ChatGPT plan"
+                        if account["mode"] == "chatgpt"
+                        else "API billing"
+                    ),
                 }
             )
             self.runtime = CodexAppServer(
@@ -382,7 +535,9 @@ class WorkspaceV2(Workspace):
                 mcp,
             )
             session = (
-                conversation.get("provider_session") if conversation.get("provider_account") == account_id else None
+                conversation.get("provider_session")
+                if conversation.get("provider_account") == account_id
+                else None
             )
             resuming = bool(session)
             try:
@@ -402,45 +557,67 @@ class WorkspaceV2(Workspace):
             self.projects.save_conversation(self.project_id, conversation)
             context = json.dumps(tools.context(), allow_nan=False)
             if not resuming:
-                history = "\n".join(m["role"] + ": " + m["content"] for m in conversation["messages"][:-1][-20:])[
-                    -24000:
-                ]
-                context += "\nPrior local conversation (context data, may reference older revisions):\n" + history
-            text = "Current application state (fresh for this turn):\n" + context + "\n\nUser request:\n" + prompt
+                history = "\n".join(
+                    m["role"] + ": " + m["content"]
+                    for m in conversation["messages"][:-1][-20:]
+                )[-24000:]
+                context += (
+                    "\nPrior local conversation (context data, may reference older revisions):\n"
+                    + history
+                )
+            text = (
+                "Current application state (fresh for this turn):\n"
+                + context
+                + "\n\nUser request:\n"
+                + prompt
+            )
             message = self.runtime.run(
                 text,
                 model,
                 self.cancelled,
                 self.notify,
-                [r["path"] for r in images] + ([viewport["path"]] if viewport else []),
+                [viewport["path"]] if viewport else [],
                 timeout=max(1, self.task_deadline - time.monotonic()),
             )
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
             if tools.commands:
                 self.notify(
-                    {"stage": "verifying", "message": "Checking resulting solids, export and unrelated components."}
+                    {
+                        "stage": "verifying",
+                        "message": "Checking resulting solids, export and unrelated components.",
+                    }
                 )
-                report = tools.call("cad_validate", {"candidate_id": tools.candidate_id})
+                report = tools.call(
+                    "cad_validate", {"candidate_id": tools.candidate_id}
+                )
                 tools.candidate["verification"] = report
                 tools.candidate["task_id"] = task["task_id"]
-                self.document.commit(
-                    tools.candidate,
-                    original.get("revision_id"),
-                    summary=message[:3000] or "Codex CAD task",
-                    commands=tools.commands,
-                )
+                with self.acceptance_lock:
+                    if self.cancelled.is_set():
+                        raise WorkspaceError(
+                            "Task cancelled before acceptance.", "cancelled"
+                        )
+                    self.document.commit(
+                        tools.candidate,
+                        original.get("revision_id"),
+                        summary=message[:3000] or "Codex CAD task",
+                        commands=tools.commands,
+                    )
                 task.update(
                     result_revision_id=self.document.current()["revision_id"],
                     validation=report,
                     affected_components=[
                         p["instance_id"]
                         for p in tools.candidate["components"]
-                        if fingerprint(original).get(p["instance_id"]) != fingerprint(tools.candidate)[p["instance_id"]]
+                        if fingerprint(original).get(p["instance_id"])
+                        != fingerprint(tools.candidate)[p["instance_id"]]
                     ],
                 )
             if not tools.commands:
-                message += "\n\nApplication: no geometry revision was created by this turn."
+                message += (
+                    "\n\nApplication: no geometry revision was created by this turn."
+                )
             task.update(
                 status="completed" if tools.commands else "completed_no_change",
                 message=message,
@@ -450,114 +627,52 @@ class WorkspaceV2(Workspace):
                 {
                     "role": "assistant",
                     "content": message,
+                    "activity": task.get("activity", []),
                     "task_id": task["task_id"],
                     "change": {
-                        k: task[k] for k in ("result_revision_id", "validation", "affected_components") if k in task
+                        k: task[k]
+                        for k in (
+                            "result_revision_id",
+                            "validation",
+                            "affected_components",
+                        )
+                        if k in task
                     },
                 }
             )
             self.document.journal("completed", task_id=task["task_id"])
         except Exception as error:
             task.update(
-                status="cancelled" if self.cancelled.is_set() else "failed",
+                status="cancelled"
+                if self.cancelled.is_set()
+                else "usage_limit"
+                if getattr(error, "code", "") == "usage_limit"
+                else "failed",
                 message=str(error),
                 completed_at=time.time(),
             )
-            conversation["messages"].append({"role": "system", "content": str(error), "task_id": task["task_id"]})
+            conversation["messages"].append(
+                {"role": "system", "content": str(error), "task_id": task["task_id"]}
+            )
             self.document.journal(task["status"], task_id=task["task_id"])
             raise
         finally:
-            tools.closed = True
-            bridge.close()
+            with tools.lock:
+                tools.closed = True
+            if bridge:
+                bridge.close()
             if self.runtime:
                 self.runtime.close()
                 self.runtime = None
             self.projects.task(self.project_id, task)
             self.projects.save_conversation(self.project_id, conversation)
             self.task_deadline = None
-        return {**self.state(), "task": task}
-
-    def reconstruct_image(self, reference, target_size_mm, parent_task_id=None, resume=None):
-        references = (self.projects.project_path(self.project_id) / "references").resolve()
-        if not Path(reference["path"]).resolve().is_relative_to(references):
-            raise WorkspaceError("Attach the reference image through the application first.")
-        self.projects.check_reference(reference)
-        with self.connections.vault.lock:
-            key = self.connections.vault.read().get("tripo_key")
-        if not key:
-            raise WorkspaceError(
-                "Connect a user-supplied Tripo key in Account settings. This uses separate API credits.",
-                "image_not_connected",
-            )
-        from .image_backend import Tripo
-
-        task_id = uuid4().hex
-        source = self.document.folder / "source" / (task_id + ".glb")
-        record_path = self.projects.project_path(self.project_id) / "tasks" / (task_id + ".json")
-        context = {
-            "task_id": task_id,
-            "parent_task_id": parent_task_id,
-            "document_id": self.document.index()["document_id"],
-            "conversation_id": self.projects.conversation(self.project_id)["conversation_id"],
-        }
-        generation = Tripo(key, self.cancelled, self.notify).generate(
-            reference, target_size_mm, source, record_path, resume=resume, context=context
-        )
-        candidate = self.geometry(
-            "import_mesh", {"project_dir": str(self.document.folder), "path": str(source), "mm_per_unit": 1}
-        )
-        bounds = [p["metrics"]["bounds_mm"] for p in candidate["components"]]
-        largest = max(max(b[1][axis] for b in bounds) - min(b[0][axis] for b in bounds) for axis in range(3))
-        candidate = self.geometry(
-            "scale_mesh_scene",
-            {"project_dir": str(self.document.folder), "snapshot": candidate, "factor": target_size_mm / largest},
-        )
-        generation.update(original_glb="source/" + source.name, status="candidate")
-        self.projects.task(self.project_id, generation)
-        return candidate, generation
-
-    def generate_image(self, params):
-        if params.get("authorize_separate_billing") is not True:
-            raise WorkspaceError(
-                "Image reconstruction requires an explicit choice to use separately billed Tripo credits."
-            )
-        if not self.project_id:
-            raise WorkspaceError("Create a project before image reconstruction.")
-        original = self.state()["document"]
-        if original.get("revision_id") != params.get("base_revision_id"):
-            raise WorkspaceError("The document changed before generation.", "revision_conflict")
-        self.task_deadline = time.monotonic() + 600
-        try:
-            generated, generation = self.reconstruct_image(params["reference"], params["target_size_mm"])
-            candidate = copy.deepcopy(original)
-            candidate["components"].extend(generated["components"])
-            candidate.setdefault("image_generations", []).append(generation)
-            self.verify(self.document, candidate)
-            self.document.commit(
-                candidate,
-                original.get("revision_id"),
-                summary="Image reconstruction · approximate visual mesh",
-                commands=[{"type": "image_generation", "task_id": generation["task_id"]}],
-            )
-            generation.update(
-                status="completed",
-                result_revision_id=self.document.current()["revision_id"],
-                base_revision_id=original.get("revision_id"),
-            )
-            self.projects.task(self.project_id, generation)
-            conversation = self.projects.conversation(self.project_id)
-            conversation["tasks"].append(generation["task_id"])
-            conversation["messages"].append(
+            self.emit(
                 {
-                    "role": "assistant",
-                    "content": "Created an approximate visual mesh from the attached image. Longest dimension: "
-                    + str(params["target_size_mm"])
-                    + " mm (user supplied). Other dimensions and hidden geometry are inferred. Tripo credits are separate from Codex usage.",
-                    "attachments": [params["reference"]],
-                    "task_id": generation["task_id"],
+                    "stage": "task_state",
+                    "state": task["status"],
+                    "message": task.get("message", "")[:300],
                 }
             )
-            self.projects.save_conversation(self.project_id, conversation)
-            return {**self.state(), "image_task": generation}
-        finally:
-            self.task_deadline = None
+            self.active_task = None
+        return {**self.state(), "task": task}

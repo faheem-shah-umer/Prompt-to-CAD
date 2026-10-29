@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--open")
     args = parser.parse_args()
-    executable = ROOT / ".native-build/PromptToCAD.exe"
+    executable = ROOT / ".native-build/bin/PromptToCAD.exe"
     if not executable.exists():
         raise RuntimeError("Build the native app first: .venv\\Scripts\\python.exe tools\\build_native.py")
     qt = Path(os.getenv("CAD_QT_PREFIX", str(Path.home() / "anaconda3/envs/occenv/Library")))

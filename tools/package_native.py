@@ -17,11 +17,8 @@ from tools.build_native import ROOT, build_environment
 def dependency_closure():
     pending = [
         "cadquery",
-        "fastapi",
         "pydantic",
-        "uvicorn",
         "httpx",
-        "python-dotenv",
         "PyJWT",
         "cryptography",
         "trimesh",
@@ -81,7 +78,7 @@ def copy_python(destination):
 
 def copy_native(destination, qt, occt, env):
     destination.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / ".native-build/PromptToCAD.exe", destination)
+    shutil.copy2(ROOT / ".native-build/bin/PromptToCAD.exe", destination)
     plugins = destination / "plugins/platforms"
     plugins.mkdir(parents=True, exist_ok=True)
     shutil.copy2(qt / "lib/qt6/plugins/platforms/qwindows.dll", plugins)
@@ -123,7 +120,7 @@ def copy_native(destination, qt, occt, env):
 
 def copy_sources(destination):
     app = destination / "app"
-    for module in ("app", "native", "v2"):
+    for module in ("native", "v2"):
         shutil.copytree(
             ROOT / "backend" / module,
             app / "backend" / module,
@@ -131,12 +128,11 @@ def copy_sources(destination):
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
     shutil.copy2(ROOT / "backend/__init__.py", app / "backend/__init__.py")
-    shutil.copy2(ROOT / "backend/.env.example", app / "backend/.env.example")
     shutil.copytree(ROOT / "examples", app / "examples", dirs_exist_ok=True)
     (app / "tmp").mkdir(exist_ok=True)
     shutil.copytree(ROOT / "docs", destination / "docs", dirs_exist_ok=True)
     (destination / "README.md").write_text(
-        "# Prompt to CAD V2\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Account. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/v2-workspace.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n",
+        "# Prompt to CAD V2\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n",
         encoding="utf-8",
     )
     source = destination / "source"
@@ -150,7 +146,9 @@ def copy_sources(destination):
             ".env*", "__pycache__", "*.pyc", "*.dpapi", "auth.json", "credentials*", "*.key", "*.pem"
         ),
     )
-    for name in ("requirements-v2.txt", "native-app.py"):
+    for obsolete in (app / "backend/v2/image_backend.py", source / "backend/v2/image_backend.py"):
+        obsolete.unlink(missing_ok=True)
+    for name in ("requirements.txt", "requirements-dev.txt", "native-app.py"):
         shutil.copy2(ROOT / name, source / name)
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(ROOT / name, destination / name)
@@ -182,7 +180,7 @@ def installer(bundle, compiler, output):
         'WriteUninstaller "$INSTDIR\\Uninstall.exe"',
         'CreateShortcut "$SMPROGRAMS\\Prompt to CAD V2.lnk" "$INSTDIR\\bin\\PromptToCAD.exe"',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayName" "Prompt to CAD V2"',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayVersion" "0.3.0"',
+        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayVersion" "0.4.0"',
         'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "UninstallString" \'"$INSTDIR\\Uninstall.exe"\'',
         "SectionEnd",
         'Section "Uninstall"',
@@ -204,7 +202,7 @@ def installer(bundle, compiler, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=ROOT / "dist-native/PromptToCAD-V2-0.3.0")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist-native/PromptToCAD-V2-0.4.0")
     parser.add_argument(
         "--qt-prefix",
         type=Path,
@@ -257,7 +255,7 @@ def main():
     (bundle / "runtime-manifest.json").write_text(
         json.dumps(
             {
-                "version": "0.3.0",
+                "version": "0.4.0",
                 "python": platform.python_version(),
                 "native": {"qt": qt_version, "occt": "7.8.1"},
                 "packages": packages,
@@ -299,11 +297,11 @@ def main():
                 raise RuntimeError(
                     "Credential material must not be present in a distribution: " + str(path.relative_to(bundle))
                 )
-        for name in ("native-smoke-report.json", "native-workspace.png", "native-viewport.png"):
+        for name in ("native-smoke-report.json", "native-workspace.png", "native-viewport.png", "native-settings.png"):
             (bundle / "app/tmp" / name).unlink(missing_ok=True)
         print("Packaged application passed with only Windows System32 on PATH.", flush=True)
     if args.installer:
-        installer(bundle, args.installer, bundle.parent / "PromptToCAD-V2-0.3.0-Setup.exe")
+        installer(bundle, args.installer, bundle.parent / "PromptToCAD-V2-0.4.0-Setup.exe")
     print(bundle, flush=True)
 
 

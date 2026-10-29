@@ -15,8 +15,9 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 import httpx
+
+from backend.native.project_lock import revision_lock
 from backend.native.contracts import WorkspaceError
-from backend.app.project_lock import revision_lock
 
 APP_NAME = "Prompt to CAD V2"
 AUTH = "https://auth.openai.com"
@@ -26,17 +27,26 @@ SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use
 
 def request_json(method, url, **kwargs):
     try:
-        with httpx.Client(timeout=30, trust_env=False, follow_redirects=False) as client:
+        with httpx.Client(
+            timeout=30, trust_env=False, follow_redirects=False
+        ) as client:
             response = client.request(method, url, **kwargs)
         if response.status_code >= 400:
             code = "provider_error"
             try:
                 error = response.json().get("error", {})
-                code = error.get("code", error.get("type", code)) if isinstance(error, dict) else error
+                code = (
+                    error.get("code", error.get("type", code))
+                    if isinstance(error, dict)
+                    else error
+                )
             except (ValueError, AttributeError):
                 pass
             code = code if isinstance(code, str) else "provider_error"
             safe_codes = {
+                "invalid_api_key",
+                "authentication_error",
+                "permission_denied",
                 "invalid_grant",
                 "invalid_client",
                 "insufficient_quota",
@@ -57,7 +67,13 @@ def request_json(method, url, **kwargs):
                 "chatpass_v2_scope_not_authorized",
                 "chatpass_v2_invalid_authorization_context",
             }
-            label = code if code in safe_codes else "provider_error"
+            label = (
+                code
+                if code in safe_codes
+                else "authorization_required"
+                if response.status_code == 401
+                else "provider_error"
+            )
             error = WorkspaceError(
                 f"Provider returned HTTP {response.status_code} ({label}). Check the connected account, model or usage. Billing was not changed.",
                 label,
@@ -68,7 +84,8 @@ def request_json(method, url, **kwargs):
         return response.json() if response.content else {}
     except httpx.HTTPError:
         raise WorkspaceError(
-            "Cannot reach the provider. Check the network and try again.", "provider_network"
+            "Cannot reach the provider. Check the network and try again.",
+            "provider_network",
         ) from None
 
 
@@ -83,12 +100,16 @@ class Vault:
     def protect(data, decrypt=False):
         if os.name != "nt":
             raise WorkspaceError(
-                "This build requires Windows DPAPI for credential storage.", "credential_store_unavailable"
+                "This build requires Windows DPAPI for credential storage.",
+                "credential_store_unavailable",
             )
         from ctypes import wintypes
 
         class Blob(ctypes.Structure):
-            _fields_ = [("size", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_ubyte))]
+            _fields_ = [
+                ("size", wintypes.DWORD),
+                ("data", ctypes.POINTER(ctypes.c_ubyte)),
+            ]
 
         buffer = ctypes.create_string_buffer(data)
         source = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
@@ -108,9 +129,12 @@ class Vault:
         function.restype = wintypes.BOOL
         kernel.LocalFree.argtypes = [ctypes.c_void_p]
         kernel.LocalFree.restype = ctypes.c_void_p
-        if not function(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(result)):
+        if not function(
+            ctypes.byref(source), None, None, None, None, 1, ctypes.byref(result)
+        ):
             raise WorkspaceError(
-                "Windows could not unlock the application credential store.", "credential_store_unavailable"
+                "Windows could not unlock the application credential store.",
+                "credential_store_unavailable",
             )
         try:
             return ctypes.string_at(result.data, result.size)
@@ -119,7 +143,11 @@ class Vault:
 
     def read(self):
         if not self.path.exists():
-            return {"accounts": {}, "active": None, "host_id": "urn:uuid:" + str(uuid4())}
+            return {
+                "accounts": {},
+                "active": None,
+                "host_id": "urn:uuid:" + str(uuid4()),
+            }
         return json.loads(self.protect(self.path.read_bytes(), decrypt=True))
 
     def write(self, data):
@@ -144,6 +172,8 @@ class Connections:
         self.last_error = ""
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
+            if "tripo_key" in data:
+                data.pop("tripo_key")
             self.vault.write(data)
 
     def status(self):
@@ -177,6 +207,13 @@ class Connections:
             "accounts": accounts,
             "active": active,
             "signing_in": self.pending is not None,
+            "state": "connecting"
+            if self.pending
+            else "ready"
+            if active
+            and active["connected"]
+            and (active["connection"] == "api" or active["plan_enabled"])
+            else "disconnected",
             "error": self.last_error,
             "billing": billing,
             "usage": {
@@ -189,7 +226,9 @@ class Connections:
     def begin(self, account_id=None):
         with self.lock:
             if self.pending:
-                raise WorkspaceError("A sign-in is already in progress.", "sign_in_pending")
+                raise WorkspaceError(
+                    "A sign-in is already in progress.", "sign_in_pending"
+                )
             with self.vault.lock:
                 data = self.vault.read()
             old = data["accounts"].get(account_id) if account_id else None
@@ -205,18 +244,28 @@ class Connections:
                 def do_GET(self):
                     uri = urlsplit(self.path)
                     query = parse_qs(uri.query)
-                    if uri.path != "/auth/callback" or not hmac.compare_digest(query.get("state", [""])[0], state):
+                    if uri.path != "/auth/callback" or not hmac.compare_digest(
+                        query.get("state", [""])[0], state
+                    ):
                         self.send_error(400, "Invalid authorization callback")
                         return
                     try:
                         if "error" in query:
                             raise WorkspaceError(
-                                "Authorization was declined. Plan use requires consent.", "access_denied"
+                                "Authorization was declined. Plan use requires consent.",
+                                "access_denied",
                             )
-                        issued = query.get("client_id", [old["client_id"] if old else ""])[0]
-                        if not issued or issued == "dynamic_agent_client" or (old and issued != old["client_id"]):
+                        issued = query.get(
+                            "client_id", [old["client_id"] if old else ""]
+                        )[0]
+                        if (
+                            not issued
+                            or issued == "dynamic_agent_client"
+                            or (old and issued != old["client_id"])
+                        ):
                             raise WorkspaceError(
-                                "The authorization registration does not match this attempt.", "invalid_client"
+                                "The authorization registration does not match this attempt.",
+                                "invalid_client",
                             )
                         tokens = request_json(
                             "POST",
@@ -230,7 +279,9 @@ class Connections:
                                 "resource": RESOURCE,
                             },
                         )
-                        enabled = owner.complete(tokens, issued, nonce, old, attempt=server)
+                        enabled = owner.complete(
+                            tokens, issued, nonce, old, attempt=server
+                        )
                         message = (
                             "Connected. You can return to Prompt to CAD V2."
                             if enabled
@@ -266,7 +317,9 @@ class Connections:
                 "state": state,
                 "nonce": nonce,
                 "code_challenge_method": "S256",
-                "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+                "code_challenge": base64.urlsafe_b64encode(
+                    hashlib.sha256(verifier.encode()).digest()
+                )
                 .rstrip(b"=")
                 .decode(),
             }
@@ -294,7 +347,11 @@ class Connections:
                     server.shutdown()
 
             threading.Thread(target=expire, daemon=True).start()
-            return {"authorization_url": AUTH + "/api/accounts/authorize?" + urlencode(query)}
+            return {
+                "authorization_url": AUTH
+                + "/api/accounts/authorize?"
+                + urlencode(query)
+            }
 
     def complete(self, tokens, issued, nonce, old=None, attempt=None):
         import jwt
@@ -317,8 +374,12 @@ class Connections:
             audience=issued,
             options={"require": ["exp", "iat", "sub", "nonce"]},
         )
-        if not hmac.compare_digest(claims["nonce"], nonce) or (old and claims["sub"] != old["subject"]):
-            raise WorkspaceError("The signed-in identity does not match this authorization attempt.")
+        if not hmac.compare_digest(claims["nonce"], nonce) or (
+            old and claims["sub"] != old["subject"]
+        ):
+            raise WorkspaceError(
+                "The signed-in identity does not match this authorization attempt."
+            )
         scopes = tokens.get("scope", "").split()
         record = {
             "mode": "chatgpt",
@@ -330,10 +391,14 @@ class Connections:
             "expires_at": time.time() + tokens["expires_in"],
             **{k: tokens[k] for k in ("access_token", "refresh_token", "id_token")},
         }
-        key_id = hashlib.sha256((claims["sub"] + ":" + issued).encode()).hexdigest()[:24]
+        key_id = hashlib.sha256((claims["sub"] + ":" + issued).encode()).hexdigest()[
+            :24
+        ]
         with self.lock, self.vault.lock, revision_lock(self.vault.folder):
             if attempt is not None and self.pending is not attempt:
-                raise WorkspaceError("This sign-in attempt was cancelled or expired.", "cancelled")
+                raise WorkspaceError(
+                    "This sign-in attempt was cancelled or expired.", "cancelled"
+                )
             data = self.vault.read()
             data["accounts"][key_id] = record
             data["active"] = key_id
@@ -350,9 +415,15 @@ class Connections:
     def api_key(self, key):
         if not isinstance(key, str) or len(key.strip()) < 20:
             raise WorkspaceError("Enter a valid user-supplied API key.")
+        # Validate credentials without inference or spending model tokens before saving.
+        request_json(
+            "GET",
+            RESOURCE + "/models",
+            headers={"Authorization": "Bearer " + key.strip()},
+        )
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
-            key_id = "api-" + uuid4().hex[:12]
+            key_id = "api-" + hashlib.sha256(key.strip().encode()).hexdigest()[:12]
             data["accounts"][key_id] = {
                 "mode": "api",
                 "api_key": key.strip(),
@@ -375,14 +446,26 @@ class Connections:
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
             account = data["accounts"].get(data["active"])
-            if not account or not (account.get("access_token") or account.get("api_key")):
-                raise WorkspaceError("Connect your own ChatGPT plan or API key in Account settings.", "not_connected")
-            if account["mode"] == "chatgpt" and "chatgpt.tokens.use.direct" not in account.get("scopes", []):
+            if not account or not (
+                account.get("access_token") or account.get("api_key")
+            ):
+                raise WorkspaceError(
+                    "Connect your own ChatGPT plan or API key in Account settings.",
+                    "not_connected",
+                )
+            if account[
+                "mode"
+            ] == "chatgpt" and "chatgpt.tokens.use.direct" not in account.get(
+                "scopes", []
+            ):
                 raise WorkspaceError(
                     "This identity has not authorized ChatGPT plan use. Reconnect and enable plan usage.",
                     "plan_permission_missing",
                 )
-            if account["mode"] == "chatgpt" and account["expires_at"] <= time.time() + 90:
+            if (
+                account["mode"] == "chatgpt"
+                and account["expires_at"] <= time.time() + 90
+            ):
                 try:
                     tokens = request_json(
                         "POST",
@@ -414,10 +497,19 @@ class Connections:
                 scopes = tokens.get("scope", " ".join(account["scopes"])).split()
                 if "chatgpt.tokens.use.direct" not in scopes:
                     raise WorkspaceError(
-                        "Plan permission was revoked. Reconnect this account.", "plan_permission_missing"
+                        "Plan permission was revoked. Reconnect this account.",
+                        "plan_permission_missing",
                     )
-                account.update({k: tokens[k] for k in ("access_token", "refresh_token", "id_token") if k in tokens})
-                account.update(expires_at=time.time() + tokens["expires_in"], scopes=scopes)
+                account.update(
+                    {
+                        k: tokens[k]
+                        for k in ("access_token", "refresh_token", "id_token")
+                        if k in tokens
+                    }
+                )
+                account.update(
+                    expires_at=time.time() + tokens["expires_in"], scopes=scopes
+                )
                 self.vault.write(data)
             return data["active"], dict(account)
 
@@ -426,17 +518,28 @@ class Connections:
         response = request_json(
             "GET",
             RESOURCE + "/models",
-            headers={"Authorization": "Bearer " + account.get("access_token", account.get("api_key", ""))},
+            headers={
+                "Authorization": "Bearer "
+                + account.get("access_token", account.get("api_key", ""))
+            },
         )
         if account["mode"] == "chatgpt":
             models = [
-                {"id": m["slug"], "name": m.get("display_name", m["slug"]), "access": "Not yet verified by inference"}
+                {
+                    "id": m["slug"],
+                    "name": m.get("display_name", m["slug"]),
+                    "access": "Not yet verified by inference",
+                }
                 for m in response.get("models", [])
                 if m.get("visibility") == "list"
             ]
         else:
             models = [
-                {"id": m["id"], "name": m["id"], "access": "Catalogue entry; inference not verified"}
+                {
+                    "id": m["id"],
+                    "name": m["id"],
+                    "access": "Catalogue entry; inference not verified",
+                }
                 for m in response.get("data", [])
             ]
         return {"models": models, "billing": self.status()["billing"]}
@@ -446,11 +549,20 @@ class Connections:
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
             account = data["accounts"].get(data["active"])
-            if account and account["mode"] == "chatgpt" and account.get("refresh_token"):
+            if (
+                account
+                and account["mode"] == "chatgpt"
+                and account.get("refresh_token")
+            ):
                 try:
-                    discovery = request_json("GET", AUTH + "/.well-known/openid-configuration")
+                    discovery = request_json(
+                        "GET", AUTH + "/.well-known/openid-configuration"
+                    )
                     endpoint = discovery["revocation_endpoint"]
-                    if urlsplit(endpoint).hostname != "auth.openai.com" or urlsplit(endpoint).scheme != "https":
+                    if (
+                        urlsplit(endpoint).hostname != "auth.openai.com"
+                        or urlsplit(endpoint).scheme != "https"
+                    ):
                         raise ValueError()
                     request_json(
                         "POST",

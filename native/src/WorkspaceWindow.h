@@ -1,8 +1,10 @@
 #pragma once
-#include <QMainWindow>
-#include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
+#include <QMainWindow>
+#include <QPointer>
+class QDialog;
 #include "RpcClient.h"
 class CadView;
 class QSplitter;
@@ -39,7 +41,6 @@ class WorkspaceWindow : public QMainWindow {
     void account();
     void discoverModels();
     void submit();
-    void attach();
     void select(const QJsonObject &);
     void operation(const QString &);
     void applyOperation();
@@ -56,15 +57,18 @@ class WorkspaceWindow : public QMainWindow {
     QTextBrowser *chat, *properties;
     QPlainTextEdit *composer;
     QPushButton *sendButton, *stopButton, *selectionChip, *accountBadge;
-    QLabel *activity, *title, *saved, *attachmentLabel;
+    QLabel *activity, *title, *saved, *conversationTitle, *taskActivity;
+    QPlainTextEdit *taskLog;
+    QPointer<QDialog> settingsDialog;
+    QString activeTaskId;
     QComboBox *models, *selectionMode;
-    QCheckBox *imageBilling;
     QLineEdit *search, *treeFilter;
     QFormLayout *operationForm;
     QList<QDoubleSpinBox *> fields;
     QAction *undoAction, *redoAction;
     QJsonObject state, document, selected, operationSelection;
-    QJsonArray attachments;
     QString workspace, currentOperation;
+    bool settingsVerified = false;
+    int settingsSaves = 0;
     bool busy = false, smoke = false, viewerFailed = false, loading = false;
 };

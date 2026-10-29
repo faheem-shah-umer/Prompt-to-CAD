@@ -7,12 +7,18 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
-from backend.native.contracts import Command, WorkspaceError
 from pydantic import TypeAdapter
+
+from backend.native.contracts import Command, WorkspaceError
 
 
 def schema(properties=None, required=()):
-    return {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": properties or {},
+        "required": list(required),
+        "additionalProperties": False,
+    }
 
 
 ENTITY = schema(
@@ -40,7 +46,9 @@ def inline_schema(value):
             return node
         if "$ref" in node:
             return expand(definitions[node["$ref"].split("/")[-1]])
-        return {k: expand(v) for k, v in node.items() if k not in ("$defs", "discriminator")}
+        return {
+            k: expand(v) for k, v in node.items() if k not in ("$defs", "discriminator")
+        }
 
     return expand(value)
 
@@ -50,26 +58,16 @@ TOOLS = [
         "name": "cad_definition",
         "description": "Read a component’s available editable recipe or retained CAD script and named parameters. Imported solids/meshes may have no original feature history.",
         "inputSchema": schema(
-            {"candidate_id": TOKEN, "instance_id": {"type": "string"}}, ["candidate_id", "instance_id"]
-        ),
-    },
-    {
-        "name": "cad_image_generate",
-        "description": "Reconstruct an approximate visual mesh with Tripo v3. Requires explicit per-task separate-billing authorization and a frozen attached image. Supply the user-agreed longest dimension in mm. Hidden geometry remains inferred. Result is a candidate until validation and turn completion.",
-        "inputSchema": schema(
-            {
-                "candidate_id": TOKEN,
-                "reference_asset_id": {"type": "string"},
-                "target_size_mm": {"type": "number", "minimum": 0.1, "maximum": 100000},
-            },
-            ["candidate_id", "reference_asset_id", "target_size_mm"],
+            {"candidate_id": TOKEN, "instance_id": {"type": "string"}},
+            ["candidate_id", "instance_id"],
         ),
     },
     {
         "name": "cad_measure",
         "description": "Measure minimum clearance and centre distance between two current entities in assembly/world mm.",
         "inputSchema": schema(
-            {"candidate_id": TOKEN, "first": ENTITY, "second": ENTITY}, ["candidate_id", "first", "second"]
+            {"candidate_id": TOKEN, "first": ENTITY, "second": ENTITY},
+            ["candidate_id", "first", "second"],
         ),
     },
     {
@@ -99,7 +97,10 @@ TOOLS = [
         "name": "cad_apply",
         "description": "Apply one CAD command to candidate geometry. Inspect after changes. Failure leaves the previous candidate intact. Transform is in assembly/world axes; solid operations are body-local mm.",
         "inputSchema": schema(
-            {"candidate_id": TOKEN, "command": inline_schema(TypeAdapter(Command).json_schema())},
+            {
+                "candidate_id": TOKEN,
+                "command": inline_schema(TypeAdapter(Command).json_schema()),
+            },
             ["candidate_id", "command"],
         ),
     },
@@ -110,7 +111,10 @@ TOOLS = [
             {
                 "candidate_id": TOKEN,
                 "source": {"type": "string", "maxLength": 50000},
-                "parameters": {"type": "object", "additionalProperties": {"type": "number"}},
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number"},
+                },
                 "instance_id": {"type": "string"},
             },
             ["candidate_id", "source"],
@@ -127,14 +131,23 @@ TOOLS = [
 for tool in TOOLS:
     tool["annotations"] = {
         "readOnlyHint": tool["name"]
-        in ("cad_context", "cad_definition", "cad_inspect", "cad_measure", "cad_viewport", "cad_validate"),
+        in (
+            "cad_context",
+            "cad_definition",
+            "cad_inspect",
+            "cad_measure",
+            "cad_viewport",
+            "cad_validate",
+        ),
         "destructiveHint": False,
-        "openWorldHint": tool["name"] == "cad_image_generate",
+        "openWorldHint": False,
     }
 
 
 def fingerprint(snapshot):
-    return {p["instance_id"]: (p["asset_hash"], p["matrix"]) for p in snapshot["components"]}
+    return {
+        p["instance_id"]: (p["asset_hash"], p["matrix"]) for p in snapshot["components"]
+    }
 
 
 class TaskTools:
@@ -148,27 +161,41 @@ class TaskTools:
         self.commands = []
         self.lock = threading.RLock()
         self.closed = False
-        self.references = []
-        self.allow_images = False
-        self.image_attempted = False
         self.scope = selection["instance_id"] if selection else None
         if selection:
             if (
                 selection.get("revision_id") != snapshot.get("revision_id")
-                or selection.get("document_id", snapshot["document_id"]) != snapshot["document_id"]
+                or selection.get("document_id", snapshot["document_id"])
+                != snapshot["document_id"]
             ):
-                raise WorkspaceError("Selection is stale. Select the part in the current revision.", "stale_selection")
-            part = next((p for p in snapshot["components"] if p["instance_id"] == self.scope), None)
+                raise WorkspaceError(
+                    "Selection is stale. Select the part in the current revision.",
+                    "stale_selection",
+                )
+            part = next(
+                (p for p in snapshot["components"] if p["instance_id"] == self.scope),
+                None,
+            )
             if not part:
-                raise WorkspaceError("The selected component is missing.", "stale_selection")
+                raise WorkspaceError(
+                    "The selected component is missing.", "stale_selection"
+                )
             kind = selection.get("kind", "body")
             count = part["topology"].get(
-                {"face": "faces", "edge": "edges", "vertex": "vertices", "region": "triangles"}.get(kind, ""), 0
+                {
+                    "face": "faces",
+                    "edge": "edges",
+                    "vertex": "vertices",
+                    "region": "triangles",
+                }.get(kind, ""),
+                0,
             )
             if kind not in ("body", "face", "edge", "vertex", "region") or (
                 kind != "body" and not 1 <= selection.get("index", 0) <= count
             ):
-                raise WorkspaceError("The selected topology reference is invalid.", "stale_selection")
+                raise WorkspaceError(
+                    "The selected topology reference is invalid.", "stale_selection"
+                )
             if kind == "region":
                 indices = selection.get("triangle_indices", [selection["index"]])
                 if (
@@ -176,7 +203,9 @@ class TaskTools:
                     or not indices
                     or any(type(i) != int or not 1 <= i <= count for i in indices)
                 ):
-                    raise WorkspaceError("The submitted mesh region is invalid.", "stale_selection")
+                    raise WorkspaceError(
+                        "The submitted mesh region is invalid.", "stale_selection"
+                    )
             self.selection.update(
                 project_id=project_id,
                 document_id=snapshot["document_id"],
@@ -187,11 +216,20 @@ class TaskTools:
                 measurements=part["metrics"],
             )
             if kind != "body":
-                description = self.geometry("inspect", instance_id=self.scope, offset=selection["index"] - 1, limit=1)[
-                    "components"
-                ][0]
+                description = self.geometry(
+                    "inspect",
+                    instance_id=self.scope,
+                    offset=selection["index"] - 1,
+                    limit=1,
+                )["components"][0]
                 entries = description.get(
-                    {"face": "faces", "edge": "edges", "vertex": "vertices", "region": "regions"}[kind], []
+                    {
+                        "face": "faces",
+                        "edge": "edges",
+                        "vertex": "vertices",
+                        "region": "regions",
+                    }[kind],
+                    [],
                 )
                 if entries:
                     entity = entries[0]
@@ -200,31 +238,43 @@ class TaskTools:
                     if point:
                         pose = part["matrix"]
                         self.selection["world_position_mm"] = [
-                            sum(pose[row * 4 + axis] * point[axis] for axis in range(3)) + pose[row * 4 + 3]
+                            sum(pose[row * 4 + axis] * point[axis] for axis in range(3))
+                            + pose[row * 4 + 3]
                             for row in range(3)
                         ]
 
     def geometry(self, method, **params):
         return self.workspace.geometry(
             method,
-            {"project_dir": str(self.document.folder), "snapshot": self.candidate, **params},
+            {
+                "project_dir": str(self.document.folder),
+                "snapshot": self.candidate,
+                **params,
+            },
             timeout=45 if method == "script" else None,
         )
 
     def scope_check(self, candidate):
         before, after = fingerprint(self.original), fingerprint(candidate)
         if self.scope:
-            additions = [p for p in candidate["components"] if p["instance_id"] not in before]
+            additions = [
+                p for p in candidate["components"] if p["instance_id"] not in before
+            ]
             allowed = all(
-                p.get("source_instance_id") == self.scope and p.get("representation") == "mesh" for p in additions
+                p.get("source_instance_id") == self.scope
+                and p.get("representation") == "mesh"
+                for p in additions
             )
             if (
                 not set(before) <= set(after)
                 or not allowed
-                or any(after[k] != value for k, value in before.items() if k != self.scope)
+                or any(
+                    after[k] != value for k, value in before.items() if k != self.scope
+                )
             ):
                 raise WorkspaceError(
-                    "The candidate changed an unrelated component. Nothing was accepted.", "scope_violation"
+                    "The candidate changed an unrelated component. Nothing was accepted.",
+                    "scope_violation",
                 )
         return {
             "passed": True,
@@ -243,7 +293,16 @@ class TaskTools:
             "assembly_nodes": self.candidate.get("assembly_nodes", []),
             "components": [
                 {
-                    **{k: p[k] for k in ("instance_id", "name", "metrics", "matrix", "topology")},
+                    **{
+                        k: p[k]
+                        for k in (
+                            "instance_id",
+                            "name",
+                            "metrics",
+                            "matrix",
+                            "topology",
+                        )
+                    },
                     "parent_id": p.get("parent_id"),
                     "body_id": p.get("definition_id"),
                     "representation": p.get("representation", "solid"),
@@ -251,8 +310,6 @@ class TaskTools:
                 }
                 for p in self.candidate["components"]
             ],
-            "reference_images": [{"asset_id": r["asset_id"], "name": r["name"]} for r in self.references],
-            "image_service_authorized": self.allow_images,
             "units": "mm",
             "rules": "Selection is frozen for this task. Reinspect after every successful write. Failed tools leave candidate unchanged. Changes are accepted only after final verification and successful provider completion.",
         }
@@ -271,66 +328,66 @@ class TaskTools:
                 return self.context()
             if params.get("candidate_id") != self.candidate_id:
                 raise WorkspaceError(
-                    "Candidate references are stale. Call cad_context and inspect again.", "stale_selection"
+                    "Candidate references are stale. Call cad_context and inspect again.",
+                    "stale_selection",
                 )
             if name == "cad_definition":
                 wanted = params["instance_id"]
-                part = next((p for p in self.candidate["components"] if p["instance_id"] == wanted), None)
+                part = next(
+                    (
+                        p
+                        for p in self.candidate["components"]
+                        if p["instance_id"] == wanted
+                    ),
+                    None,
+                )
                 if not part:
-                    raise WorkspaceError("The requested component is no longer present.", "stale_selection")
+                    raise WorkspaceError(
+                        "The requested component is no longer present.",
+                        "stale_selection",
+                    )
                 script = next(
-                    (d for d in reversed(self.candidate.get("scripts", [])) if wanted in d.get("part_ids", [])), None
+                    (
+                        d
+                        for d in reversed(self.candidate.get("scripts", []))
+                        if wanted in d.get("part_ids", [])
+                    ),
+                    None,
                 )
                 recipe = next(
-                    (d for d in self.candidate.get("recipe", {}).get("components", []) if d["id"] == wanted), None
+                    (
+                        d
+                        for d in self.candidate.get("recipe", {}).get("components", [])
+                        if d["id"] == wanted
+                    ),
+                    None,
                 )
                 return {
                     "candidate_id": self.candidate_id,
                     "instance_id": wanted,
                     "parameters": part.get("parameters", {}),
-                    "script": {k: script[k] for k in ("source", "parameters", "instance_id")} if script else None,
+                    "script": {
+                        k: script[k] for k in ("source", "parameters", "instance_id")
+                    }
+                    if script
+                    else None,
                     "recipe": recipe,
                     "original_feature_history": "Only retained app definitions are available; imported history is not reconstructed.",
                 }
-            if name == "cad_image_generate":
-                if not self.allow_images:
-                    raise WorkspaceError(
-                        "This task has no separate image-service billing authorization. Ask the user to enable it in the composer.",
-                        "image_billing_not_authorized",
-                    )
-                if self.scope:
-                    raise WorkspaceError(
-                        "Image reconstruction adds a new mesh. Start an unselected creation task.", "scope_violation"
-                    )
-                if self.image_attempted:
-                    raise WorkspaceError(
-                        "Only one separately billed image reconstruction is authorized per task. Start a new task for another generation.",
-                        "image_budget",
-                    )
-                reference = next((r for r in self.references if r["asset_id"] == params["reference_asset_id"]), None)
-                if not reference:
-                    raise WorkspaceError("Choose an image attached when this task was submitted.")
-                if len(self.commands) >= 32:
-                    raise WorkspaceError("The task reached its operation budget.")
-                self.image_attempted = True
-                generated, record = self.workspace.reconstruct_image(reference, params["target_size_mm"], self.task_id)
-                self.candidate["components"].extend(generated["components"])
-                self.candidate.setdefault("image_generations", []).append(record)
-                self.commands.append({"type": "image_generation", "task_id": record["task_id"]})
-                self.candidate_id = uuid4().hex
-                return {
-                    "candidate_id": self.candidate_id,
-                    "generation": record,
-                    "message": "Approximate mesh reconstructed; inspect and validate before completion.",
-                }
             if name == "cad_measure":
                 return {
-                    **self.geometry("measure", first=params["first"], second=params["second"]),
+                    **self.geometry(
+                        "measure", first=params["first"], second=params["second"]
+                    ),
                     "candidate_id": self.candidate_id,
                 }
             if name == "cad_inspect":
                 self.workspace.notify(
-                    {"stage": "inspecting", "message": "Inspecting " + params.get("instance_id", "document")}
+                    {
+                        "stage": "inspecting",
+                        "message": "Inspecting "
+                        + params.get("instance_id", "document"),
+                    }
                 )
                 return {
                     **self.geometry(
@@ -352,11 +409,19 @@ class TaskTools:
                 raise WorkspaceError("Unknown CAD capability.", "method_not_found")
             if len(self.commands) >= 32:
                 raise WorkspaceError(
-                    "The task reached its 32-operation budget. Finish or ask for a smaller task.", "operation_limit"
+                    "The task reached its 32-operation budget. Finish or ask for a smaller task.",
+                    "operation_limit",
                 )
-            target = params.get("instance_id") if name == "cad_script" else params["command"]["instance_id"]
+            target = (
+                params.get("instance_id")
+                if name == "cad_script"
+                else params["command"]["instance_id"]
+            )
             if self.scope and target != self.scope:
-                raise WorkspaceError("This task can only modify its submitted selection.", "scope_violation")
+                raise WorkspaceError(
+                    "This task can only modify its submitted selection.",
+                    "scope_violation",
+                )
             self.workspace.notify(
                 {
                     "stage": "modelling",
@@ -372,20 +437,27 @@ class TaskTools:
                     "mesh_separate",
                 ):
                     raise WorkspaceError(
-                        "A region-scoped task can only edit its selected triangles.", "scope_violation"
+                        "A region-scoped task can only edit its selected triangles.",
+                        "scope_violation",
                     )
                 requested = set(params["command"].get("triangle_indices", []))
-                submitted = set(self.selection.get("triangle_indices", [self.selection["index"]]))
+                submitted = set(
+                    self.selection.get("triangle_indices", [self.selection["index"]])
+                )
                 if not requested or not requested <= submitted:
                     raise WorkspaceError(
-                        "This operation targets triangles outside the submitted region.", "scope_violation"
+                        "This operation targets triangles outside the submitted region.",
+                        "scope_violation",
                     )
             if name == "cad_apply":
                 updated = self.geometry("apply", command=params["command"])
                 record = params["command"]
             else:
                 updated = self.geometry(
-                    "script", source=params["source"], parameters=params.get("parameters", {}), instance_id=target
+                    "script",
+                    source=params["source"],
+                    parameters=params.get("parameters", {}),
+                    instance_id=target,
                 )
                 record = {
                     "type": "script",
@@ -393,9 +465,15 @@ class TaskTools:
                     "parameters": params.get("parameters", {}),
                     "instance_id": target,
                 }
+            if self.closed or self.workspace.cancelled.is_set():
+                raise WorkspaceError(
+                    "Task cancelled; candidate was discarded.", "cancelled"
+                )
             self.scope_check(updated)
             if fingerprint(updated) == fingerprint(self.candidate):
-                raise WorkspaceError("This operation made no geometry or placement change.", "no_change")
+                raise WorkspaceError(
+                    "This operation made no geometry or placement change.", "no_change"
+                )
             self.candidate = updated
             self.candidate_id = uuid4().hex
             self.commands.append(record)
@@ -441,9 +519,16 @@ class ToolBridge:
                     if not 0 < length <= 1024 * 1024:
                         raise WorkspaceError("Tool input exceeds the limit.")
                     message = json.loads(self.rfile.read(length))
-                    result = {"result": tools.call(message["name"], message.get("arguments", {}))}
+                    result = {
+                        "result": tools.call(
+                            message["name"], message.get("arguments", {})
+                        )
+                    }
                 except Exception as error:
-                    result = {"error": str(error), "code": getattr(error, "code", "tool_failed")}
+                    result = {
+                        "error": str(error),
+                        "code": getattr(error, "code", "tool_failed"),
+                    }
                 data = json.dumps(result, allow_nan=False).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

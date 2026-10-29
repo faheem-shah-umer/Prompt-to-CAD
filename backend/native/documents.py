@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .contracts import WorkspaceError
-from backend.app.project_lock import revision_lock
+from backend.native.project_lock import revision_lock
 
 
 def write_json(path, content):

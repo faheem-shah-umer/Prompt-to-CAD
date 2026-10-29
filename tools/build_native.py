@@ -10,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def build_environment(qt_prefix, occt_prefix):
     env = os.environ.copy()
     if os.name == "nt" and not shutil.which("cl"):
-        setup = ROOT / "tmp/native-tools/msvc/setup_x64.bat"
+        setup = ROOT / ".build-tools/msvc/setup_x64.bat"
         if not setup.exists():
-            raise SystemExit("Use an x64 Visual Studio developer prompt, or install a workspace-local compiler at tmp/native-tools/msvc.")
+            raise SystemExit("Use an x64 Visual Studio developer prompt, or install a workspace-local compiler at .build-tools/msvc.")
         for line in setup.read_text().splitlines():
             if line.lower().startswith("set "):
                 name, value = line[4:].split("=", 1)
@@ -36,12 +36,13 @@ def main():
     args = parser.parse_args()
     for prefix in (args.qt_prefix, args.occt_prefix):
         if not prefix.is_dir():
-            parser.error(f"Native SDK directory not found: {prefix}. See docs/native-workspace.md.")
+            parser.error(f"Native SDK directory not found: {prefix}. See docs/setup.md.")
     env = build_environment(args.qt_prefix, args.occt_prefix)
     cmake = str(ROOT / ".venv/Scripts/cmake.exe") if (ROOT / ".venv/Scripts/cmake.exe").exists() else "cmake"
     build = ROOT / ".native-build"
     subprocess.run([cmake, "-S", str(ROOT / "native"), "-B", str(build), "-G", "Ninja",
                     "-DCMAKE_BUILD_TYPE=Release",
+                    "-DCMAKE_TRY_COMPILE_CONFIGURATION=Release",
                     "-DCMAKE_CXX_COMPILER=" + Path(shutil.which("cl", path=env["PATH"]) or "cl").as_posix(),
                     "-DCMAKE_RC_COMPILER=" + Path(shutil.which("rc", path=env["PATH"]) or "rc").as_posix(),
                     "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, (args.qt_prefix, args.occt_prefix))),
@@ -51,7 +52,7 @@ def main():
         ctest = str(ROOT / ".venv/Scripts/ctest.exe")
         subprocess.run([ctest, "--test-dir", str(build), "--output-on-failure"], env=env, check=True)
     if args.launch:
-        command = [str(build / "PromptToCAD.exe"), "--workspace", str(ROOT)]
+        command = [str(build / "bin/PromptToCAD.exe"), "--workspace", str(ROOT)]
         if args.open:
             command += ["--open", args.open]
         subprocess.Popen(command, env=env, cwd=ROOT)

@@ -2,6 +2,7 @@
 
 import ctypes
 import os
+
 from backend.native.contracts import WorkspaceError
 
 _job = None
@@ -16,6 +17,29 @@ def constrain_worker():
             "Restricted CAD scripting is currently supported only by the Windows worker.",
             "resource_controls_unavailable",
         )
+    kernel, Limits = job_api()
+    handle = kernel.CreateJobObjectW(None, None)
+    limits = Limits()
+    limits.basic.flags = 0x100 | 0x8
+    limits.basic.active = 1
+    limits.process_memory = 2 * 1024**3
+    if (
+        not handle
+        or not kernel.SetInformationJobObject(
+            handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
+        )
+        or not kernel.AssignProcessToJobObject(handle, kernel.GetCurrentProcess())
+    ):
+        if handle:
+            kernel.CloseHandle(handle)
+        raise WorkspaceError(
+            "Cannot apply CAD script resource limits; execution was declined.",
+            "resource_controls_unavailable",
+        )
+    _job = handle
+
+
+def job_api():
     from ctypes import wintypes
 
     class Basic(ctypes.Structure):
@@ -34,7 +58,14 @@ def constrain_worker():
     class IO(ctypes.Structure):
         _fields_ = [
             (name, ctypes.c_ulonglong)
-            for name in ("read_ops", "write_ops", "other_ops", "read_bytes", "write_bytes", "other_bytes")
+            for name in (
+                "read_ops",
+                "write_ops",
+                "other_ops",
+                "read_bytes",
+                "write_bytes",
+                "other_bytes",
+            )
         ]
 
     class Limits(ctypes.Structure):
@@ -50,23 +81,58 @@ def constrain_worker():
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
     kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     kernel.GetCurrentProcess.restype = wintypes.HANDLE
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    handle = kernel.CreateJobObjectW(None, None)
-    limits = Limits()
-    limits.basic.flags = 0x100 | 0x8
-    limits.basic.active = 1
-    limits.process_memory = 2 * 1024**3
-    if (
-        not handle
-        or not kernel.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits))
-        or not kernel.AssignProcessToJobObject(handle, kernel.GetCurrentProcess())
-    ):
-        if handle:
-            kernel.CloseHandle(handle)
-        raise WorkspaceError(
-            "Cannot apply CAD script resource limits; execution was declined.", "resource_controls_unavailable"
-        )
-    _job = handle
+    return kernel, Limits
+
+
+class ProcessTree:
+    """Own App Server and its tool subprocesses, including after a forced stop."""
+
+    def __init__(self, process):
+        self.handle = None
+        if os.name != "nt":
+            return
+        from ctypes import wintypes
+
+        kernel, Limits = job_api()
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        self.kernel = kernel
+        handle = kernel.CreateJobObjectW(None, None)
+        child = kernel.OpenProcess(0x100 | 0x1, False, process.pid)
+        limits = Limits()
+        limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        try:
+            if (
+                not handle
+                or not child
+                or not kernel.SetInformationJobObject(
+                    handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
+                )
+                or not kernel.AssignProcessToJobObject(handle, child)
+            ):
+                raise WorkspaceError(
+                    "Cannot own the Codex process tree. Restart the application before retrying.",
+                    "runtime_process_control",
+                )
+            self.handle = handle
+        except Exception:
+            if handle:
+                kernel.CloseHandle(handle)
+            raise
+        finally:
+            if child:
+                kernel.CloseHandle(child)
+
+    def close(self):
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
