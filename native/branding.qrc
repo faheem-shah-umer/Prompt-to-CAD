@@ -2,4 +2,25 @@
     <qresource prefix="/brand">
         <file alias="app-icon.png">../assets/app-icon.png</file>
     </qresource>
+    <qresource prefix="/icons">
+        <file alias="add.svg">../assets/icons/add.svg</file>
+        <file alias="arrow-up.svg">../assets/icons/arrow-up.svg</file>
+        <file alias="arrows.svg">../assets/icons/arrows.svg</file>
+        <file alias="check.svg">../assets/icons/check.svg</file>
+        <file alias="clock-three.svg">../assets/icons/clock-three.svg</file>
+        <file alias="comment-alt.svg">../assets/icons/comment-alt.svg</file>
+        <file alias="cross.svg">../assets/icons/cross.svg</file>
+        <file alias="cube.svg">../assets/icons/cube.svg</file>
+        <file alias="disk.svg">../assets/icons/disk.svg</file>
+        <file alias="edit.svg">../assets/icons/edit.svg</file>
+        <file alias="folder-open.svg">../assets/icons/folder-open.svg</file>
+        <file alias="folder.svg">../assets/icons/folder.svg</file>
+        <file alias="menu-dots.svg">../assets/icons/menu-dots.svg</file>
+        <file alias="redo.svg">../assets/icons/redo.svg</file>
+        <file alias="search.svg">../assets/icons/search.svg</file>
+        <file alias="settings.svg">../assets/icons/settings.svg</file>
+        <file alias="stop.svg">../assets/icons/stop.svg</file>
+        <file alias="undo.svg">../assets/icons/undo.svg</file>
+        <file alias="user.svg">../assets/icons/user.svg</file>
+    </qresource>
 </RCC>

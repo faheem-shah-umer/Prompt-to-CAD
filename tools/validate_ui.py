@@ -114,7 +114,7 @@ def main():
             provider_activity_and_usage_are_fixtures=True,
         )
         shutil.copyfile(ROOT / "tmp/native-workspace.png", output / (name + ".png"))
-        for capture in ("settings", "appearance", "startup", "agent-working"):
+        for capture in ("settings", "appearance", "startup", "agent-working", "agent-completed"):
             path = ROOT / ("tmp/native-" + capture + ".png")
             if path.exists():
                 shutil.copyfile(path, output / (name + "-" + capture + ".png"))

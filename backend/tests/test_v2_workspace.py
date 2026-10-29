@@ -290,6 +290,8 @@ class V2WorkspaceTests(unittest.TestCase):
         )
         chat = workspace.state()["conversation"]
         self.assertEqual(len(chat["messages"]), 2)
+        self.assertGreaterEqual(chat["messages"][-1]["elapsed_seconds"], 0)
+        self.assertTrue(chat["messages"][-1]["activity"])
         task_file = (
             workspace.projects.project_path(workspace.project_id)
             / "tasks"
@@ -325,6 +327,12 @@ class V2WorkspaceTests(unittest.TestCase):
         self.assertEqual(duplicate.exception.code, "duplicate_submission")
         self.assertEqual(result["task"]["status"], "completed_no_change")
         self.assertIsNone(result["document"]["revision_id"])
+        response = result["conversation"]["messages"][-1]
+        self.assertGreaterEqual(response["elapsed_seconds"], 0)
+        saved = self.workspace.projects.conversation(self.workspace.project_id)
+        self.assertEqual(
+            saved["messages"][-1]["elapsed_seconds"], response["elapsed_seconds"]
+        )
         task_events = [e for e in observed if e.get("task_id")]
         self.assertTrue(task_events)
         self.assertTrue(

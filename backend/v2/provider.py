@@ -240,6 +240,7 @@ class CodexAppServer:
         deadline = time.monotonic() + timeout
         interrupted_at = None
         messages = {}
+        phases = {}
         while True:
             if (
                 cancelled.is_set() or time.monotonic() >= deadline
@@ -309,17 +310,42 @@ class CodexAppServer:
                 notify({"stage": "usage", "kind": "tokens", "observation": params})
             elif method == "account/rateLimits/updated":
                 notify({"stage": "usage", "kind": "allowance", "observation": params})
+            elif (
+                method == "item/started"
+                and params.get("item", {}).get("type") == "agentMessage"
+            ):
+                item = params["item"]
+                phases[item["id"]] = item.get("phase")
             elif method == "item/agentMessage/delta":
                 delta = params.get("delta", "")
                 key = params.get("itemId", "message")
                 messages[key] = messages.get(key, "") + delta
-                notify({"stage": "assistant_delta", "message": delta, "item_id": key})
+                notify(
+                    {
+                        "stage": "assistant_delta",
+                        "message": delta,
+                        "item_id": key,
+                        "phase": phases.get(key),
+                    }
+                )
             elif (
                 method == "item/completed"
                 and params.get("item", {}).get("type") == "agentMessage"
             ):
                 item = params["item"]
-                messages[item["id"]] = item.get("text", messages.get(item["id"], ""))
+                key = item["id"]
+                messages[key] = item.get("text", messages.get(key, ""))
+                phases[key] = item.get("phase", phases.get(key))
+                if phases[key] == "commentary":
+                    notify({"stage": "agent_progress", "message": messages[key]})
+                notify(
+                    {
+                        "stage": "assistant_message",
+                        "message": messages[key],
+                        "item_id": key,
+                        "phase": phases[key],
+                    }
+                )
             elif method == "turn/completed":
                 turn = params["turn"]
                 if interrupted_at or turn["status"] != "completed":
@@ -337,7 +363,11 @@ class CodexAppServer:
                         if turn["status"] == "interrupted"
                         else failure_code,
                     )
-                return "\n\n".join(messages.values())
+                return "\n\n".join(
+                    text
+                    for key, text in messages.items()
+                    if phases.get(key) != "commentary"
+                )
             elif method == "error":
                 notify(
                     {

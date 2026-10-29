@@ -88,7 +88,9 @@ void WorkspaceWindow::refreshConnectionControls() {
             toggle->setVisible(accounts->count() > 0);
     }
     if (auto *usage = settingsDialog->findChild<QLabel *>("usageInfo"))
-        usage->setText(usageBadge->toolTip());
+        usage->setText(usageBadge->toolTip().isEmpty()
+                           ? "Token usage appears after a model request reports it."
+                           : usageBadge->toolTip());
 }
 
 void WorkspaceWindow::account() {
@@ -98,6 +100,7 @@ void WorkspaceWindow::account() {
         settingsDialog->activateWindow();
         return;
     }
+    if (focusOpenDialog()) return;
     auto *dialog = new QDialog(this);
     settingsDialog = dialog;
     dialog->setObjectName("workspaceSettings");
@@ -233,10 +236,9 @@ void WorkspaceWindow::account() {
     })->setObjectName("disconnectAccount");
     accountActions->addStretch();
     accountCard->addLayout(accountActions);
-    auto *usage = card(ai, "Usage & model access");
+    auto *usage = card(ai, "Token usage & models");
     usage->addWidget(label({}, "usageInfo"));
     auto *usageActions = new QHBoxLayout;
-    action("Refresh", usageActions, [this] { refreshUsage(); });
     action("Manage usage ↗", usageActions, [mode] {
         QDesktopServices::openUrl(QUrl(mode->currentIndex() == 0 ? "https://chatgpt.com/settings/usage"
                                                                  : "https://platform.openai.com/usage"));

@@ -2,7 +2,7 @@
 
 <img src="assets/app-icon.svg" alt="Prompt to CAD purple pyramid logo" width="80">
 
-The current Windows desktop CAD workspace, with dark/light themes and a startup loading screen, for text-driven creation and selected-part editing with Codex.
+The current Windows desktop CAD workspace, with distinct dark/light workspace panels, rounded conversation bubbles, inline task activity and a startup loading screen, for text-driven creation and selected-part editing with Codex.
 
 Open **Prompt to CAD V2.lnk** (created by the native build with our logo), **Prompt to CAD V2.vbs**, or run `.venv\Scripts\python.exe native-app.py`.
 

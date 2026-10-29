@@ -73,6 +73,71 @@ class ProviderProtocolTests(unittest.TestCase):
             ["tokens", "allowance"],
         )
 
+    def test_commentary_is_activity_and_partial_and_final_answers_remain_visible(self):
+        runtime = self.runtime(
+            [
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "id": "work",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                        }
+                    },
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"itemId": "work", "delta": "Inspecting the plate."},
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "work",
+                            "type": "agentMessage",
+                            "text": "Inspecting the plate.",
+                            "phase": "commentary",
+                        }
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "partial",
+                            "type": "agentMessage",
+                            "text": "Plate inspected.",
+                            "phase": "partial_answer",
+                        }
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "final",
+                            "type": "agentMessage",
+                            "text": "No change needed.",
+                            "phase": "final_answer",
+                        }
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                },
+            ]
+        )
+        events = []
+        response = runtime.run("inspect", "fixture", threading.Event(), events.append)
+        self.assertEqual(response, "Plate inspected.\n\nNo change needed.")
+        self.assertIn(
+            {"stage": "agent_progress", "message": "Inspecting the plate."}, events
+        )
+        delta = next(e for e in events if e["stage"] == "assistant_delta")
+        self.assertEqual(delta["phase"], "commentary")
+
     def test_cancellation_interrupts_the_active_turn_and_rejects_completion(self):
         runtime = self.runtime(
             [{"method": "turn/completed", "params": {"turn": {"status": "completed"}}}]

@@ -2,7 +2,7 @@
 
 ## Setup and launch
 
-Windows x64, Python 3.11 and the dependencies in requirements.txt are required for a source checkout. Native rendering uses Qt 6.9 and OpenCascade 7.8.1. The geometry worker uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Keep these OCCT versions aligned so face and edge maps match the viewer.
+Windows x64, Python 3.11 and the dependencies in requirements.txt are required for a source checkout. Native rendering uses Qt 6.9 Widgets and SVG modules with OpenCascade 7.8.1. The geometry worker uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Keep these OCCT versions aligned so face and edge maps match the viewer.
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -64,6 +64,6 @@ The packaging tool creates a 0.4.0 runtime with Python, Qt/OCCT libraries, depen
 
 Settings uses separate AI connection, Appearance, Projects, CAD display and Advanced pages. Select Dark or Light in Appearance and save. Theme, text size and panel preferences persist. The logo is shown during startup and in the Windows icon; the workspace navigation rail contains controls rather than a logo.
 
-The conversation panel shows the active task phase, elapsed time, Stop, streamed visible responses and expandable activity. A compact usage badge shows only reported allowance; conversation token counts are separate. The current app-owned ChatGPT connection may not expose rolling allowance through App Server, in which case use Manage usage. See the official [App Server usage interface](https://learn.chatgpt.com/docs/app-server) and [authorized plan-provider configuration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server).
+The conversation panel places user messages on the right and Codex replies on the left in rounded bubbles. Sent text clears immediately; a draft typed during a task is retained. Activity appears inline while a task runs and collapses into a persisted Worked for duration afterward. The badge shows reported tokens, or an allowance window only when actually reported. It stays hidden when neither exists; no unavailable allowance or refresh control is shown. Provider billing links remain in Settings. See the official [App Server usage interface](https://learn.chatgpt.com/docs/app-server) and [authorized plan-provider configuration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server).
 
 Use Open project to copy an older project folder into Projects/ with its chats and documents. The original is preserved. New project folders use their creation name; the Projects settings page and project context menu reveal their actual locations.

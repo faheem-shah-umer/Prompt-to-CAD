@@ -103,3 +103,6 @@ references/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+!/assets/icons/
+!/assets/icons/*.svg

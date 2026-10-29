@@ -8,12 +8,16 @@ bool lightWorkspaceTheme() { return qApp->property("workspaceTheme").toString() 
 void applyWorkspaceTheme(const QString &name, int textSize) {
     const bool light = name == "light";
     qApp->setProperty("workspaceTheme", light ? "light" : "dark");
-    const QString bg = light ? "#f7f7f8" : "#1b1b1d";
+    const QString bg = light ? "#e9edf3" : "#1b1b1d";
+    const QString sidebar = light ? "#dde4ee" : "#202023";
+    const QString toolbar = light ? "#f3f5f8" : "#242427";
+    const QString userBubble = light ? "#dae6f3" : "#303843";
+    const QString assistantBubble = light ? "#ffffff" : "#242427";
     const QString panel = light ? "#ffffff" : "#222224";
     const QString text = light ? "#242428" : "#ececee";
     const QString muted = light ? "#67676f" : "#a1a1aa";
-    const QString line = light ? "#dedee3" : "#38383c";
-    const QString hover = light ? "#ededf0" : "#303033";
+    const QString line = light ? "#c7cfdb" : "#38383c";
+    const QString hover = light ? "#e0e6ef" : "#303033";
     const QString selected = light ? "#e4eeec" : "#2c3c38";
     const QString primary = light ? "#242428" : "#eeeeef";
     const QString primaryText = light ? "#ffffff" : "#202024";
@@ -48,26 +52,37 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QMenu::item:selected { background:@hover@; border-radius:4px; }
         QWidget#rail { background:@bg@; border-right:1px solid @line@; }
         #rail QPushButton { border:0; background:transparent; padding:10px 0; }
-        #navigation, #conversationPane { background:@bg@; }
+        #navigation, #rail { background:@sidebar@; }
+        #conversationPane { background:@bg@; border-left:1px solid @line@; }
+        #cadManager { background:@toolbar@; border-right:1px solid @line@; }
+        #documentHeader { background:@panel@; border-bottom:1px solid @line@; }
+        QTabWidget#commandManager, #commandManager QToolBar { background:@toolbar@; }
+        #commandManager::pane { border-bottom:1px solid @line@; }
         #navigation QPushButton { text-align:left; }
         QPushButton, QToolButton { background:transparent; border:1px solid @line@; border-radius:7px; padding:7px 12px; }
         QPushButton:hover, QToolButton:hover { background:@hover@; }
         QPushButton:disabled { color:@muted@; border-color:@line@; }
         QPushButton#primaryButton { color:@primaryText@; background:@primary@; border-color:@primary@; font-weight:600; }
         QPushButton#primaryButton:disabled { color:@muted@; background:@hover@; border-color:@line@; }
+        QPushButton#commandSearchButton { padding:0; }
         QPushButton#quietButton { border:0; color:@muted@; }
         QPushButton#usageBadge { border:1px solid @line@; padding:4px 9px; font-size:11px; text-align:left; }
-        QPushButton#accountBadge { border:0; color:@muted@; padding:8px 2px; }
+        #rail QPushButton#accountBadge { border:1px solid @line@; color:@text@; background:@panel@; border-radius:17px; padding:0; font-weight:600; }
+        #rail QPushButton#accountBadge[connected="true"] { background:#d39b38; color:#ffffff; border:0; }
         QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@panel@; border:1px solid @line@; border-radius:7px; padding:7px; selection-background-color:@selected@; }
-        QTextBrowser#conversationHistory { background:transparent; border:0; padding:4px 0; }
-        QFrame#composerFrame, QFrame#taskCard, QFrame#settingsCard { background:@panel@; border:1px solid @line@; border-radius:10px; }
+        QScrollArea#conversationHistory, #chatContents { background:transparent; border:0; }
+        QFrame#messageBubble { background:@assistantBubble@; border:1px solid @line@; border-radius:14px; }
+        QFrame#messageBubble[user="true"] { background:@userBubble@; border:0; }
+        QTextBrowser#messageText { background:transparent; border:0; border-radius:0; padding:0; }
+        QLabel#messageAuthor { color:@muted@; font-size:11px; font-weight:600; }
+        QToolButton#workDisclosure { border:0; background:transparent; padding:3px 0; color:@muted@; }
+        QLabel#activitySummary, QLabel#livePhase { color:@muted@; }
+        QFrame#changeCard { background:@selected@; border:0; border-radius:9px; padding:3px; }
+
+        QFrame#composerFrame, QFrame#settingsCard { background:@panel@; border:1px solid @line@; border-radius:14px; }
         QFrame#composerFrame QPlainTextEdit { background:transparent; border:0; padding:4px; }
         QFrame#composerFrame QComboBox { background:transparent; border:0; padding:4px; }
         QFrame#composerFrame QPushButton#primaryButton { border-radius:15px; padding:0; font-size:17px; }
-        QLabel#taskTitle { font-weight:600; }
-        QLabel#taskActivity { color:@muted@; }
-        QProgressBar#taskProgress { border:0; border-radius:2px; background:@hover@; max-height:3px; }
-        QProgressBar#taskProgress::chunk { background:#82a995; border-radius:2px; }
         QListWidget#settingsNavigation { background:transparent; border:0; padding:0; }
         QListWidget#settingsNavigation::item { padding:10px 12px; margin:2px 0; border-radius:6px; }
         QListWidget#settingsNavigation::item:selected { background:@hover@; color:@text@; }
@@ -87,7 +102,8 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QToolTip { color:@text@; background:@panel@; border:1px solid @line@; padding:6px; }
     )");
     for (const auto &entry :
-         {qMakePair("@bg@", bg), qMakePair("@panel@", panel), qMakePair("@text@", text),
+         {qMakePair("@bg@", bg), qMakePair("@sidebar@", sidebar), qMakePair("@toolbar@", toolbar),
+          qMakePair("@userBubble@", userBubble), qMakePair("@assistantBubble@", assistantBubble), qMakePair("@panel@", panel), qMakePair("@text@", text),
           qMakePair("@muted@", muted), qMakePair("@line@", line), qMakePair("@hover@", hover),
           qMakePair("@selected@", selected), qMakePair("@primary@", primary),
           qMakePair("@primaryText@", primaryText), qMakePair("@size@", QString::number(textSize))})

@@ -3,10 +3,22 @@
 from pathlib import PurePosixPath
 
 ROOT_FILES = {
-    ".gitattributes", ".gitignore", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md",
-    "requirements.txt", "requirements-dev.txt", "native-app.py", "Prompt to CAD V2.vbs",
+    ".gitattributes",
+    ".gitignore",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "native-app.py",
+    "Prompt to CAD V2.vbs",
 }
-BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "assets/app-icon.ico"}
+BRANDING = {
+    "assets/README.md",
+    "assets/app-icon.svg",
+    "assets/app-icon.png",
+    "assets/app-icon.ico",
+}
 
 
 def is_public_source(relative):
@@ -14,6 +26,35 @@ def is_public_source(relative):
     if any(part.startswith(".") or part == "__pycache__" for part in path.parts[1:]):
         return False
     name = path.as_posix()
+    if (
+        len(path.parts) == 3
+        and path.parts[:2] == ("assets", "icons")
+        and path.name
+        in {
+            "add.svg",
+            "arrow-up.svg",
+            "arrows.svg",
+            "check.svg",
+            "clock-three.svg",
+            "comment-alt.svg",
+            "cross.svg",
+            "cube.svg",
+            "disk.svg",
+            "edit.svg",
+            "folder-open.svg",
+            "folder.svg",
+            "menu-dots.svg",
+            "redo.svg",
+            "search.svg",
+            "settings.svg",
+            "stop.svg",
+            "undo.svg",
+            "user.svg",
+            "LICENSE",
+            "README.md",
+        }
+    ):
+        return True
     if name in ROOT_FILES or name in BRANDING:
         return True
     if len(path.parts) < 2:
@@ -24,8 +65,12 @@ def is_public_source(relative):
         return path.suffix == ".py"
     if path.parts[0] == "native":
         return path.suffix in (".cpp", ".h", ".qrc", ".in") or name in (
-            "native/CMakeLists.txt", "native/requirements-build.txt",
+            "native/CMakeLists.txt",
+            "native/requirements-build.txt",
         )
     if path.parts[0] == "docs":
         return path.suffix == ".md"
-    return path.parts[:2] == (".github", "workflows") and path.suffix in (".yml", ".yaml")
+    return path.parts[:2] == (".github", "workflows") and path.suffix in (
+        ".yml",
+        ".yaml",
+    )

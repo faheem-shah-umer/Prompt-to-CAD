@@ -466,6 +466,7 @@ def main():
             "native-startup.png",
             "native-appearance.png",
             "native-agent-working.png",
+            "native-agent-completed.png",
         ):
             (bundle / "app/tmp" / name).unlink(missing_ok=True)
         print(

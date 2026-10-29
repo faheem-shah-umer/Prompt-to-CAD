@@ -8,4 +8,8 @@ The native distribution dynamically links Qt 6 and OpenCascade 7.8.1 and include
 
 PyJWT, cryptography, Trimesh, SciPy and Pillow retain their upstream licence terms. Exact versions/licences are governed by installed package metadata. NSIS compiles the installer. Codex is installed separately by the user. OpenAI terms and eligible plan/API usage are independent of the repository licence; no inference key or credentials are bundled.
 
-The monochrome UI icons are original geometric vector drawings. Public CAD references informed the design; no CADAM source or proprietary CAD implementation was copied. No image-generation service, model weights, Claude runtime or commercial CAD translator is included.
+Interface icons use the separately licensed Flaticon UIcons subset credited below; CAD orientation graphics are rendered by the application. Public CAD references informed the design; no CADAM source or proprietary CAD implementation was copied. No image-generation service, model weights, Claude runtime or commercial CAD translator is included.
+
+## Interface icons
+
+Uicons by [Flaticon](https://www.flaticon.com/uicons), regular rounded subset from @flaticon/flaticon-uicons 3.3.1. The icon paths are separately licensed under the [Flaticon License](assets/icons/LICENSE); see [provenance](assets/icons/README.md). Attribution is available in Help → Credits.

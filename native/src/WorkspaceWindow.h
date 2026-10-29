@@ -3,11 +3,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QHash>
 #include <QMainWindow>
 #include <QPointer>
 class QDialog;
 #include "RpcClient.h"
 class CadView;
+class ConversationView;
 class QSplitter;
 class QTreeWidget;
 class QTabBar;
@@ -22,7 +24,6 @@ class QLineEdit;
 class QFormLayout;
 class QDoubleSpinBox;
 class QResizeEvent;
-class QProgressBar;
 class QTimer;
 
 class WorkspaceWindow : public QMainWindow {
@@ -47,14 +48,17 @@ class WorkspaceWindow : public QMainWindow {
     void account();
     void discoverModels();
     void submit();
+    QString takeComposerText();
     void select(const QJsonObject &);
     void operation(const QString &);
     void applyOperation();
     void showError(const QString &);
     void smokeCheck();
     void renderChat();
+    void receiveAssistant(const QJsonObject &event, bool complete);
     void updateTask(const QString &status, const QString &message);
-    void refreshUsage();
+    bool focusOpenDialog();
+    void openNativeProject();
     void updateUsage();
     void refreshConnectionControls();
     void applyAppearance();
@@ -66,17 +70,17 @@ class WorkspaceWindow : public QMainWindow {
     QTreeWidget *projects, *modelTree, *revisions;
     QTabBar *documentTabs;
     QTabWidget *managerTabs;
-    QTextBrowser *chat, *properties;
+    ConversationView *chat;
+    QTextBrowser *properties;
     QPlainTextEdit *composer;
     QPushButton *sendButton, *stopButton, *selectionChip, *accountBadge;
     QPushButton *usageBadge;
-    QLabel *taskTitle, *taskElapsed, *tokenUsageLabel;
-    QProgressBar *taskProgress;
     QTimer *taskPulse, *chatRefresh;
     QElapsedTimer taskClock;
-    QString pendingUser, liveAnswer, currentTaskState;
-    QLabel *activity, *title, *saved, *conversationTitle, *taskActivity;
-    QPlainTextEdit *taskLog;
+    QString pendingUser, liveAnswer, currentTaskState, currentTaskMessage;
+    QStringList currentActivity, liveOrder;
+    QHash<QString, QString> liveMessages, livePhases;
+    QLabel *activity, *title, *saved, *conversationTitle;
     QPointer<QDialog> settingsDialog;
     QString activeTaskId;
     QComboBox *models, *selectionMode;

@@ -95,7 +95,12 @@ class WorkspaceV2(Workspace):
                 conversation_id=task["conversation_id"],
                 document_id=task["document_id"],
             )
-            if event.get("stage") not in ("assistant_delta", "candidate", "usage"):
+            if event.get("stage") not in (
+                "assistant_delta",
+                "assistant_message",
+                "candidate",
+                "usage",
+            ):
                 task.setdefault("activity", []).append(
                     {k: event[k] for k in ("stage", "state", "message") if k in event}
                 )
@@ -673,6 +678,9 @@ class WorkspaceV2(Workspace):
                     "role": "assistant",
                     "content": message,
                     "activity": task.get("activity", []),
+                    "elapsed_seconds": max(
+                        0, task["completed_at"] - task["started_at"]
+                    ),
                     "task_id": task["task_id"],
                     "change": {
                         k: task[k]
@@ -697,7 +705,15 @@ class WorkspaceV2(Workspace):
                 completed_at=time.time(),
             )
             conversation["messages"].append(
-                {"role": "system", "content": str(error), "task_id": task["task_id"]}
+                {
+                    "role": "system",
+                    "content": str(error),
+                    "task_id": task["task_id"],
+                    "activity": task.get("activity", []),
+                    "elapsed_seconds": max(
+                        0, task["completed_at"] - task["started_at"]
+                    ),
+                }
             )
             self.document.journal(task["status"], task_id=task["task_id"])
             raise
