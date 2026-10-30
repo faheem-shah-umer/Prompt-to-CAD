@@ -26,6 +26,7 @@ class QDoubleSpinBox;
 class QResizeEvent;
 class QTimer;
 class QImage;
+class QToolButton;
 
 class WorkspaceWindow : public QMainWindow {
     Q_OBJECT
@@ -59,6 +60,7 @@ class WorkspaceWindow : public QMainWindow {
     void batchConversations(const QJsonArray &, const QString &action);
     void discoverModels(bool refresh = false);
     void updateSendControl();
+    void refreshEffortControl();
     void beginSignIn(const QString &registration = {}, bool newRegistration = false);
     void showOnboarding();
     void submit();
@@ -116,6 +118,8 @@ class WorkspaceWindow : public QMainWindow {
     QPointer<QDialog> settingsDialog, onboardingDialog;
     QString activeTaskId;
     QComboBox *models, *selectionMode;
+    QToolButton *effortButton = nullptr;
+    QString effortSelection;
     QLineEdit *search, *treeFilter;
     QFormLayout *operationForm;
     QList<QDoubleSpinBox *> fields;

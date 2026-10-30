@@ -24,3 +24,9 @@ A Release build completed all 21 compile/link steps and was deployed behind the 
 The compact 28-pixel attachment button inherited 12-pixel horizontal padding from the shared button style, leaving only about two pixels for its 18-pixel icon. A specific four-pixel padding rule now provides the icon’s full content area in both themes.
 
 A Release build completed all 21 compile/link steps and replaced the executable behind the existing shortcut after the user closed the app. Deployed size: 873,472 bytes; SHA-256 `62a14e8e0d9e936644c97c0295921ad6f99eb60678aceec18c5cd7669bd80fb0`. Deployed bytes match the linked file. Existing compiler warnings remain. No tests, UI verification or inference were run; the user verifies the visible result. Projects and credentials were preserved, and temporary build files were removed.
+
+## Provider-owned reasoning effort — 2026-10-30
+
+Added a compact selector beside the model picker, provider/model preferences, explicit capability states and frozen task/assistant effort metadata. The shared presentation/validation contract is independent of Codex request fields; Codex owns its catalogue normalization and turn configuration mapping. See [the effort contract and pending validation](reasoning-effort.md). Claude remains deferred.
+
+The Release build completed successfully after correcting a missing native include, with existing SDK/Qt and variable-shadowing warnings. The executable behind the existing shortcut was replaced after the user closed the app. Deployed size: 886,272 bytes; SHA-256 `cfd45adf6c679c65a934c55a32062b4a24b18d8b87d04db78e802a56670424dd`. Deployed bytes match the linked file. No tests, live inference, account authorization or UI verification were performed. Projects, credentials and existing drafts were not edited during implementation. Temporary compiler/SDK/build files were removed after deployment.

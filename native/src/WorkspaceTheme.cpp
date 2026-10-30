@@ -76,6 +76,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel#messageAuthor { color:@muted@; font-size:11px; font-weight:600; }
         QToolButton#messageCopy { border:0; border-radius:5px; padding:3px; }
         QToolButton#attachImages { padding:4px; }
+        QToolButton#reasoningEffort { padding:4px 12px 4px 5px; border:0; }
         QToolButton#projectSort { padding:4px; }
         QToolButton#projectSort::menu-indicator { image:none; }
         QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:5px 6px; font-size:11px; }

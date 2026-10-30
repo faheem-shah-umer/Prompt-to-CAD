@@ -54,6 +54,7 @@ QVBoxLayout *card(QVBoxLayout *parent, const QString &title) {
 } // namespace
 
 void WorkspaceWindow::refreshConnectionControls() {
+    refreshEffortControl();
     auto connection = state.value("provider").toObject();
     auto active = connection.value("active").toObject();
     const bool ready = connection.value("state") == "ready";

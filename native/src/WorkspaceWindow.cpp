@@ -469,6 +469,17 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     models->setMaximumWidth(240);
     models->setPlaceholderText("Choose model");
     providerRow->addWidget(models);
+    effortButton = new QToolButton;
+    effortButton->setObjectName("reasoningEffort");
+    effortButton->setAccessibleName("Reasoning effort");
+    effortButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    effortButton->setPopupMode(QToolButton::InstantPopup);
+    effortButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    effortButton->setMinimumWidth(0); effortButton->setMaximumWidth(154);
+    effortButton->setAttribute(Qt::WA_AlwaysShowToolTips);
+    effortButton->setMenu(new QMenu(effortButton));
+    providerRow->addWidget(effortButton);
+    connect(models, &QComboBox::currentIndexChanged, this, [this] { refreshEffortControl(); });
     providerRow->addStretch(1);
     sendButton = button("", providerRow, [this] {
         if (taskRunning) {
@@ -1260,6 +1271,8 @@ void WorkspaceWindow::submit() {
     const auto capture = QDir::tempPath() + "/promptcad-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png";
     if (viewer->bodyCount() > 0 && viewer->saveViewport(capture)) params["viewport_path"] = capture;
     params["prompt"] = composer->toPlainText(); params["model"] = models->currentData().toString();
+    params["provider_id"] = state.value("runtime").toObject().value("agent").toObject().value("id");
+    if (!effortSelection.isEmpty()) params["reasoning_effort"] = effortSelection;
     params["task_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
     if (!selected.isEmpty()) params["selection"] = selected;
     if (!draftAttachments.isEmpty()) prepareImageSubmission(params);
@@ -1282,6 +1295,7 @@ void WorkspaceWindow::startAgentTask(QJsonObject params) {
 void WorkspaceWindow::discoverModels(bool refresh) {
     if (modelsLoading || busy) return;
     modelsLoading = true;
+    refreshEffortControl();
     models->setProperty("catalogState","Loading models…");
     busy = true;
     updateSendControl();
@@ -1290,7 +1304,8 @@ void WorkspaceWindow::discoverModels(bool refresh) {
         busy = false;
         updateSendControl();
         refreshConnectionControls();
-        if (!error.isEmpty()) { models->setProperty("catalogState",error);showError(error); return; }
+        if (!error.isEmpty()) { models->setProperty("catalogState",error); models->setProperty("effortCatalogueFailure",error); refreshEffortControl(); showError(error); return; }
+        models->setProperty("effortCatalogueFailure", QString());
         models->setProperty("catalogState",r.value("models").toArray().isEmpty()?"No models were reported. Check your connection or refresh.":"");
         auto old = models->currentData();
         models->clear();
@@ -1304,6 +1319,7 @@ void WorkspaceWindow::discoverModels(bool refresh) {
         int i = models->findData(old);
         if (i >= 0)
             models->setCurrentIndex(i);
+        refreshEffortControl();
         activity->setText("Models discovered. Availability is verified only by "
                           "successful inference.");
     });

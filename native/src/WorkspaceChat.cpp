@@ -4,13 +4,86 @@
 #include "WorkspaceTheme.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
+#include <QComboBox>
 #include <QDateTime>
 #include <QLabel>
+#include <QMenu>
 #include <QLocale>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QTimer>
+#include <QToolButton>
+
+namespace {
+QString effortPreference(const QString &provider, const QString &model) {
+    return "v2/reasoningEffort/" + QString::fromLatin1(provider.toUtf8().toHex()) + "/" +
+           QString::fromLatin1(model.toUtf8().toHex());
+}
+}
+
+void WorkspaceWindow::refreshEffortControl() {
+    if (!effortButton) return;
+    auto *menu = effortButton->menu();
+    menu->clear(); effortSelection.clear();
+    const auto provider = state.value("runtime").toObject().value("agent").toObject().value("id").toString();
+    const auto active = state.value("provider").toObject().value("active").toObject();
+    const auto model = models->currentData().toString();
+    const auto metadata = models->currentData(Qt::UserRole + 1).toJsonObject();
+    const auto control = metadata.value("reasoning_effort").toObject();
+    const auto status = control.value("state").toString("unavailable");
+    QString caption = "Effort unavailable";
+    QString explanation = control.value("message").toString("Refresh models to load reasoning effort capabilities.");
+    const bool connected = state.value("provider").toObject().value("state") == "ready";
+    const bool matches = !provider.isEmpty() && metadata.value("provider_id").toString() == provider &&
+                         metadata.value("connection_id").toString() == active.value("id").toString();
+    bool supported = false;
+    if (!connected) explanation = "Reasoning effort unavailable. Connect an agent provider first.";
+    else if (modelsLoading) { caption = "Loading effort…"; explanation = "Loading model capabilities."; }
+    else if (model.isEmpty()) explanation = "Choose a model to see its supported reasoning effort settings.";
+    else if (!matches) explanation = "Reasoning effort unavailable for this connection. Refresh models.";
+    else if (!models->property("effortCatalogueFailure").toString().isEmpty())
+        explanation = "Reasoning effort unavailable after model discovery failed. Refresh models to retry.\n" + models->property("effortCatalogueFailure").toString();
+    else if (status == "unsupported") caption = "Effort unsupported";
+    else if (status == "supported" && !control.value("options").toArray().isEmpty()) {
+        supported = true;
+        const auto options = control.value("options").toArray();
+        const auto defaultId = control.value("default_id").toString();
+        QSettings preferences;
+        const auto remembered = preferences.value(effortPreference(provider, model)).toString();
+        QStringList ids;
+        for (const auto &entry : options) ids << entry.toObject().value("id").toString();
+        effortSelection = ids.contains(remembered) ? remembered : ids.contains(defaultId) ? defaultId : QString();
+        caption = "Effort: default";
+        if (defaultId.isEmpty()) explanation += "\nThe provider did not report a usable default; leaving this unset uses its configuration.";
+        if (!remembered.isEmpty() && !ids.contains(remembered)) explanation += "\nThe saved choice is not supported by this model catalogue; it has not been applied.";
+        for (const auto &entry : options) {
+            const auto option = entry.toObject();
+            const auto id = option.value("id").toString();
+            const auto label = option.value("label").toString(id);
+            auto *action = menu->addAction(label + (id == defaultId ? " · default" : ""));
+            action->setCheckable(true); action->setChecked(id == effortSelection);
+            action->setToolTip(option.value("description").toString());
+            action->setStatusTip(option.value("description").toString());
+            if (id == effortSelection) {
+                caption = "Effort: " + label;
+                explanation += "\n" + label + ": " + option.value("description").toString();
+            }
+            connect(action, &QAction::triggered, this, [this, provider, model, id] {
+                if (busy || models->currentData().toString() != model ||
+                    state.value("runtime").toObject().value("agent").toObject().value("id").toString() != provider) return;
+                QSettings preferences; preferences.setValue(effortPreference(provider, model), id);
+                refreshEffortControl();
+            });
+        }
+    }
+    menu->setToolTipsVisible(true);
+    effortButton->setText(effortButton->fontMetrics().elidedText(caption, Qt::ElideRight, 132));
+    effortButton->setToolTip("Reasoning effort · " + caption + "\n" + explanation);
+    effortButton->setAccessibleName("Reasoning effort: " + caption);
+    effortButton->setAccessibleDescription(explanation);
+    effortButton->setEnabled(supported && !busy && !imagePreflight && !modelsLoading);
+}
 
 void WorkspaceWindow::applyAppearance() {
     QSettings preferences;

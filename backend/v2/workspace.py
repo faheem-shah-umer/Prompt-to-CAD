@@ -16,7 +16,8 @@ from backend.native.workspace import Workspace
 from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
-from .provider import CODEX_AGENT, CodexAppServer, discover_executable
+from .provider import CODEX_AGENT, CodexAppServer, CodexProviderOptions, discover_executable
+from .provider_options import ProviderOptions, capture_effort
 from .usage import allowance, merge_allowance, tokens
 
 INSTRUCTIONS = (
@@ -44,6 +45,7 @@ class WorkspaceV2(Workspace):
         self.usage_account = None
         self.token_usage = {}
         self.capability_cache = {}
+        self.provider_options: ProviderOptions = CodexProviderOptions()
         self.image_bounds = {}
         self.connections = Connections(
             Path(identity_home) if identity_home else self.home / "identity", self.emit
@@ -184,7 +186,7 @@ class WorkspaceV2(Workspace):
                 "executable": discover_executable(self.configuration.get("codex_path"))
                 or "",
                 "provider": "Codex App Server",
-                "agent": copy.deepcopy(CODEX_AGENT),
+                "agent": copy.deepcopy(self.provider_options.identity),
             },
         }
         if self.project_id and result.get("conversation"):
@@ -198,7 +200,7 @@ class WorkspaceV2(Workspace):
     def capability_key(self, account_id):
         executable = discover_executable(self.configuration.get("codex_path"))
         stamp = Path(executable).stat().st_mtime_ns if executable else 0
-        return account_id, executable, stamp
+        return self.provider_options.identity["id"], account_id, executable, stamp
 
     def discover_models(self, refresh=False):
         account_id, account = self.connections.credential()
@@ -207,6 +209,8 @@ class WorkspaceV2(Workspace):
         if cached and not refresh and time.monotonic() - cached[0] < 600:
             return copy.deepcopy(cached[1])
         result = self.connections.models(refresh)
+        result["provider_id"] = self.provider_options.identity["id"]
+        result["connection_id"] = account_id
         runtime, reported = None, {}
         try:
             runtime = CodexAppServer(self.home / "runtime" / account_id, self.configuration.get("codex_path") or None,
@@ -218,6 +222,9 @@ class WorkspaceV2(Workspace):
             if runtime:
                 runtime.close()
         for model in result["models"]:
+            model["provider_id"] = result["provider_id"]
+            model["connection_id"] = account_id
+            model["reasoning_effort"] = self.provider_options.reasoning_effort(reported.get(model["id"]))
             provider_modes = model.get("inputModalities")
             runtime_modes = reported.get(model["id"], {}).get("inputModalities")
             declarations = [m for m in (provider_modes, runtime_modes) if isinstance(m, list)]
@@ -693,6 +700,9 @@ class WorkspaceV2(Workspace):
                 "model_required",
             )
         account_id, account = self.connections.credential()
+        provider_id = self.provider_options.identity["id"]
+        if params.get("provider_id", provider_id) != provider_id:
+            raise WorkspaceError("The selected provider changed. Review the model and submit again.", "provider_changed")
         state = self.projects.view(self.project_id)
         original = state["document"]
         if params.get("base_revision_id") != original.get("revision_id"):
@@ -705,7 +715,13 @@ class WorkspaceV2(Workspace):
         if attached:
             self.image_support(model)
         cached = self.capability_cache.get(self.capability_key(account_id))
+        if params.get("reasoning_effort") is not None and (not cached or time.monotonic() - cached[0] >= 600):
+            self.discover_models()
+            cached = self.capability_cache.get(self.capability_key(account_id))
         model_entry = next((m for m in (cached[1]["models"] if cached and time.monotonic() - cached[0] < 600 else []) if m["id"] == model), {})
+        effort = capture_effort(provider_id, model, model_entry.get("reasoning_effort") or
+                                self.provider_options.reasoning_effort(None), params.get("reasoning_effort"))
+        turn_options = self.provider_options.turn_options(effort)
         supports_images = model_entry.get("image_support") == "supported"
         bounds = self.image_bounds.get((self.capability_key(account_id), model))
         if bounds and time.monotonic() - bounds[0] < 600 and not bounds[1]:
@@ -736,7 +752,8 @@ class WorkspaceV2(Workspace):
             "started_at": time.time(),
             "model": model,
             "provider_account": account_id,
-            "agent": copy.deepcopy(CODEX_AGENT),
+            "agent": copy.deepcopy(self.provider_options.identity),
+            "reasoning_effort": copy.deepcopy(effort),
             "attachments": [copy.deepcopy(reference) for reference, _ in attached],
         }
         tools = TaskTools(
@@ -870,6 +887,7 @@ class WorkspaceV2(Workspace):
                 [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
                     and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
                 timeout=max(1, self.task_deadline - time.monotonic()),
+                turn_options=turn_options,
             )
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
@@ -931,6 +949,7 @@ class WorkspaceV2(Workspace):
                 {
                     "role": "assistant",
                     "agent": copy.deepcopy(task["agent"]),
+                    "reasoning_effort": copy.deepcopy(task["reasoning_effort"]),
                     "content": message,
                     "activity": task.get("activity", []),
                     "elapsed_seconds": max(
