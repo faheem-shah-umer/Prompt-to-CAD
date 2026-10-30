@@ -74,6 +74,10 @@ class WorkspaceWindow : public QMainWindow {
     void openNativeProject();
     void updateUsage();
     void refreshConnectionControls();
+    void refreshProjectTree();
+    void filterProjects();
+    void filterModels();
+    void syncModelVisibility();
     void applyAppearance();
     QJsonObject base() const;
     CadView *viewer;
@@ -86,7 +90,7 @@ class WorkspaceWindow : public QMainWindow {
     ConversationView *chat;
     QTextBrowser *properties;
     QPlainTextEdit *composer;
-    QPushButton *sendButton, *selectionChip, *accountBadge;
+    QPushButton *sendButton, *selectionChip, *accountBadge, *agentButton;
     QPushButton *usageBadge;
     QTimer *taskPulse, *chatRefresh;
     QElapsedTimer taskClock;
@@ -101,7 +105,7 @@ class WorkspaceWindow : public QMainWindow {
     QFormLayout *operationForm;
     QList<QDoubleSpinBox *> fields;
     QAction *undoAction, *redoAction;
-    QJsonObject state, document, selected, operationSelection;
+    QJsonObject state, document, selected, operationSelection, taskAgent;
     QString workspace, currentOperation;
     bool polishVerified = false;
     bool settingsVerified = false, conversationsVerified = false, onboardingVerified = false, startupEmpty = false;

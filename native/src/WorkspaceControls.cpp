@@ -11,6 +11,8 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScreen>
+#include <QStyleOptionComboBox>
+#include <QStylePainter>
 #include <QTabBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -27,6 +29,32 @@ void ComposerEdit::keyPressEvent(QKeyEvent *event) {
     return;
   }
   QPlainTextEdit::keyPressEvent(event);
+}
+ModelPicker::ModelPicker(QWidget *parent) : QComboBox(parent) {
+  setAccessibleName("Choose model");
+  setToolTip("Choose model");
+  connect(this, &QComboBox::currentTextChanged, this, [this](const QString& name) {
+    setToolTip(name);
+    setAccessibleName(name.isEmpty() ? "Choose model" : "Model: " + name);
+    updateGeometry();
+    update();
+  });
+}
+QSize ModelPicker::sizeHint() const {
+  const auto label = currentText().isEmpty() ? placeholderText() : currentText();
+  return {qMin(240, fontMetrics().horizontalAdvance(label) + 38), qMax(30, fontMetrics().height() + 12)};
+}
+QSize ModelPicker::minimumSizeHint() const { return {38, sizeHint().height()}; }
+void ModelPicker::paintEvent(QPaintEvent *) {
+  QStyleOptionComboBox option;
+  initStyleOption(&option);
+  option.currentText.clear();
+  QStylePainter painter(this);
+  painter.drawComplexControl(QStyle::CC_ComboBox, option);
+  const auto area = style()->subControlRect(QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxEditField, this);
+  const auto label = currentText().isEmpty() ? placeholderText() : currentText();
+  painter.setPen(palette().color(isEnabled() ? QPalette::Active : QPalette::Disabled, QPalette::ButtonText));
+  painter.drawText(area, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(label, Qt::ElideRight, area.width()));
 }
 void ModelPicker::hidePopup() {
   if (popup)

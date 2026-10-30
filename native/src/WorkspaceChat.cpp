@@ -45,6 +45,7 @@ void WorkspaceWindow::renderChat() {
         for (const auto &message : currentActivity)
             events.append(QJsonObject{{"message", message}});
         messages.append(QJsonObject{{"role", "assistant"}, {"content", liveAnswer},
+                                    {"agent", taskAgent},
                                    {"task_id", activeTaskId}, {"working", true},
                                    {"phase", currentTaskMessage}, {"activity", events},
                                    {"elapsed_seconds", taskClock.isValid() ? taskClock.elapsed() / 1000.0 : 0}});
@@ -71,6 +72,13 @@ void WorkspaceWindow::updateTask(const QString &status, const QString &message) 
 void WorkspaceWindow::updateUsage() {
     const auto provider = state.value("provider").toObject();
     const auto active = provider.value("active").toObject();
+    const auto runtime = state.value("runtime").toObject();
+    const auto agent = runtime.value("agent").toObject();
+    auto agentName = agent.value("display_name").toString().trimmed();
+    if (agentName.isEmpty()) agentName = !runtime.contains("agent") && runtime.value("provider") == "Codex App Server"
+                                           ? "Codex" : "Assistant";
+    agentButton->setText(agentName);
+    agentButton->setAccessibleName(agentName + " connection settings");
     const auto usage = provider.value("usage").toObject();
     const auto tokens = state.value("conversation").toObject().value("token_usage").toObject();
     QString text;

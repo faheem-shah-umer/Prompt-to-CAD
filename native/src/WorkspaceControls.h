@@ -20,11 +20,16 @@ private:
 class ModelPicker : public QComboBox {
   Q_OBJECT
 public:
-  using QComboBox::QComboBox;
+  explicit ModelPicker(QWidget *parent = nullptr);
+  QSize sizeHint() const override;
+  QSize minimumSizeHint() const override;
   void showPopup() override;
   void hidePopup() override;
 Q_SIGNALS:
   void refreshRequested();
+
+protected:
+  void paintEvent(QPaintEvent *) override;
 
 private:
   QPointer<QFrame> popup;

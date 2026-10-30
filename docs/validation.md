@@ -2,6 +2,14 @@
 
 Development policy: run tests only when the user explicitly requests a task-specific test. Do not automatically run these commands after source edits. Historical results below describe earlier runs; generated validation reports/screenshots have been removed as part of the source-only cleanup.
 
+## Pending verification: project ordering and conversation polish
+
+Project sorting/timestamps, bulk model visibility/selection, shaded redisplay, per-message copying, provider-aware authors and the compact model trigger have been implemented in source only. No tests, native rebuild or UI verification were run for these changes. The existing executable does not include the native changes until a separately requested rebuild.
+
+When specifically requested, validate stable ordering across open/refresh/restart and legacy timestamp initialization; meaningful content changes versus session-only updates; solid/mesh hide/show cycles with colours and edges; visibility/selection synchronization under filtering, revisions and the 256-entity limit; frozen running-task selection; clipboard output during streaming; historical provider identity; and compact layouts in both themes at laptop sizes and Windows scaling. Use synthetic projects and provider metadata, preserving personal data and credentials.
+
+## Validation commands
+
 Run the automated backend, native UI and tracked-file checks:
 
 ```powershell

@@ -4,6 +4,7 @@ import copy
 import hashlib
 import os
 import shutil
+import time
 from pathlib import Path
 from uuid import uuid4
 from backend.native.contracts import WorkspaceError
@@ -147,7 +148,9 @@ def clone(projects, project_id, name):
                 if destination != relative:
                     (staging / relative).unlink()
             project = rewrite(project)
-            project.update(name=name, archived=False, trashed=False)
+            now = time.time()
+            project.update(name=name, archived=False, trashed=False,
+                           created_at=now, content_modified_at=now, last_opened_at=0)
             write_json(staging / "workspace.json", project)
             for entry in project["documents"]:
                 doc = Document(staging / entry["path"])
@@ -190,7 +193,7 @@ def clone(projects, project_id, name):
             published = True
             catalog = projects.read(projects.catalog)
             pid = project["project_id"]
-            catalog["projects"].insert(0, pid)
+            catalog["projects"].append(pid)
             catalog.setdefault("folders", {})[pid] = directory
             write_json(projects.catalog, catalog)
             return pid

@@ -3,6 +3,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMap>
+#include <QHash>
+#include <QSet>
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
@@ -22,7 +24,12 @@ public:
     void selectInstances(const QStringList &ids);
     void removeSelectedEntity(int index);
     void isolateInstance(const QString& id);
+    void isolateInstances(const QStringList& ids);
     void showAll();
+    void hideAll();
+    void setVisibleInstances(const QStringList& ids, bool visible);
+    bool isInstanceVisible(const QString& id) const;
+    QStringList visibleInstances() const;
     void setShading(bool edges);
     void setLightTheme(bool light);
     void setVisibleInstance(const QString& id, bool visible);
@@ -37,6 +44,7 @@ public:
 Q_SIGNALS:
     void selectionChanged(const QJsonObject& selection);
     void viewerError(const QString& message);
+    void visibilityChanged();
 protected:
     void showEvent(QShowEvent*) override;
     void paintEvent(QPaintEvent*) override;
@@ -48,12 +56,14 @@ protected:
 private:
     void initialize();
     void updateSelection();
+    void displayInstance(const QString& id);
     Handle(SelectMgr_EntityOwner) pickMeshFace(const QPoint &point);
     Handle(AIS_InteractiveContext) context;
     Handle(V3d_View) view;
     QMap<QString, Handle(AIS_Shape)> shapes;
     QMap<QString, Handle(MeshVS_Mesh)> meshes;
     QJsonObject document;
+    QHash<QString, QSet<QString>> hiddenByDocument;
     QJsonObject currentSelection;
     QList<QList<Handle(SelectMgr_EntityOwner)>> selectedOwners;
     QMap<QString,Handle(SelectMgr_EntityOwner)> meshPickOwners;

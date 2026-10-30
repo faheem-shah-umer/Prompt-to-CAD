@@ -1,6 +1,9 @@
 #include "ConversationView.h"
 #include "WorkspaceTheme.h"
+#include "WorkspaceIcons.h"
 #include <QApplication>
+#include <QClipboard>
+#include <QDateTime>
 #include <QFrame>
 #include <QLabel>
 #include <QJsonObject>
@@ -101,6 +104,7 @@ void ConversationView::setMessages(const QJsonArray &messages, const QString &co
         context = conversation;
         following = true;
         expanded.clear();
+        copiedUntil.clear();
         cachedTheme.clear();
     }
     const auto theme = qApp->property("workspaceTheme").toString();
@@ -156,7 +160,6 @@ void ConversationView::rebuild() {
         const auto message = value.toObject();
         if (message.value("role") != "user" && message.value("role") != "assistant") continue;
         const bool user = message.value("role") == "user";
-        const bool assistant = message.value("role") == "assistant";
         auto *row = new QWidget;
         row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
         auto *horizontal = new QHBoxLayout(row);
@@ -172,7 +175,11 @@ void ConversationView::rebuild() {
         body->setContentsMargins(user ? 14 : 0, user ? 12 : 0, user ? 14 : 0, user ? 12 : 0);
         body->setSpacing(10);
         body->setAlignment(Qt::AlignTop);
-        auto *author = new QLabel(user ? "You" : assistant ? "Codex" : "Notice");
+        const auto agent = message.value("agent").toObject();
+        const auto reportedName = agent.value("display_name").toString().trimmed();
+        const auto assistantName = !message.contains("agent") ? QString("Codex")
+                                    : reportedName.isEmpty() ? QString("Assistant") : reportedName;
+        auto *author = new QLabel(user ? "You" : assistantName);
         author->setObjectName("messageAuthor");
         body->addWidget(author);
         const auto events = message.value("activity").toArray();
@@ -242,6 +249,34 @@ void ConversationView::rebuild() {
             connect(links, &QLabel::linkActivated, this, [this](const QString &url) { Q_EMIT anchorClicked(QUrl(url)); });
             cardLayout->addWidget(links);
             body->addWidget(card);
+        }
+        if (!text.isEmpty()) {
+            const auto copyKey = context + "/" + message.value("task_id").toString(QString::number(index)) +
+                                 "/" + message.value("role").toString();
+            auto *copy = new QToolButton;
+            copy->setObjectName("messageCopy");
+            copy->setProperty("copyKey", copyKey);
+            copy->setFixedSize(26, 26);
+            copy->setAccessibleName(user ? "Copy your message" : "Copy " + assistantName + " response");
+            const bool copied = copiedUntil.value(copyKey) > QDateTime::currentMSecsSinceEpoch();
+            setWorkspaceIcon(copy, copied ? "check" : "copy");
+            copy->setToolTip(copied ? "Copied" : "Copy message");
+            connect(copy, &QToolButton::clicked, this, [this, text, copyKey, copy] {
+                QApplication::clipboard()->setText(text);
+                copiedUntil[copyKey] = QDateTime::currentMSecsSinceEpoch() + 1500;
+                setWorkspaceIcon(copy, "check");
+                copy->setToolTip("Copied");
+                QTimer::singleShot(1500, this, [this, copyKey] {
+                    if (copiedUntil.value(copyKey) > QDateTime::currentMSecsSinceEpoch()) return;
+                    copiedUntil.remove(copyKey);
+                    for (auto *control : findChildren<QToolButton*>("messageCopy"))
+                        if (control->property("copyKey").toString() == copyKey) {
+                            setWorkspaceIcon(control, "copy");
+                            control->setToolTip("Copy message");
+                        }
+                });
+            });
+            body->addWidget(copy, 0, user ? Qt::AlignRight : Qt::AlignLeft);
         }
         horizontal->addWidget(bubble, user ? 0 : 1);
         if (!user)

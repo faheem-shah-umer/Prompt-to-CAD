@@ -2,6 +2,7 @@
 #include <QJsonArray>
 #include <QScrollArea>
 #include <QSet>
+#include <QHash>
 #include <QUrl>
 class QVBoxLayout;
 class QToolButton;
@@ -25,5 +26,6 @@ class ConversationView : public QScrollArea {
     bool following = true, restoring = false;
     unsigned scrollGeneration = 0;
     QSet<QString> expanded;
+    QHash<QString, qint64> copiedUntil;
     QString cachedTheme, context;
 };

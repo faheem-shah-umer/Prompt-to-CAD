@@ -16,7 +16,7 @@ from backend.native.workspace import Workspace
 from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
-from .provider import CodexAppServer, discover_executable
+from .provider import CODEX_AGENT, CodexAppServer, discover_executable
 from .usage import allowance, merge_allowance, tokens
 
 INSTRUCTIONS = (
@@ -94,6 +94,7 @@ class WorkspaceV2(Workspace):
                 task_id=task["task_id"],
                 conversation_id=task["conversation_id"],
                 document_id=task["document_id"],
+                agent=copy.deepcopy(task.get("agent", CODEX_AGENT)),
             )
             if event.get("stage") not in (
                 "assistant_delta",
@@ -181,6 +182,7 @@ class WorkspaceV2(Workspace):
                 "executable": discover_executable(self.configuration.get("codex_path"))
                 or "",
                 "provider": "Codex App Server",
+                "agent": copy.deepcopy(CODEX_AGENT),
             },
         }
 
@@ -354,6 +356,7 @@ class WorkspaceV2(Workspace):
             return self.state()
         if method == "v2.restore":
             self.document.restore(params["revision_id"], params["base_revision_id"])
+            self.projects.touch(self.project_id)
             return self.state()
         if method == "v2.conversation.update":
             pid = params.get("project_id", self.project_id)
@@ -479,6 +482,7 @@ class WorkspaceV2(Workspace):
             index["name"] = source.stem
             write_json(doc.index_path, index)
             doc.commit(candidate, summary="Imported " + source.name)
+            self.projects.touch(self.project_id)
             self.document = doc
             self.projects.adopt(self.project_id, doc)
             return self.state()
@@ -541,11 +545,13 @@ class WorkspaceV2(Workspace):
                 summary=params.get("command", {}).get("type", "CAD script"),
                 commands=tools.commands,
             )
+            self.projects.touch(self.project_id)
             return self.state()
         if method in ("v2.undo", "v2.redo"):
             super().dispatch(
                 "document.undo" if method.endswith("undo") else "document.redo", params
             )
+            self.projects.touch(self.project_id)
             return self.state()
         if method == "v2.export":
             return super().dispatch("document.export", params)
@@ -633,6 +639,7 @@ class WorkspaceV2(Workspace):
             "started_at": time.time(),
             "model": model,
             "provider_account": account_id,
+            "agent": copy.deepcopy(CODEX_AGENT),
         }
         tools = TaskTools(
             self,
@@ -807,6 +814,7 @@ class WorkspaceV2(Workspace):
             conversation["messages"].append(
                 {
                     "role": "assistant",
+                    "agent": copy.deepcopy(task["agent"]),
                     "content": message,
                     "activity": task.get("activity", []),
                     "elapsed_seconds": max(

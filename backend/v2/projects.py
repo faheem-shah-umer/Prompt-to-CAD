@@ -3,6 +3,7 @@
 from contextlib import ExitStack, contextmanager
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -180,6 +181,7 @@ class Projects:
                             raise WorkspaceError(
                                 "A conversation does not match its project."
                             )
+                    self.initialize_timestamps(base, project)
                     found[pid] = base.name
                 except (
                     OSError,
@@ -248,6 +250,37 @@ class Projects:
             "diagnostics": getattr(self, "diagnostics", []),
         }
 
+    def initialize_timestamps(self, base, project):
+        def valid(key):
+            value = project.get(key)
+            return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+        if all(
+            valid(key)
+            for key in ("created_at", "content_modified_at", "last_opened_at")
+        ):
+            return
+        if not valid("created_at"):
+            project["created_at"] = (base / "workspace.json").stat().st_ctime
+        if not valid("content_modified_at"):
+            stamps = [project["created_at"]]
+            for entry in project["documents"]:
+                path = Path(entry["path"])
+                path = path if path.is_absolute() else base / path
+                stamps.append((path / "project.json").stat().st_mtime)
+            stamps.extend(
+                (base / "conversations" / (identifier(cid) + ".json")).stat().st_mtime
+                for cid in project["conversations"]
+            )
+            project["content_modified_at"] = max(stamps)
+        if not valid("last_opened_at"):
+            project["last_opened_at"] = 0
+        with revision_lock(base):
+            write_json(base / "workspace.json", project)
+
+    def touch(self, project_id):
+        self.update(project_id, content_modified_at=time.time())
+
     def purge(self, project_id, conversation_id=None):
         # Workspace writers take the same root lock before document locks.
         with self.write_lock():
@@ -280,6 +313,7 @@ class Projects:
                 project["conversations"].remove(cid)
                 if project.get("active_conversation_id") == cid:
                     project["active_conversation_id"] = None
+                project["content_modified_at"] = time.time()
                 write_json(base / "workspace.json", project)
             else:
                 if not project.get("trashed"):
@@ -349,6 +383,8 @@ class Projects:
                 "conversations": [],
                 "active_conversation_id": None,
                 "created_at": time.time(),
+                "content_modified_at": time.time(),
+                "last_opened_at": 0,
             }
             write_json(base / "workspace.json", project)
             catalog.setdefault("folders", {})[project_id] = directory
@@ -359,11 +395,16 @@ class Projects:
         return self.project(project_id)
 
     def update(self, project_id, **values):
-        base = self.project_path(project_id)
-        with revision_lock(base):
-            project = self.project(project_id)
-            project.update(values)
-            write_json(base / "workspace.json", project)
+        with self.write_lock():
+            base = self.project_path(project_id)
+            with revision_lock(base):
+                project = self.project(project_id)
+                changed = {k for k, v in values.items() if project.get(k) != v}
+                project.update(values)
+                if changed & {"name", "archived", "trashed", "documents", "conversations"}:
+                    project["content_modified_at"] = time.time()
+                if changed:
+                    write_json(base / "workspace.json", project)
         return project
 
     def import_project(self, source):
@@ -418,7 +459,10 @@ class Projects:
                     conversation = self.read(path)
                     conversation.update(provider_session=None, provider_account=None)
                     write_json(path, conversation)
+                project["content_modified_at"] = time.time()
+                project["last_opened_at"] = 0
                 write_json(temporary / "workspace.json", project)
+                self.initialize_timestamps(temporary, project)
                 temporary.rename(target)
             finally:
                 if temporary.exists():
@@ -430,13 +474,10 @@ class Projects:
         return pid
 
     def activate(self, project_id):
-        project = self.project(project_id)
         with self.write_lock():
+            project = self.update(project_id, last_opened_at=time.time())
             catalog = self.read(self.catalog)
             catalog["active"] = project_id
-            catalog["projects"] = [project_id] + [
-                p for p in catalog["projects"] if p != project_id
-            ]
             write_json(self.catalog, catalog)
         return project
 
@@ -536,12 +577,21 @@ class Projects:
         )
 
     def save_conversation(self, project_id, conversation):
-        write_json(
-            self.project_path(project_id)
-            / "conversations"
-            / (identifier(conversation["conversation_id"]) + ".json"),
-            conversation,
-        )
+        with self.write_lock():
+            base = self.project_path(project_id)
+            with revision_lock(base):
+                path = base / "conversations" / (
+                    identifier(conversation["conversation_id"]) + ".json"
+                )
+                previous = self.read(path) if path.exists() else {}
+                write_json(path, conversation)
+                if any(
+                    previous.get(k) != conversation.get(k)
+                    for k in ("title", "messages", "archived", "trashed", "document_id")
+                ):
+                    project = self.project(project_id)
+                    project["content_modified_at"] = time.time()
+                    write_json(base / "workspace.json", project)
 
     def task(self, project_id, task):
         write_json(

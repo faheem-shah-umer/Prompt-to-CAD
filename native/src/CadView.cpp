@@ -117,6 +117,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
             auto color = part.value("color").toArray();
             presentation->SetColor(Quantity_Color(color.at(0).toDouble(), color.at(1).toDouble(), color.at(2).toDouble(), Quantity_TOC_RGB));
             presentation->SetMaterial(Graphic3d_NOM_PLASTIC);
+            presentation->SetDisplayMode(AIS_Shaded);
             auto pose = part.value("matrix").toArray();
             if (pose.size() != 12) throw std::runtime_error("The body placement is invalid.");
             gp_Trsf trsf;
@@ -129,12 +130,17 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         meshPickOwners.clear();meshHover.Nullify();
         context->RemoveAll(false);
         shapes = next;meshes=nextMeshes;
-        for(const auto& mesh:meshes)context->Display(mesh,MeshVS_DMF_Shading|MeshVS_DMF_ElementalColorDataPrs,MeshVS_SMF_Mesh,false);
-        for (const auto& shape : shapes) context->Display(shape, AIS_Shaded, 0, false);
+        auto& hidden = hiddenByDocument[document.value("document_id").toString()];
+        QSet<QString> existing;
+        for (auto it=shapes.cbegin();it!=shapes.cend();++it) existing.insert(it.key());
+        for (auto it=meshes.cbegin();it!=meshes.cend();++it) existing.insert(it.key());
+        hidden.intersect(existing);
+        for (const auto& id : existing) if (!hidden.contains(id)) displayInstance(id);
         setSelectionMode(mode);
         currentSelection = {};
         Q_EMIT selectionChanged({});
         if (fit) fitAll(); else view->Redraw();
+        Q_EMIT visibilityChanged();
     } catch (const Standard_Failure& error) { Q_EMIT viewerError(QString::fromUtf8(error.GetMessageString())); }
       catch (const std::exception& error) { Q_EMIT viewerError(QString::fromUtf8(error.what())); }
 }
@@ -163,6 +169,7 @@ void CadView::selectInstances(const QStringList &ids) {
     if(context.IsNull())return;
     context->ClearSelected(false);
     for(const auto &id:ids) {
+        if (!isInstanceVisible(id)) continue;
         if(shapes.contains(id))context->AddOrRemoveSelected(shapes[id],false);
         else if(meshes.contains(id))context->AddOrRemoveSelected(meshes[id],false);
     }
@@ -175,9 +182,61 @@ void CadView::removeSelectedEntity(int index) {
     updateSelection();view->Redraw();
 }
 void CadView::setVisibleInstance(const QString& id, bool visible) {
-    if(context.IsNull())return;
-    if(shapes.contains(id)){if(visible)context->Display(shapes[id],false);else context->Erase(shapes[id],false);}
-    else if(meshes.contains(id)){if(visible)context->Display(meshes[id],false);else context->Erase(meshes[id],false);}
+    setVisibleInstances({id}, visible);
+}
+bool CadView::isInstanceVisible(const QString& id) const {
+    return (shapes.contains(id) || meshes.contains(id)) &&
+           !hiddenByDocument.value(document.value("document_id").toString()).contains(id);
+}
+QStringList CadView::visibleInstances() const {
+    QStringList ids;
+    for (auto it=shapes.cbegin();it!=shapes.cend();++it) if (isInstanceVisible(it.key())) ids << it.key();
+    for (auto it=meshes.cbegin();it!=meshes.cend();++it) if (isInstanceVisible(it.key())) ids << it.key();
+    return ids;
+}
+void CadView::displayInstance(const QString& id) {
+    if (shapes.contains(id)) {
+        shapes[id]->SetDisplayMode(AIS_Shaded);
+        const int selectionMode = mode == "body" ? 0 : AIS_Shape::SelectionMode(topologyKind(mode));
+        context->Display(shapes[id], AIS_Shaded, selectionMode, false);
+    } else if (meshes.contains(id)) {
+        context->Display(meshes[id], MeshVS_DMF_Shading | MeshVS_DMF_ElementalColorDataPrs,
+                         mode == "face" ? MeshVS_SMF_Face : MeshVS_SMF_Mesh, false);
+    }
+}
+void CadView::setVisibleInstances(const QStringList& ids, bool visible) {
+    if (context.IsNull()) return;
+    auto& hidden = hiddenByDocument[document.value("document_id").toString()];
+    QList<Handle(SelectMgr_EntityOwner)> remove;
+    if (!visible) {
+        for (context->InitSelected(); context->MoreSelected(); context->NextSelected()) {
+            auto object = context->SelectedInteractive();
+            for (const auto& id : ids)
+                if ((shapes.contains(id) && object == shapes[id]) ||
+                    (meshes.contains(id) && object == meshes[id])) {
+                    remove.append(context->SelectedOwner());
+                    break;
+                }
+        }
+        for (const auto& owner : remove) context->AddOrRemoveSelected(owner, false);
+    }
+    for (const auto& id : ids) {
+        if (!shapes.contains(id) && !meshes.contains(id)) continue;
+        if (visible) {
+            hidden.remove(id);
+            displayInstance(id);
+        } else {
+            hidden.insert(id);
+            if (shapes.contains(id)) context->Erase(shapes[id], false);
+            else context->Erase(meshes[id], false);
+        }
+    }
+    if (!meshHover.IsNull()) {
+        if (!context->IsSelected(meshHover)) meshHover->Unhilight(context->MainPrsMgr(), 0);
+        meshHover.Nullify();
+    }
+    if (!remove.isEmpty()) updateSelection();
+    Q_EMIT visibilityChanged();
     view->Redraw();
 }
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -384,8 +443,25 @@ double CadView::benchmarkOrbit() {
     return seconds > 0 ? 60 / seconds : 0;
 }
 
-void CadView::isolateInstance(const QString& id){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),it.key()==id);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),it.key()==id);}
-void CadView::showAll(){for(auto it=shapes.cbegin();it!=shapes.cend();++it)setVisibleInstance(it.key(),true);for(auto it=meshes.cbegin();it!=meshes.cend();++it)setVisibleInstance(it.key(),true);}
+void CadView::isolateInstance(const QString& id) {
+    isolateInstances({id});
+}
+void CadView::isolateInstances(const QStringList& ids) {
+    if (context.IsNull()) return;
+    QStringList others;
+    bool found = false;
+    auto& hidden = hiddenByDocument[document.value("document_id").toString()];
+    for (const auto& id : shapes.keys() + meshes.keys()) {
+        if (ids.contains(id)) {
+            found = true;
+            hidden.remove(id);
+            displayInstance(id);
+        } else others << id;
+    }
+    if (found) setVisibleInstances(others, false);
+}
+void CadView::showAll(){setVisibleInstances(shapes.keys() + meshes.keys(), true);}
+void CadView::hideAll(){setVisibleInstances(shapes.keys() + meshes.keys(), false);}
 void CadView::setShading(bool edges){if(context.IsNull())return;context->DefaultDrawer()->SetFaceBoundaryDraw(edges);for(const auto& shape:shapes)context->Redisplay(shape,false);view->Redraw();}
 
 void CadView::setLightTheme(bool light) {

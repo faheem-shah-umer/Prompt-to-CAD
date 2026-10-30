@@ -1,6 +1,7 @@
 #include "WorkspaceIcons.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
+#include <QItemSelectionModel>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -15,11 +16,17 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollBar>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
+#include "CadView.h"
+#include <algorithm>
 namespace {
 QLabel *text(const QString &value) {
   auto *label = new QLabel(value);
@@ -44,6 +51,115 @@ QFrame *popover(WorkspaceWindow *window, QWidget *anchor, const QString &name) {
   return frame;
 }
 } // namespace
+void WorkspaceWindow::refreshProjectTree() {
+  const QSignalBlocker blocker(projects);
+  QHash<QString, bool> expanded;
+  QSet<QString> selectedRows;
+  QString currentRow;
+  auto rowKey = [](QTreeWidgetItem *item) {
+    return item->data(0, Qt::UserRole).toString() + "/" +
+           item->data(0, Qt::UserRole + 1).toString();
+  };
+  for (int i = 0; i < projects->topLevelItemCount(); ++i) {
+    auto *item = projects->topLevelItem(i);
+    expanded.insert(item->data(0, Qt::UserRole).toString(), item->isExpanded());
+  }
+  for (auto *item : projects->selectedItems()) selectedRows.insert(rowKey(item));
+  if (projects->currentItem()) currentRow = rowKey(projects->currentItem());
+  const int scroll = projects->verticalScrollBar()->value();
+  const auto active = state.value("project").toObject().value("project_id").toString();
+  const auto chatId = state.value("conversation").toObject().value("conversation_id").toString();
+  const bool opened = projects->property("activeProject").toString() != active ||
+                      projects->property("activeConversation").toString() != chatId;
+  if (opened && !active.isEmpty()) {
+    currentRow = active + "/" + chatId;
+    selectedRows = {currentRow};
+  }
+  projects->setProperty("activeProject", active);
+  projects->setProperty("activeConversation", chatId);
+  QList<QJsonObject> entries;
+  for (auto value : state.value("catalog").toObject().value("projects").toArray()) {
+    auto project = value.toObject();
+    if (!project.value("archived").toBool() && !project.value("trashed").toBool()) entries << project;
+  }
+  const auto order = QSettings().value("v2/projectSort", "changed").toString();
+  std::sort(entries.begin(), entries.end(), [order](const QJsonObject& a, const QJsonObject& b) {
+    const QString field = order == "created" ? "created_at" : order == "opened" ? "last_opened_at" : "content_modified_at";
+    if (order != "name" && order != "name_desc") {
+      const double first = a.value(field).toDouble(), second = b.value(field).toDouble();
+      if (first != second) return first > second;
+    }
+    const int names = QString::compare(a.value("name").toString(), b.value("name").toString(), Qt::CaseInsensitive);
+    if (names) return order == "name_desc" ? names > 0 : names < 0;
+    return a.value("project_id").toString() < b.value("project_id").toString();
+  });
+  projects->clear();
+  QTreeWidgetItem *current = nullptr;
+  auto restoreRow = [&](QTreeWidgetItem *item) {
+    const auto key = rowKey(item);
+    item->setSelected(selectedRows.contains(key));
+    if (key == currentRow) current = item;
+  };
+  for (const auto& project : entries) {
+    const auto id = project.value("project_id").toString();
+    auto *item = new QTreeWidgetItem(projects, {project.value("name").toString()});
+    item->setData(0, Qt::UserRole, id);
+    restoreRow(item);
+    for (auto value : project.value("conversation_summaries").toArray()) {
+      auto chat = value.toObject();
+      if (chat.value("archived").toBool() || chat.value("trashed").toBool()) continue;
+      auto *child = new QTreeWidgetItem(item, {chat.value("title").toString()});
+      child->setData(0, Qt::UserRole, id);
+      child->setData(0, Qt::UserRole + 1, chat.value("conversation_id"));
+      restoreRow(child);
+    }
+    item->setExpanded(opened && id == active ? true : expanded.value(id, id == active));
+  }
+  if (current) projects->setCurrentItem(current, 0, QItemSelectionModel::NoUpdate);
+  filterProjects();
+  if (opened && current) projects->scrollToItem(current);
+  else projects->verticalScrollBar()->setValue(scroll);
+}
+
+void WorkspaceWindow::filterProjects() {
+  const auto filter = search->text();
+  for (int i = 0; i < projects->topLevelItemCount(); ++i) {
+    auto *item = projects->topLevelItem(i);
+    const bool parentMatch = item->text(0).contains(filter, Qt::CaseInsensitive);
+    bool found = parentMatch;
+    for (int j = 0; j < item->childCount(); ++j) {
+      const bool match = parentMatch || item->child(j)->text(0).contains(filter, Qt::CaseInsensitive);
+      item->child(j)->setHidden(!match);
+      found |= match;
+    }
+    item->setHidden(!found);
+  }
+}
+
+void WorkspaceWindow::filterModels() {
+  const auto filter = treeFilter->text();
+  std::function<bool(QTreeWidgetItem*)> include = [&](QTreeWidgetItem *item) {
+    bool found = item->text(0).contains(filter, Qt::CaseInsensitive);
+    for (int i=0;i<item->childCount();++i) found = include(item->child(i)) || found;
+    item->setHidden(!found);
+    if (!filter.isEmpty() && found) item->setExpanded(true);
+    return found;
+  };
+  for (int i=0;i<modelTree->topLevelItemCount();++i) include(modelTree->topLevelItem(i));
+}
+
+void WorkspaceWindow::syncModelVisibility() {
+  const QSignalBlocker blocker(modelTree);
+  for (QTreeWidgetItemIterator it(modelTree); *it; ++it) {
+    const auto id = (*it)->data(0, Qt::UserRole).toString();
+    if (!id.isEmpty()) (*it)->setCheckState(0, viewer->isInstanceVisible(id) ? Qt::Checked : Qt::Unchecked);
+  }
+  const bool any = !document.value("components").toArray().isEmpty();
+  for (const auto& name : {"showAllModels", "hideAllModels", "selectAllModels"})
+    if (auto *control = findChild<QPushButton*>(name)) control->setEnabled(any);
+  if (auto *control = findChild<QPushButton*>("clearModelSelection")) control->setEnabled(!selected.isEmpty());
+}
+
 void WorkspaceWindow::showAccountDetails() {
   auto *panel = popover(this, accountBadge, "accountPopover");
   if (!panel)

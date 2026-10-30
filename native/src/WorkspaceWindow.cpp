@@ -5,6 +5,7 @@
 #include "WorkspaceIcons.h"
 #include "WorkspaceTheme.h"
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -122,7 +123,42 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     search = new QLineEdit;
     search->setPlaceholderText("Search projects and conversations");
     search->addAction(workspaceIcon("search"), QLineEdit::LeadingPosition);
-    nav->addWidget(search);
+    auto *projectSearch = new QHBoxLayout;
+    projectSearch->setSpacing(5);
+    projectSearch->addWidget(search, 1);
+    auto *sort = new QToolButton;
+    sort->setObjectName("projectSort");
+    sort->setIcon(workspaceIcon("arrows"));
+    sort->setProperty("workspaceIcon", "arrows");
+    sort->setAccessibleName("Sort projects");
+    sort->setFixedSize(32, 32);
+    sort->setPopupMode(QToolButton::InstantPopup);
+    auto *sortMenu = new QMenu(sort);
+    auto *sortGroup = new QActionGroup(sortMenu);
+    const auto savedSort = QSettings().value("v2/projectSort", "changed").toString();
+    const QList<QPair<QString, QString>> sorting{{"changed", "Recently changed"},
+        {"name", "Name A–Z"}, {"name_desc", "Name Z–A"},
+        {"created", "Newest created"}, {"opened", "Recently opened"}};
+    for (const auto& option : sorting) {
+        auto *action = sortMenu->addAction(option.second);
+        action->setData(option.first);
+        action->setCheckable(true);
+        sortGroup->addAction(action);
+        action->setChecked(option.first == savedSort);
+        if (action->isChecked()) sort->setToolTip("Sort projects: " + option.second);
+    }
+    if (!sortGroup->checkedAction()) {
+        sortGroup->actions().first()->setChecked(true);
+        sort->setToolTip("Sort projects: Recently changed");
+    }
+    connect(sortGroup, &QActionGroup::triggered, this, [this, sort](QAction *action) {
+        QSettings().setValue("v2/projectSort", action->data());
+        sort->setToolTip("Sort projects: " + action->text());
+        refreshProjectTree();
+    });
+    sort->setMenu(sortMenu);
+    projectSearch->addWidget(sort);
+    nav->addLayout(projectSearch);
     projects = new QTreeWidget;
     projects->setHeaderHidden(true);
     projects->setIndentation(14);
@@ -273,6 +309,31 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     treeFilter = new QLineEdit;
     treeFilter->setPlaceholderText("Filter model tree");
     modelLayout->addWidget(treeFilter);
+    auto *visibilityControls = new QHBoxLayout;
+    visibilityControls->setSpacing(5);
+    auto *showModels = button("Show all", visibilityControls, [this] { viewer->showAll(); });
+    auto *hideModels = button("Hide all", visibilityControls, [this] { viewer->hideAll(); });
+    showModels->setObjectName("showAllModels");
+    hideModels->setObjectName("hideAllModels");
+    showModels->setToolTip("Show every component, including filtered models");
+    hideModels->setToolTip("Hide every component, including filtered models");
+    modelLayout->addLayout(visibilityControls);
+    auto *selectionControls = new QHBoxLayout;
+    selectionControls->setSpacing(5);
+    auto *selectModels = button("Select all visible", selectionControls, [this] {
+        const auto ids = viewer->visibleInstances();
+        if (ids.size() > 256) {
+            notify("There are more than 256 visible components. Hide some before selecting all.", "info");
+            return;
+        }
+        selectionMode->setCurrentText("Body");
+        viewer->selectInstances(ids);
+    });
+    selectModels->setObjectName("selectAllModels");
+    selectModels->setToolTip("Select all visible components for the next task, including filtered models");
+    auto *clearModels = button("Clear selection", selectionControls, [this] { viewer->removeSelectedEntity(-1); });
+    clearModels->setObjectName("clearModelSelection");
+    modelLayout->addLayout(selectionControls);
     modelTree = new QTreeWidget;
     modelTree->setHeaderHidden(true);
     modelLayout->addWidget(modelTree);
@@ -347,9 +408,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     conversationTitle->setWordWrap(true);
     conversationTitle->setStyleSheet("font-size:14px;font-weight:600");
     conversationHeader->addWidget(conversationTitle, 1);
-    auto *connectionButton = button("Codex", conversationHeader, [this] { account(); });
-    connectionButton->setObjectName("quietButton");
-    connectionButton->setToolTip("Account and agent settings");
+    agentButton = button("Assistant", conversationHeader, [this] { account(); });
+    agentButton->setObjectName("quietButton");
+    agentButton->setToolTip("Account and agent settings");
     conversation->addLayout(conversationHeader);
     chat = new ConversationView;
     chat->setObjectName("conversationHistory");
@@ -376,10 +437,13 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     models = picker;
     models->setObjectName("modelPicker");
     connect(picker,&ModelPicker::refreshRequested,this,[this] { discoverModels(true); });
-    models->setMinimumContentsLength(7);
-    models->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    models->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    models->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    models->setMinimumWidth(0);
+    models->setMaximumWidth(240);
     models->setPlaceholderText("Choose model");
-    providerRow->addWidget(models, 1);
+    providerRow->addWidget(models);
+    providerRow->addStretch(1);
     sendButton = button("", providerRow, [this] {
         if (taskRunning) {
             if (currentTaskState == "cancelling") return;
@@ -464,10 +528,19 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     }
     viewMenu->addAction("Fit model", viewer, &CadView::fitAll);
     viewMenu->addAction("Hide selected", this, [this] {
-        viewer->setVisibleInstance(selected.value("instance_id").toString(), false);
+        QStringList ids;
+        for (const auto& value : selected.value("entities").toArray())
+            ids << value.toObject().value("instance_id").toString();
+        if (ids.isEmpty()) ids << selected.value("instance_id").toString();
+        viewer->setVisibleInstances(ids, false);
     });
-    viewMenu->addAction("Isolate selected", this,
-                        [this] { viewer->isolateInstance(selected.value("instance_id").toString()); });
+    viewMenu->addAction("Isolate selected", this, [this] {
+        QStringList ids;
+        for (const auto& value : selected.value("entities").toArray())
+            ids << value.toObject().value("instance_id").toString();
+        if (ids.isEmpty()) ids << selected.value("instance_id").toString();
+        viewer->isolateInstances(ids);
+    });
     viewMenu->addAction("Show all", viewer, &CadView::showAll);
     auto *edgesAction = viewMenu->addAction("Show solid edges");
     edgesAction->setCheckable(true);
@@ -562,35 +635,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     connect(selectionMode, &QComboBox::currentTextChanged, this,
             [this](const QString &kind) { viewer->setSelectionMode(kind.toLower()); });
     connect(viewer, &CadView::selectionChanged, this, &WorkspaceWindow::select);
+    connect(viewer, &CadView::selectionChanged, this, [this] { syncModelVisibility(); });
+    connect(viewer, &CadView::visibilityChanged, this, &WorkspaceWindow::syncModelVisibility);
     connect(viewer, &CadView::viewerError, this, [this](const QString &e) {
         viewerFailed = true;
         showError(e);
     });
-    connect(treeFilter, &QLineEdit::textChanged, this, [this](const QString &filter) {
-        std::function<bool(QTreeWidgetItem *)> include = [&](QTreeWidgetItem *item) {
-            bool visible = item->text(0).contains(filter, Qt::CaseInsensitive);
-            for (int i = 0; i < item->childCount(); ++i)
-                visible = include(item->child(i)) || visible;
-            item->setHidden(!visible);
-            if (!filter.isEmpty() && visible)
-                item->setExpanded(true);
-            return visible;
-        };
-        for (int i = 0; i < modelTree->topLevelItemCount(); ++i)
-            include(modelTree->topLevelItem(i));
-    });
-    connect(search, &QLineEdit::textChanged, this, [this](const QString &filter) {
-        for (int i = 0; i < projects->topLevelItemCount(); ++i) {
-            auto *p = projects->topLevelItem(i);
-            bool found = p->text(0).contains(filter, Qt::CaseInsensitive);
-            for (int j = 0; j < p->childCount(); ++j) {
-                bool match = p->child(j)->text(0).contains(filter, Qt::CaseInsensitive);
-                p->child(j)->setHidden(!match && !found);
-                found |= match;
-            }
-            p->setHidden(!found);
-        }
-    });
+    connect(treeFilter, &QLineEdit::textChanged, this, [this] { filterModels(); });
+    connect(search, &QLineEdit::textChanged, this, [this] { filterProjects(); });
     connect(projects, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int) {
         if (busy || loading || (QApplication::keyboardModifiers() & (Qt::ControlModifier|Qt::ShiftModifier)))
             return;
@@ -1021,26 +1073,7 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
         if (o.value("document_id").toString() == previousDoc)
             documentTabs->setCurrentIndex(i);
     }
-    projects->clear();
-    for (auto p : value.value("catalog").toObject().value("projects").toArray()) {
-        auto o = p.toObject();
-        if (o.value("archived").toBool() || o.value("trashed").toBool())
-            continue;
-        auto *item = new QTreeWidgetItem(projects, {o.value("name").toString()});
-        item->setData(0, Qt::UserRole, o.value("project_id"));
-        item->setExpanded(o.value("project_id") == project.value("project_id"));
-        for (auto c : o.value("conversation_summaries").toArray()) {
-            auto chatItem = c.toObject();
-            if (chatItem.value("archived").toBool() || chatItem.value("trashed").toBool())
-                continue;
-            auto *child = new QTreeWidgetItem(item, {chatItem.value("title").toString()});
-            child->setData(0, Qt::UserRole, o.value("project_id"));
-            child->setData(0, Qt::UserRole + 1, chatItem.value("conversation_id"));
-            if (chatItem.value("conversation_id") ==
-                value.value("conversation").toObject().value("conversation_id"))
-                projects->setCurrentItem(child);
-        }
-    }
+    refreshProjectTree();
     modelTree->clear();
     QMap<QString, QTreeWidgetItem *> groups;
     for (auto node : document.value("assembly_nodes").toArray()) {
@@ -1063,7 +1096,7 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
         else
             modelTree->addTopLevelItem(item);
         item->setData(0, Qt::UserRole, o.value("instance_id"));
-        item->setCheckState(0, Qt::Checked);
+        item->setCheckState(0, viewer->isInstanceVisible(o.value("instance_id").toString()) ? Qt::Checked : Qt::Unchecked);
         item->setToolTip(0, o.value("representation") == "mesh"
                                 ? "Visual mesh · explicit triangle regions; no original feature "
                                   "history"
@@ -1071,6 +1104,9 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                                 ? "Solid geometry · original feature history unavailable"
                                 : "Editable named parameters available in Properties");
     }
+    filterModels();
+    if (!changed && !selected.isEmpty()) select(selected);
+    syncModelVisibility();
     revisions->clear();
     for (auto revision : document.value("history").toArray()) {
         auto o = revision.toObject();
@@ -1108,6 +1144,10 @@ void WorkspaceWindow::select(const QJsonObject &selection) {
     if (selection.isEmpty()) {
         selected = {};
         selectionChip->hide();
+        QSignalBlocker blocker(modelTree);
+        modelTree->clearSelection();
+        properties->clear();
+        operationPane->hide();
         return;
     }
     selected = selection;
@@ -1198,6 +1238,7 @@ void WorkspaceWindow::submit() {
     p["prompt"] = composer->toPlainText();
     p["model"] = models->currentData().toString();
     activeTaskId = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
+    taskAgent = state.value("runtime").toObject().value("agent").toObject();
     p["task_id"] = activeTaskId;
     currentActivity.clear();
     pendingUser = takeComposerText();

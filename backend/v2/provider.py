@@ -13,6 +13,8 @@ from backend.native.contracts import WorkspaceError
 
 from .process_limits import ProcessTree
 
+CODEX_AGENT = {"id": "codex", "display_name": "Codex"}
+
 
 def discover_executable(configured=None):
     if configured:

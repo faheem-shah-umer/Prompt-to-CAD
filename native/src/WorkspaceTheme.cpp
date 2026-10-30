@@ -74,6 +74,10 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QFrame#messageBubble[user="true"] { background:@userBubble@; border:0; border-radius:14px; }
         QTextBrowser#messageText { background:transparent; border:0; border-radius:0; padding:0; }
         QLabel#messageAuthor { color:@muted@; font-size:11px; font-weight:600; }
+        QToolButton#messageCopy { border:0; border-radius:5px; padding:3px; }
+        QToolButton#projectSort { padding:4px; }
+        QToolButton#projectSort::menu-indicator { image:none; }
+        QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:5px 6px; font-size:11px; }
         QToolButton#workDisclosure { border:0; background:transparent; padding:3px 0; color:@muted@; }
         QLabel#activitySummary, QLabel#livePhase { color:@muted@; }
         QFrame#changeCard { background:@selected@; border:0; border-radius:9px; padding:3px; }
