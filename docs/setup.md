@@ -1,6 +1,6 @@
 # Prompt to CAD — CAD workspace
 
-The agentic-capabilities branch adds restructuring, colours, engineering records and image reference inputs in source. See [agentic CAD capabilities](agentic-cad.md) for the contracts and pending checks. No tests or native rebuild were run for that update; the existing executable does not include its UI changes yet.
+The agentic-capabilities branch adds restructuring, colours, engineering records and image reference inputs in source. See [agentic CAD capabilities](agentic-cad.md) for the contracts and pending checks. The local executable now includes these native UI changes after an explicitly requested rebuild. Tests, live inference and UI verification remain pending.
 
 ## Source-only development
 

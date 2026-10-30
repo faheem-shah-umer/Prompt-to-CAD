@@ -1,6 +1,6 @@
 # Agentic CAD capabilities — source implementation
 
-These changes are implemented in source on `agentic-cad-capabilities`. No tests, live inference, native rebuild, UI verification or installer were run for this update. The existing executable does not contain the native UI changes until a separately requested rebuild. The acceptance scenarios below remain pending; they are not validation results.
+These changes are implemented on `agentic-cad-capabilities`. At the user’s request, the native executable was rebuilt and deployed behind the existing local shortcut. No tests, live inference, UI verification or installer were run. See the [local build record](runtime-update.md). The acceptance scenarios below remain pending; they are not validation results.
 
 ## Component transactions
 

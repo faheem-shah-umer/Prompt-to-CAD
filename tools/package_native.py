@@ -107,6 +107,10 @@ def copy_native(destination, qt, occt, env):
     plugins = destination / "plugins/platforms"
     plugins.mkdir(parents=True, exist_ok=True)
     shutil.copy2(qt / "lib/qt6/plugins/platforms/qwindows.dll", plugins)
+    images = destination / "plugins/imageformats"
+    images.mkdir(parents=True, exist_ok=True)
+    for name in ("qjpeg.dll", "qwebp.dll"):
+        shutil.copy2(qt / "lib/qt6/plugins/imageformats" / name, images)
     (destination / "qt.conf").write_text("[Paths]\nPrefix=.\nPlugins=plugins\n")
     dumpbin = shutil.which("dumpbin", path=env["PATH"])
     if not dumpbin:
@@ -120,7 +124,12 @@ def copy_native(destination, qt, occt, env):
         Path(sys.base_prefix) / "DLLs",
         Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32",
     ]
-    pending = [destination / "PromptToCAD.exe", plugins / "qwindows.dll"]
+    pending = [
+        destination / "PromptToCAD.exe",
+        plugins / "qwindows.dll",
+        images / "qjpeg.dll",
+        images / "qwebp.dll",
+    ]
     copied = set()
     while pending:
         source = pending.pop()

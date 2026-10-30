@@ -4,13 +4,13 @@ Development policy: run tests only when the user explicitly requests a task-spec
 
 ## Pending verification: project ordering and conversation polish
 
-Project sorting/timestamps, bulk model visibility/selection, shaded redisplay, per-message copying, provider-aware authors and the compact model trigger have been implemented in source only. No tests, native rebuild or UI verification were run for these changes. The existing executable does not include the native changes until a separately requested rebuild.
+Project sorting/timestamps, bulk model visibility/selection, shaded redisplay, per-message copying, provider-aware authors and the compact model trigger have been implemented and included in the explicitly requested local native rebuild. No tests or UI verification were run for these changes.
 
 When specifically requested, validate stable ordering across open/refresh/restart and legacy timestamp initialization; meaningful content changes versus session-only updates; solid/mesh hide/show cycles with colours and edges; visibility/selection synchronization under filtering, revisions and the 256-entity limit; frozen running-task selection; clipboard output during streaming; historical provider identity; and compact layouts in both themes at laptop sizes and Windows scaling. Use synthetic projects and provider metadata, preserving personal data and credentials.
 
 ## Pending verification: agentic CAD capabilities
 
-Component restructuring, multi-output definitions, expanded controlled scripting, metadata-aware revisions/scope, component colours, engineering records and image attachment/capability handling are source changes only. No tests, live inference, rebuild or UI verification were run. See [agentic CAD capabilities](agentic-cad.md) for the API behaviour, limitations and acceptance scenarios to run only when explicitly requested.
+Component restructuring, multi-output definitions, expanded controlled scripting, metadata-aware revisions/scope, component colours, engineering records and image attachment/capability handling are implemented and included in the explicitly requested local native rebuild. No tests, live inference or UI verification were run. See [agentic CAD capabilities](agentic-cad.md) for the API behaviour, limitations and acceptance scenarios to run only when explicitly requested.
 
 ## Existing validation commands
 
