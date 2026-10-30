@@ -12,3 +12,9 @@ The user explicitly requested updating the runnable application after the source
 Temporary compiler, SDK and build intermediates were kept outside the repository and removed after deployment. Runnable files remain ignored by Git. This update does not enable automatic builds or tests.
 
 No tests, live inference, authentication, UI verification, installer, merge or push were performed. Successful compilation and file inspection do not establish the modelling, provider or UI acceptance scenarios in [agentic CAD capabilities](agentic-cad.md) or [validation](validation.md).
+
+## Chat composer update — 2026-10-30
+
+The attachment control now uses a bundled paperclip icon. Unsent composer text is kept in memory per project/conversation alongside attachment drafts. Switching conversations restores only the destination conversation’s draft; refreshing the same conversation does not reset it. Drafts are not newly persisted to disk by this change.
+
+A Release build completed all 21 compile/link steps and was deployed behind the existing shortcut after the user closed the app. The deployed executable is 873,472 bytes; SHA-256 `dc2790a1882cbe6f7028e79b437579173f8afd5d2e4e2754911d75942af394fc`. Deployed bytes match the linked executable. Existing compiler warnings remain. No tests, UI verification or inference were run. Temporary build tools and intermediates were removed after deployment; projects and credentials were preserved.

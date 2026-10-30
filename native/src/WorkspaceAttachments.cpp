@@ -82,12 +82,16 @@ void WorkspaceWindow::addReferenceAttachment(const QJsonObject &reference) {
     draftAttachments.append(reference); renderAttachmentDraft(); updateSendControl();
 }
 
-void WorkspaceWindow::changeAttachmentContext() {
+void WorkspaceWindow::changeConversationDraftContext() {
     const auto context = state.value("project").toObject().value("project_id").toString() + "/" +
                          state.value("conversation").toObject().value("conversation_id").toString();
     if (context == attachmentContext) return;
-    attachmentDrafts[attachmentContext] = draftAttachments;
+    if (!attachmentContext.isEmpty() && attachmentContext != "/") {
+        attachmentDrafts[attachmentContext] = draftAttachments;
+        composerDrafts[attachmentContext] = composer->toPlainText();
+    }
     attachmentContext = context; draftAttachments = attachmentDrafts.value(context);
+    composer->setPlainText(composerDrafts.value(context));
     renderAttachmentDraft();
 }
 

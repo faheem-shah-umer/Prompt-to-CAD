@@ -451,7 +451,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     compose->addWidget(composer);
     auto *providerRow = new QHBoxLayout;
     auto *attach = new QToolButton;
-    attach->setObjectName("attachImages"); setWorkspaceIcon(attach, "add"); attach->setFixedSize(28, 28);
+    attach->setObjectName("attachImages"); setWorkspaceIcon(attach, "paperclip"); attach->setFixedSize(28, 28);
     attach->setAccessibleName("Attach reference images"); attach->setToolTip("Attach reference images · paste or drop images into the composer");
     connect(attach, &QToolButton::clicked, this, [this] {
         if (imagePreflight || focusOpenDialog()) return;
@@ -1069,7 +1069,7 @@ void WorkspaceWindow::openFile(const QString &supplied) {
 void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     loading = true;
     state = value;
-    changeAttachmentContext();
+    changeConversationDraftContext();
     auto next = value.value("document").toObject();
     bool changed = next.value("revision_id") != document.value("revision_id") ||
                    next.value("document_id") != document.value("document_id");

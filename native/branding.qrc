@@ -16,6 +16,7 @@
         <file alias="folder-open.svg">../assets/icons/folder-open.svg</file>
         <file alias="folder.svg">../assets/icons/folder.svg</file>
         <file alias="menu-dots.svg">../assets/icons/menu-dots.svg</file>
+        <file alias="paperclip.svg">../assets/icons/paperclip.svg</file>
         <file alias="redo.svg">../assets/icons/redo.svg</file>
         <file alias="search.svg">../assets/icons/search.svg</file>
         <file alias="settings.svg">../assets/icons/settings.svg</file>

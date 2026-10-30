@@ -67,7 +67,7 @@ class WorkspaceWindow : public QMainWindow {
     void addPastedImage(const QImage &image);
     void addReferenceAttachment(const QJsonObject &reference);
     void renderAttachmentDraft();
-    void changeAttachmentContext();
+    void changeConversationDraftContext();
     void prepareImageSubmission(QJsonObject params);
     void stageNextAttachment(int index, QJsonArray inputs, QJsonArray prepared, QJsonObject params);
     void finishImagePreflight();
@@ -123,6 +123,7 @@ class WorkspaceWindow : public QMainWindow {
     QJsonObject state, document, selected, operationSelection, taskAgent;
     QJsonArray draftAttachments, submittedAttachments, submittedDraftAttachments;
     QHash<QString, QJsonArray> attachmentDrafts, failedAttachmentDrafts;
+    QHash<QString, QString> composerDrafts;
     QString attachmentContext;
     QString workspace, currentOperation;
     bool polishVerified = false;
