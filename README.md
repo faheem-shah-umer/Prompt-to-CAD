@@ -10,6 +10,8 @@ Make source changes without automatically building, packaging or launching the a
 
 Connect **ChatGPT subscription — Codex** or **OpenAI API key — separately billed** in Settings. Both use the same App Server and scoped CAD tools. Billing never switches automatically.
 
+The agentic-capabilities source update adds component split/merge/replacement transactions, broader controlled CAD scripting, editable project definitions, component colours, engineering annotations and model-gated reference images. See [capabilities and current limits](docs/agentic-cad.md). These changes have not been tested or rebuilt; the existing executable does not include the new native UI yet.
+
 | Path | Purpose |
 | --- | --- |
 | assets/ | Original purple pyramid logo for application source and docs |

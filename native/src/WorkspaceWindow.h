@@ -25,6 +25,7 @@ class QFormLayout;
 class QDoubleSpinBox;
 class QResizeEvent;
 class QTimer;
+class QImage;
 
 class WorkspaceWindow : public QMainWindow {
     Q_OBJECT
@@ -61,6 +62,16 @@ class WorkspaceWindow : public QMainWindow {
     void beginSignIn(const QString &registration = {}, bool newRegistration = false);
     void showOnboarding();
     void submit();
+    void startAgentTask(QJsonObject params);
+    void addImageFiles(const QStringList &paths);
+    void addPastedImage(const QImage &image);
+    void addReferenceAttachment(const QJsonObject &reference);
+    void renderAttachmentDraft();
+    void changeAttachmentContext();
+    void prepareImageSubmission(QJsonObject params);
+    void stageNextAttachment(int index, QJsonArray inputs, QJsonArray prepared, QJsonObject params);
+    void finishImagePreflight();
+    void restoreSubmittedAttachments();
     QString takeComposerText();
     void select(const QJsonObject &);
     void operation(const QString &);
@@ -74,6 +85,9 @@ class WorkspaceWindow : public QMainWindow {
     void openNativeProject();
     void updateUsage();
     void refreshConnectionControls();
+    void chooseComponentColour(bool sourceColors = false);
+    void editEngineeringRecord(const QString &identity = {});
+    QString engineeringHtml(const QStringList &ids) const;
     void refreshProjectTree();
     void filterProjects();
     void filterModels();
@@ -84,6 +98,7 @@ class WorkspaceWindow : public QMainWindow {
     RpcClient *rpc;
     QSplitter *split;
     QWidget *navigation, *manager, *conversationPane, *operationPane, *emptyPage;
+    QWidget *attachmentStrip;
     QTreeWidget *projects, *modelTree, *revisions;
     QTabBar *documentTabs;
     QTabWidget *managerTabs;
@@ -106,10 +121,14 @@ class WorkspaceWindow : public QMainWindow {
     QList<QDoubleSpinBox *> fields;
     QAction *undoAction, *redoAction;
     QJsonObject state, document, selected, operationSelection, taskAgent;
+    QJsonArray draftAttachments, submittedAttachments, submittedDraftAttachments;
+    QHash<QString, QJsonArray> attachmentDrafts, failedAttachmentDrafts;
+    QString attachmentContext;
     QString workspace, currentOperation;
     bool polishVerified = false;
     bool settingsVerified = false, conversationsVerified = false, onboardingVerified = false, startupEmpty = false;
     int settingsSaves = 0;
     bool taskRunning = false, modelsLoading = false, refreshScheduled = false;
     bool busy = false, smoke = false, viewerFailed = false, loading = false;
+    bool imagePreflight = false;
 };

@@ -1,5 +1,6 @@
 #pragma once
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QScrollArea>
 #include <QSet>
 #include <QHash>
@@ -15,6 +16,7 @@ class ConversationView : public QScrollArea {
     QString plainText() const;
   Q_SIGNALS:
     void anchorClicked(const QUrl &url);
+    void attachmentRequested(const QJsonObject &reference);
   protected:
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *) override;

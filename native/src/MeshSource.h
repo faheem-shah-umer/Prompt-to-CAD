@@ -2,6 +2,7 @@
 #include <MeshVS_DataSource.hxx>
 #include <MeshVS_Mesh.hxx>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <vector>
 #include <array>
 #include <gp_Pnt.hxx>
@@ -38,4 +39,4 @@ class MeshSource : public MeshVS_DataSource {
     std::vector<std::array<int, 3>> triangles;
     TColStd_PackedMapOfInteger nodes, elements;
 };
-Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset);
+Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset, const QJsonArray &overrideColor = {});

@@ -39,8 +39,8 @@ void WorkspaceWindow::receiveAssistant(const QJsonObject &event, bool complete) 
 
 void WorkspaceWindow::renderChat() {
     auto messages = state.value("conversation").toObject().value("messages").toArray();
-    if (busy && !pendingUser.isEmpty()) {
-        messages.append(QJsonObject{{"role", "user"}, {"content", pendingUser}});
+    if (busy && (!pendingUser.isEmpty() || !submittedAttachments.isEmpty())) {
+        messages.append(QJsonObject{{"role", "user"}, {"content", pendingUser}, {"attachments", submittedAttachments}});
         QJsonArray events;
         for (const auto &message : currentActivity)
             events.append(QJsonObject{{"message", message}});
@@ -130,5 +130,5 @@ void WorkspaceWindow::updateSendControl() {
     sendButton->setToolTip(taskRunning ? (stopping ? "Stopping…" : "Stop task") : "Send · Enter (Shift+Enter for a new line)");
     const bool finished = QStringList{"completed", "completed_no_change", "cancelled", "failed", "usage_limit"}.contains(currentTaskState);
     sendButton->setEnabled(taskRunning ? !stopping && !finished : !busy && !state.value("conversation").toObject().isEmpty() &&
-                           !composer->toPlainText().trimmed().isEmpty());
+                            (!composer->toPlainText().trimmed().isEmpty() || !draftAttachments.isEmpty()));
 }

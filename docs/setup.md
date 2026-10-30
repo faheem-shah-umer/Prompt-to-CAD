@@ -1,4 +1,6 @@
-# Prompt to CAD — text CAD workspace
+# Prompt to CAD — CAD workspace
+
+The agentic-capabilities branch adds restructuring, colours, engineering records and image reference inputs in source. See [agentic CAD capabilities](agentic-cad.md) for the contracts and pending checks. No tests or native rebuild were run for that update; the existing executable does not include its UI changes yet.
 
 ## Source-only development
 
@@ -44,7 +46,7 @@ The conversation shows its persisted title/history, a removable selection chip, 
 
 ## Geometry and task guarantees
 
-The task freezes project/document/revision, instance/body/entity references, units, measurements and coordinate placement. Candidate IDs change after successful writes. Tools reject stale references and writes outside the selected component. Restricted scripts provide CadQuery geometry without arbitrary Python imports, shell, file or network access. They retain source and named parameters where available; direct edits can invalidate parameter regeneration and are guarded.
+The task freezes project/document/revision, instance/body/entity references, units, measurements, coordinate placement and submitted images. Candidate IDs change after successful writes. Tools reject stale references and writes outside the authorized component set. Explicit restructuring transactions can consume selected bodies and create authorized outputs. Controlled scripts provide CadQuery geometry without arbitrary Python imports, shell, file or network access. Versioned project definition tools retain editable source and named parameters; direct edits can invalidate regeneration and are guarded. Colours, dimensions, tolerances and annotations have separate revision-owned metadata and validation paths.
 
 App Server completion is checked from structured turn status. A successful provider turn with no geometry is labelled no change. Candidate geometry is accepted only after geometry/export validation and unrelated-component checks. Cancellation closes the task's tool boundary and is checked again under the revision acceptance lock. Revision compare-and-swap prevents a delayed task from overwriting a newer revision. A project-root lock serializes geometry and lifecycle writes across windows, alongside per-document geometry locks. One submission ID cannot execute twice. Stream events carry task/conversation/document IDs and the UI ignores mismatched events.
 

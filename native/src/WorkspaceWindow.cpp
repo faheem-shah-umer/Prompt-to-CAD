@@ -248,6 +248,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     add("Named parameters", "parameters");
     add("Mesh scale", "mesh_scale");
     add("Separate region", "mesh_separate");
+    auto *colour = commands->addAction(workspaceIcon("edit"), "Colour");
+    connect(colour, &QAction::triggered, this, [this] { chooseComponentColour(); });
+    auto *engineering = commands->addAction(workspaceIcon("edit"), "Engineering information");
+    connect(engineering, &QAction::triggered, this, [this] { editEngineeringRecord(); });
     commands = commandPage("Assembly");
     add("Move", "move");
     commands = commandPage("Inspect");
@@ -338,6 +342,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     modelTree->setHeaderHidden(true);
     modelLayout->addWidget(modelTree);
     properties = new QTextBrowser;
+    properties->setOpenLinks(false);
+    connect(properties, &QTextBrowser::anchorClicked, this, [this](const QUrl& link) {
+        if (link.scheme() == "engineering") editEngineeringRecord(link.path() == "new" ? QString() : link.path());
+        else if (link.scheme() == "appearance") chooseComponentColour(link.path() == "source");
+    });
     properties->setPlaceholderText("Select a component, face or edge to inspect "
                                    "dimensions and named parameters.");
     revisions = new QTreeWidget;
@@ -425,14 +434,31 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     selectionChip->hide();
     selectionChip->setToolTip("Remove selection context from the next task");
     compose->addWidget(selectionChip);
+    auto *imageScroll = new QScrollArea;
+    imageScroll->setObjectName("attachmentDraftScroll"); imageScroll->setWidgetResizable(true);
+    imageScroll->setFrameShape(QFrame::NoFrame); imageScroll->setMaximumHeight(130); imageScroll->hide();
+    attachmentStrip = new QWidget;
+    auto *imageLayout = new QVBoxLayout(attachmentStrip); imageLayout->setContentsMargins(0, 0, 0, 0); imageLayout->setSpacing(5);
+    imageScroll->setWidget(attachmentStrip); compose->addWidget(imageScroll);
     auto *input = new ComposerEdit;
     composer = input;
     composer->setObjectName("conversationComposer");
     connect(input,&ComposerEdit::sendRequested,this,&WorkspaceWindow::submit);
+    connect(input, &ComposerEdit::imageFilesAdded, this, &WorkspaceWindow::addImageFiles);
+    connect(input, &ComposerEdit::imageAdded, this, &WorkspaceWindow::addPastedImage);
     composer->setPlaceholderText("Describe a design or ask for a change…");
     composer->setFixedHeight(68);
     compose->addWidget(composer);
     auto *providerRow = new QHBoxLayout;
+    auto *attach = new QToolButton;
+    attach->setObjectName("attachImages"); setWorkspaceIcon(attach, "add"); attach->setFixedSize(28, 28);
+    attach->setAccessibleName("Attach reference images"); attach->setToolTip("Attach reference images · paste or drop images into the composer");
+    connect(attach, &QToolButton::clicked, this, [this] {
+        if (imagePreflight || focusOpenDialog()) return;
+        auto paths = QFileDialog::getOpenFileNames(this, "Attach reference images", {}, "Images (*.png *.jpg *.jpeg *.webp)");
+        if (!paths.isEmpty()) addImageFiles(paths);
+    });
+    providerRow->addWidget(attach);
     auto *picker = new ModelPicker;
     models = picker;
     models->setObjectName("modelPicker");
@@ -735,6 +761,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         } else if (link.scheme() == "component")
             viewer->selectInstance(link.path());
     });
+    connect(chat, &ConversationView::attachmentRequested, this, &WorkspaceWindow::addReferenceAttachment);
     connect(rpc, &RpcClient::progress, this, [this](const QJsonObject &event) {
         auto stage = event.value("stage").toString();
         auto taskId = event.value("task_id").toString();
@@ -874,12 +901,16 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     refreshConnectionControls();
     undoAction->setEnabled(false);
     redoAction->setEnabled(false);
-    rpc->call(method, params, [this, done](const QJsonObject &result, const QString &failure) {
+    rpc->call(method, params, [this, done, method, params](const QJsonObject &result, const QString &failure) {
         busy = false;
         taskRunning = false;
         updateSendControl();
         refreshConnectionControls();
         if (!failure.isEmpty()) {
+            if (method == "v2.task") {
+                if (composer->toPlainText().isEmpty()) composer->setPlainText(params.value("prompt").toString());
+                restoreSubmittedAttachments();
+            }
             activeTaskId.clear();
             pendingUser.clear();
             liveAnswer.clear();
@@ -1038,6 +1069,7 @@ void WorkspaceWindow::openFile(const QString &supplied) {
 void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     loading = true;
     state = value;
+    changeAttachmentContext();
     auto next = value.value("document").toObject();
     bool changed = next.value("revision_id") != document.value("revision_id") ||
                    next.value("document_id") != document.value("document_id");
@@ -1158,7 +1190,7 @@ void WorkspaceWindow::select(const QJsonObject &selection) {
         QStringList labels,ids;
         for(auto value:entities){auto entry=value.toObject();auto id=entry.value("instance_id").toString();if(!ids.contains(id))ids<<id;labels<<id+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt());}
         selectionChip->setText("Selected: "+QString::number(entities.size())+" entities · "+QString::number(ids.size())+" components  ×");selectionChip->setToolTip(labels.join('\n'));selectionChip->show();
-        properties->setPlainText("Selected geometry · mm\n\n"+labels.join('\n'));
+        properties->setHtml("<h3>Selected geometry · mm</h3>" + labels.join('\n').toHtmlEscaped().replace("\n", "<br>") + engineeringHtml(ids));
         QSignalBlocker blocker(modelTree);
         modelTree->clearSelection();for(QTreeWidgetItemIterator it(modelTree);*it;++it)if(ids.contains((*it)->data(0,Qt::UserRole).toString()))(*it)->setSelected(true);
         activity->setText(QString::number(entities.size())+" selected entities · mm");return;
@@ -1202,7 +1234,7 @@ void WorkspaceWindow::select(const QJsonObject &selection) {
             body += "<h4>World placement / mm</h4><p>X " + QString::number(matrix[3].toDouble()) + " · Y " +
                     QString::number(matrix[7].toDouble()) + " · Z " + QString::number(matrix[11].toDouble()) +
                     "</p>";
-        properties->setHtml(body);
+        properties->setHtml(body + engineeringHtml({id}));
         for (QTreeWidgetItemIterator it(modelTree); *it; ++it)
             if ((*it)->data(0, Qt::UserRole).toString() == id) {
                 QSignalBlocker block(modelTree);
@@ -1220,41 +1252,31 @@ QString WorkspaceWindow::takeComposerText() {
     return prompt;
 }
 void WorkspaceWindow::submit() {
-    if (busy || composer->toPlainText().trimmed().isEmpty())
-        return;
-    if (state.value("conversation").toObject().isEmpty()) {
-        activity->setText("Create or open a conversation before sending a request.");
-        return;
-    }
-    if (state.value("provider").toObject().value("state") != "ready") {
-        account();
-        return;
-    }
-    auto p = base();
-    auto capture =
-        QDir::tempPath() + "/promptcad-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png";
-    if (viewer->bodyCount() > 0 && viewer->saveViewport(capture))
-        p["viewport_path"] = capture;
-    p["prompt"] = composer->toPlainText();
-    p["model"] = models->currentData().toString();
-    activeTaskId = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
+    if (busy || (composer->toPlainText().trimmed().isEmpty() && draftAttachments.isEmpty())) return;
+    if (state.value("conversation").toObject().isEmpty()) { notify("Create or open a conversation before sending a request.", "info"); return; }
+    if (state.value("provider").toObject().value("state") != "ready") { account(); return; }
+    if (models->currentData().toString().isEmpty()) { notify("Choose a model before sending a request.", "info"); return; }
+    auto params = base();
+    const auto capture = QDir::tempPath() + "/promptcad-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png";
+    if (viewer->bodyCount() > 0 && viewer->saveViewport(capture)) params["viewport_path"] = capture;
+    params["prompt"] = composer->toPlainText(); params["model"] = models->currentData().toString();
+    params["task_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
+    if (!selected.isEmpty()) params["selection"] = selected;
+    if (!draftAttachments.isEmpty()) prepareImageSubmission(params);
+    else { submittedAttachments = {}; submittedDraftAttachments = {}; startAgentTask(params); }
+}
+void WorkspaceWindow::startAgentTask(QJsonObject params) {
+    activeTaskId = params.value("task_id").toString();
     taskAgent = state.value("runtime").toObject().value("agent").toObject();
-    p["task_id"] = activeTaskId;
     currentActivity.clear();
     pendingUser = takeComposerText();
-    liveOrder.clear();
-    liveMessages.clear();
-    livePhases.clear();
-    liveAnswer.clear();
-    taskClock.restart();
-    updateTask("connecting", "Preparing the current document and selected geometry.");
-    if (!selected.isEmpty())
-        p["selection"] = selected;
+    draftAttachments = {}; renderAttachmentDraft();
+    liveOrder.clear(); liveMessages.clear(); livePhases.clear(); liveAnswer.clear();
+    taskClock.restart(); updateTask("connecting", "Preparing the document, selection and reference images.");
     QTimer::singleShot(0, this, &WorkspaceWindow::renderChat);
-    call("v2.task", p, [this](auto) {
-        pendingUser.clear();
-        liveAnswer.clear();
-        activeTaskId.clear();
+    call("v2.task", params, [this](auto) {
+        pendingUser.clear(); liveAnswer.clear(); activeTaskId.clear();
+        submittedAttachments = {}; submittedDraftAttachments = {};
     });
 }
 void WorkspaceWindow::discoverModels(bool refresh) {
@@ -1276,6 +1298,8 @@ void WorkspaceWindow::discoverModels(bool refresh) {
             auto model = value.toObject();
             models->addItem(model.value("name").toString(), model.value("id"));
             models->setItemData(models->count() - 1, model.value("access"), Qt::ToolTipRole);
+            models->setItemData(models->count() - 1, model, Qt::UserRole + 1);
+            models->setItemData(models->count() - 1, model.value("access").toString() + "\nImage input: " + model.value("image_support").toString("unknown"), Qt::ToolTipRole);
         }
         int i = models->findData(old);
         if (i >= 0)

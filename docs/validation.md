@@ -8,7 +8,11 @@ Project sorting/timestamps, bulk model visibility/selection, shaded redisplay, p
 
 When specifically requested, validate stable ordering across open/refresh/restart and legacy timestamp initialization; meaningful content changes versus session-only updates; solid/mesh hide/show cycles with colours and edges; visibility/selection synchronization under filtering, revisions and the 256-entity limit; frozen running-task selection; clipboard output during streaming; historical provider identity; and compact layouts in both themes at laptop sizes and Windows scaling. Use synthetic projects and provider metadata, preserving personal data and credentials.
 
-## Validation commands
+## Pending verification: agentic CAD capabilities
+
+Component restructuring, multi-output definitions, expanded controlled scripting, metadata-aware revisions/scope, component colours, engineering records and image attachment/capability handling are source changes only. No tests, live inference, rebuild or UI verification were run. See [agentic CAD capabilities](agentic-cad.md) for the API behaviour, limitations and acceptance scenarios to run only when explicitly requested.
+
+## Existing validation commands
 
 Run the automated backend, native UI and tracked-file checks:
 

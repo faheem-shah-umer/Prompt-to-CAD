@@ -7,6 +7,8 @@
 #include <QFrame>
 #include <QLabel>
 #include <QJsonObject>
+#include <QImageReader>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QTextBrowser>
@@ -229,6 +231,22 @@ void ConversationView::rebuild() {
             connect(reply, &QTextBrowser::anchorClicked, this, &ConversationView::anchorClicked);
             body->addWidget(reply);
         }
+        for (const auto& value : message.value("attachments").toArray()) {
+            const auto reference = value.toObject();
+            if (!reference.value("available").toBool() || reference.value("local_path").toString().isEmpty()) {
+                auto *missing = new QLabel("⚠ " + reference.value("name").toString() + " · image unavailable");
+                missing->setTextFormat(Qt::PlainText); missing->setWordWrap(true); body->addWidget(missing); continue;
+            }
+            auto *image = new QToolButton;
+            image->setObjectName("referenceImage"); image->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            QImageReader reader(reference.value("local_path").toString()); reader.setScaledSize(reader.size().scaled(160, 100, Qt::KeepAspectRatio));
+            const auto preview = reader.read();
+            if (preview.isNull()) { image->setText("Image unavailable"); image->setEnabled(false); }
+            else { image->setIcon(QPixmap::fromImage(preview)); image->setIconSize(preview.size()); image->setText(reference.value("name").toString().left(30)); }
+            image->setToolTip("Attach this preserved image to a new request"); image->setAccessibleName("Reuse reference " + reference.value("name").toString());
+            connect(image, &QToolButton::clicked, this, [this, reference] { Q_EMIT attachmentRequested(reference); });
+            body->addWidget(image, 0, Qt::AlignLeft);
+        }
         const auto change = message.value("change").toObject();
         if (!change.isEmpty()) {
             auto *card = new QFrame;
@@ -240,10 +258,18 @@ void ConversationView::rebuild() {
             const auto revision = change.value("result_revision_id").toString();
             QString parts;
             for (auto component : change.value("affected_components").toArray()) {
-                const auto id = component.toString().toHtmlEscaped();
-                parts += "<a href='component:" + id + "'>" + id + "</a>  ";
+                const auto id = component.toString();
+                parts += "<a href=\"component:" + QString::fromLatin1(QUrl::toPercentEncoding(id)) + "\">" + id.toHtmlEscaped() + "</a>  ";
             }
-            links->setText("<b>Design updated</b><p>" + parts + "</p><p>Geometry and task scope verified.</p>"
+            QString changes;
+            for (const auto& field : {qMakePair("created_components", "Created"), qMakePair("replaced_components", "Updated"), qMakePair("consumed_components", "Consumed")}) {
+                const auto entries = change.value(field.first).toArray();
+                if (!entries.isEmpty()) {
+                    QStringList ids; for (const auto& value : entries) ids << value.toString().toHtmlEscaped();
+                    changes += "<p>" + QString(field.second) + ": " + ids.join(", ") + "</p>";
+                }
+            }
+            links->setText("<b>Design updated</b><p>" + parts + "</p>" + changes + "<p>Candidate and task scope checked.</p>"
                            "<a href='revision:" + revision.toHtmlEscaped() + "'>Restore revision " +
                            revision.left(8).toHtmlEscaped() + "</a>");
             connect(links, &QLabel::linkActivated, this, [this](const QString &url) { Q_EMIT anchorClicked(QUrl(url)); });

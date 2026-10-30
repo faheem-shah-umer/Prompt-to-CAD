@@ -1,6 +1,11 @@
 #include "WorkspaceControls.h"
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QImage>
+#include <QMimeData>
+#include <QUrl>
 #include <QFrame>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
@@ -16,6 +21,38 @@
 #include <QTabBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+namespace {
+bool imageInput(const QMimeData *data) {
+  if (data->hasImage()) return true;
+  if (!data->hasUrls() || data->urls().isEmpty()) return false;
+  for (const auto& url : data->urls()) {
+    if (!url.isLocalFile()) return false;
+    auto path = url.toLocalFile().toLower();
+    if (!path.endsWith(".png") && !path.endsWith(".jpg") && !path.endsWith(".jpeg") && !path.endsWith(".webp")) return false;
+  }
+  return true;
+}
+}
+void ComposerEdit::insertFromMimeData(const QMimeData *data) {
+  if (data->hasImage()) { Q_EMIT imageAdded(qvariant_cast<QImage>(data->imageData())); return; }
+  if (imageInput(data)) {
+    QStringList paths; for (const auto& url : data->urls()) paths << url.toLocalFile();
+    Q_EMIT imageFilesAdded(paths); return;
+  }
+  QPlainTextEdit::insertFromMimeData(data);
+}
+void ComposerEdit::dragEnterEvent(QDragEnterEvent *event) {
+  if (imageInput(event->mimeData())) event->acceptProposedAction();
+  else QPlainTextEdit::dragEnterEvent(event);
+}
+void ComposerEdit::dragMoveEvent(QDragMoveEvent *event) {
+  if (imageInput(event->mimeData())) event->acceptProposedAction();
+  else QPlainTextEdit::dragMoveEvent(event);
+}
+void ComposerEdit::dropEvent(QDropEvent *event) {
+  if (imageInput(event->mimeData())) { insertFromMimeData(event->mimeData()); event->acceptProposedAction(); }
+  else QPlainTextEdit::dropEvent(event);
+}
 void ComposerEdit::inputMethodEvent(QInputMethodEvent *event) {
   composing = !event->preeditString().isEmpty();
   QPlainTextEdit::inputMethodEvent(event);
