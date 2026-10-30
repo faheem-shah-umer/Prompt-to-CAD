@@ -6,7 +6,9 @@ Keep this checkout focused on source. Do not build, package, generate launchers 
 
 Windows x64, Python 3.11 and requirements.txt are the source dependencies. Native rendering requires Qt 6.9 Widgets/SVG and OpenCascade 7.8.1. Geometry uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Matching SDKs and a Visual Studio x64 toolchain must be configured separately when a native build is requested; repository-local SDK/toolchain downloads have been removed.
 
-The build script remains available for an explicitly requested future build and accepts CAD_QT_PREFIX and CAD_OCCT_PREFIX. It does not generate launchers or shortcuts. There is currently no compiled desktop application or installer in the checkout. An installed Codex CLI is required for agent tasks in a future running build; account and project storage remain separate from generated build outputs.
+Double-click **Prompt to CAD.lnk** at the repository root to open the restored local app. Its **Prompt to CAD.vbs** launcher runs **.app-runtime/PromptToCAD.exe** against this repository's backend and existing **.venv/**. The shortcut uses our original logo. Runtime files are ignored by Git; temporary compiler, SDK and build files used for this restoration have been removed. This one-time restoration does not enable automatic rebuilds or tests. There is no installer.
+
+The build script remains available for an explicitly requested future build and accepts CAD_QT_PREFIX and CAD_OCCT_PREFIX. It does not generate launchers or shortcuts. An installed Codex CLI is required for agent tasks; account and project storage remain separate from generated build outputs.
 
 ## Connections and billing
 

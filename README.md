@@ -4,7 +4,7 @@
 
 The current Windows desktop CAD workspace, with distinct dark/light workspace panels, rounded conversation bubbles, inline task activity and a startup loading screen, for text-driven creation and selected-part editing with Codex.
 
-This repository is maintained as source only during development. Generated applications, launchers, installers, SDK/toolchain downloads, build caches and validation outputs have been removed.
+Development stays focused on source. Double-click **Prompt to CAD.lnk** in this folder to open the locally restored app; **Prompt to CAD.vbs** is its launcher. The minimum runnable files live in ignored **.app-runtime/** and use the existing **.venv/** and backend source. Temporary compiler, SDK and build files have been removed. No installer is included.
 
 Make source changes without automatically building, packaging or launching the application. Run only the task-specific tests explicitly requested by the user. Build and packaging scripts remain as source for a later requested build or final release. See [setup](docs/setup.md) for dependency requirements.
 

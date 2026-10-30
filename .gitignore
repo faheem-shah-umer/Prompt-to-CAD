@@ -9,6 +9,7 @@ htmlcov/
 /.build-tools/
 /.native-build/
 /.native-runtime/
+/.app-runtime/
 /dist-native/
 /tmp/
 /artifacts/

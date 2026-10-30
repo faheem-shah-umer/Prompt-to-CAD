@@ -191,7 +191,7 @@ def copy_sources(destination):
     copy_public("assets", destination / "assets")
     for folder in ("assets", "native", "tools", "backend"):
         copy_public(folder, source / folder)
-    for name in ("requirements.txt", "requirements-dev.txt", "native-app.py"):
+    for name in ("requirements.txt", "requirements-dev.txt"):
         shutil.copy2(ROOT / name, source / name)
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(ROOT / name, destination / name)

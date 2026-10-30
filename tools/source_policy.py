@@ -8,6 +8,7 @@ ROOT_FILES = {
     "LICENSE",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
+    "Prompt to CAD.vbs",
     "requirements.txt",
     "requirements-dev.txt",
 }
