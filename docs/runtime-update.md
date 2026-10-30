@@ -18,3 +18,9 @@ No tests, live inference, authentication, UI verification, installer, merge or p
 The attachment control now uses a bundled paperclip icon. Unsent composer text is kept in memory per project/conversation alongside attachment drafts. Switching conversations restores only the destination conversation’s draft; refreshing the same conversation does not reset it. Drafts are not newly persisted to disk by this change.
 
 A Release build completed all 21 compile/link steps and was deployed behind the existing shortcut after the user closed the app. The deployed executable is 873,472 bytes; SHA-256 `dc2790a1882cbe6f7028e79b437579173f8afd5d2e4e2754911d75942af394fc`. Deployed bytes match the linked executable. Existing compiler warnings remain. No tests, UI verification or inference were run. Temporary build tools and intermediates were removed after deployment; projects and credentials were preserved.
+
+## Attachment icon sizing fix — 2026-10-30
+
+The compact 28-pixel attachment button inherited 12-pixel horizontal padding from the shared button style, leaving only about two pixels for its 18-pixel icon. A specific four-pixel padding rule now provides the icon’s full content area in both themes.
+
+A Release build completed all 21 compile/link steps and replaced the executable behind the existing shortcut after the user closed the app. Deployed size: 873,472 bytes; SHA-256 `62a14e8e0d9e936644c97c0295921ad6f99eb60678aceec18c5cd7669bd80fb0`. Deployed bytes match the linked file. Existing compiler warnings remain. No tests, UI verification or inference were run; the user verifies the visible result. Projects and credentials were preserved, and temporary build files were removed.
