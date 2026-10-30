@@ -32,9 +32,11 @@ public:
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
   void showPopup() override;
+  void showModelPopup();
   void hidePopup() override;
 Q_SIGNALS:
   void refreshRequested();
+  void configurationRequested();
 
 protected:
   void paintEvent(QPaintEvent *) override;

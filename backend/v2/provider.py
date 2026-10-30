@@ -44,7 +44,7 @@ class CodexProviderOptions:
                             "description": str(level.get("description") or "")})
         default = model.get("defaultReasoningEffort")
         return {
-            "state": "supported", "options": options,
+            "state": "supported", "options": options, "presentation": "steps",
             "default_id": default if isinstance(default, str) and default in seen else None,
             "message": "Options and descriptions are reported by Codex for this model. "
                        "Effort settings are provider-specific and do not guarantee a fixed token or time budget.",

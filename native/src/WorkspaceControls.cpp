@@ -71,15 +71,19 @@ ModelPicker::ModelPicker(QWidget *parent) : QComboBox(parent) {
   setAccessibleName("Choose model");
   setToolTip("Choose model");
   connect(this, &QComboBox::currentTextChanged, this, [this](const QString& name) {
-    setToolTip(name);
-    setAccessibleName(name.isEmpty() ? "Choose model" : "Model: " + name);
+    if (!property("combinedEffort").toBool()) {
+      setToolTip(name);
+      setAccessibleName(name.isEmpty() ? "Choose model" : "Model: " + name);
+    }
     updateGeometry();
     update();
   });
 }
 QSize ModelPicker::sizeHint() const {
   const auto label = currentText().isEmpty() ? placeholderText() : currentText();
-  return {qMin(240, fontMetrics().horizontalAdvance(label) + 38), qMax(30, fontMetrics().height() + 12)};
+  const auto effort = property("effortCaption").toString();
+  const int extra = effort.isEmpty() ? 0 : fontMetrics().horizontalAdvance(effort) + 8;
+  return {qMin(280, fontMetrics().horizontalAdvance(label) + extra + 38), qMax(30, fontMetrics().height() + 12)};
 }
 QSize ModelPicker::minimumSizeHint() const { return {38, sizeHint().height()}; }
 void ModelPicker::paintEvent(QPaintEvent *) {
@@ -90,8 +94,17 @@ void ModelPicker::paintEvent(QPaintEvent *) {
   painter.drawComplexControl(QStyle::CC_ComboBox, option);
   const auto area = style()->subControlRect(QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxEditField, this);
   const auto label = currentText().isEmpty() ? placeholderText() : currentText();
+  const auto effort = property("effortCaption").toString();
+  const auto suffixWidth = effort.isEmpty() ? 0 : qMin(fontMetrics().horizontalAdvance(effort), area.width() / 2);
+  auto modelArea = area;
+  if (suffixWidth) modelArea.setRight(area.right() - suffixWidth - 8);
   painter.setPen(palette().color(isEnabled() ? QPalette::Active : QPalette::Disabled, QPalette::ButtonText));
-  painter.drawText(area, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(label, Qt::ElideRight, area.width()));
+  painter.drawText(modelArea, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(label, Qt::ElideRight, modelArea.width()));
+  if (suffixWidth) {
+    painter.setPen(palette().color(QPalette::PlaceholderText));
+    painter.drawText(QRect(area.right() - suffixWidth + 1, area.top(), suffixWidth, area.height()),
+                     Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(effort, Qt::ElideRight, suffixWidth));
+  }
 }
 void ModelPicker::hidePopup() {
   if (popup)
@@ -99,6 +112,13 @@ void ModelPicker::hidePopup() {
   QComboBox::hidePopup();
 }
 void ModelPicker::showPopup() {
+  if (property("combinedEffort").toBool()) {
+    Q_EMIT configurationRequested();
+    return;
+  }
+  showModelPopup();
+}
+void ModelPicker::showModelPopup() {
   if (popup) {
     popup->raise();
     return;

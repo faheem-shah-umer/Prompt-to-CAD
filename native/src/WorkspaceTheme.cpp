@@ -18,6 +18,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
     const QString line = light ? "#c7cfdb" : "#38383c";
     const QString hover = light ? "#e0e6ef" : "#303033";
     const QString selected = light ? "#e4eeec" : "#2c3c38";
+    const QString accent = light ? "#2563eb" : "#4d8dff";
     const QString primary = light ? "#242428" : "#eeeeef";
     const QString primaryText = light ? "#ffffff" : "#202024";
     QPalette p;
@@ -76,7 +77,14 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel#messageAuthor { color:@muted@; font-size:11px; font-weight:600; }
         QToolButton#messageCopy { border:0; border-radius:5px; padding:3px; }
         QToolButton#attachImages { padding:4px; }
-        QToolButton#reasoningEffort { padding:4px 12px 4px 5px; border:0; }
+        QFrame#effortPopover { background:@panel@; border:1px solid @line@; border-radius:15px; }
+        QLabel#currentEffort { color:@accent@; font-size:18px; font-weight:600; }
+        QToolButton#effortModelLink { border:0; padding:3px 6px; color:@muted@; }
+        QToolButton#resetEffort { border:0; padding:4px; }
+        QSlider#effortSlider { min-height:30px; }
+        QSlider#effortSlider::groove:horizontal { height:10px; border-radius:5px; background:@hover@; }
+        QSlider#effortSlider::sub-page:horizontal { background:@accent@; border-radius:5px; }
+        QSlider#effortSlider::handle:horizontal { width:24px; margin:-7px 0; border-radius:12px; background:@text@; border:1px solid @line@; }
         QToolButton#projectSort { padding:4px; }
         QToolButton#projectSort::menu-indicator { image:none; }
         QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:5px 6px; font-size:11px; }
@@ -116,6 +124,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
           qMakePair("@userBubble@", userBubble), qMakePair("@panel@", panel), qMakePair("@text@", text),
           qMakePair("@muted@", muted), qMakePair("@line@", line), qMakePair("@hover@", hover),
           qMakePair("@selected@", selected), qMakePair("@primary@", primary),
+          qMakePair("@accent@", accent),
           qMakePair("@primaryText@", primaryText), qMakePair("@size@", QString::number(textSize))})
         css.replace(entry.first, entry.second);
     qApp->setStyleSheet(css);

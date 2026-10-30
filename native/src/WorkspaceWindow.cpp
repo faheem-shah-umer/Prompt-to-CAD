@@ -462,24 +462,23 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *picker = new ModelPicker;
     models = picker;
     models->setObjectName("modelPicker");
+    models->setProperty("combinedEffort", true);
     connect(picker,&ModelPicker::refreshRequested,this,[this] { discoverModels(true); });
+    connect(picker,&ModelPicker::configurationRequested,this,&WorkspaceWindow::showEffortPopover);
     models->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     models->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     models->setMinimumWidth(0);
-    models->setMaximumWidth(240);
+    models->setMaximumWidth(280);
     models->setPlaceholderText("Choose model");
     providerRow->addWidget(models);
-    effortButton = new QToolButton;
-    effortButton->setObjectName("reasoningEffort");
-    effortButton->setAccessibleName("Reasoning effort");
-    effortButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    effortButton->setPopupMode(QToolButton::InstantPopup);
-    effortButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    effortButton->setMinimumWidth(0); effortButton->setMaximumWidth(154);
-    effortButton->setAttribute(Qt::WA_AlwaysShowToolTips);
-    effortButton->setMenu(new QMenu(effortButton));
-    providerRow->addWidget(effortButton);
     connect(models, &QComboBox::currentIndexChanged, this, [this] { refreshEffortControl(); });
+    modelDiscoveryTimer = new QTimer(this);
+    modelDiscoveryTimer->setSingleShot(true);
+    connect(modelDiscoveryTimer, &QTimer::timeout, this, [this] {
+        const auto context = modelConnectionContext();
+        if (!context.isEmpty() && context != automaticModelContext && !busy && !loading && !modelsLoading)
+            discoverModels();
+    });
     providerRow->addStretch(1);
     sendButton = button("", providerRow, [this] {
         if (taskRunning) {
@@ -836,8 +835,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             if (event.value("provider_status").isObject()) {
                 state["provider"] = event.value("provider_status");
                 updateUsage();
-                if (!busy && state.value("provider").toObject().value("state") == "ready")
-                    discoverModels();
+                ensureModelDiscovery();
             }
         } else
             activity->setText(event.value("message").toString());
@@ -1182,6 +1180,7 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     }
     updateSendControl();
     loading = false;
+    ensureModelDiscovery();
 }
 void WorkspaceWindow::select(const QJsonObject &selection) {
     if (selection.isEmpty()) {
@@ -1294,6 +1293,7 @@ void WorkspaceWindow::startAgentTask(QJsonObject params) {
 }
 void WorkspaceWindow::discoverModels(bool refresh) {
     if (modelsLoading || busy) return;
+    automaticModelContext = modelConnectionContext();
     modelsLoading = true;
     refreshEffortControl();
     models->setProperty("catalogState","Loading models…");
@@ -1305,6 +1305,11 @@ void WorkspaceWindow::discoverModels(bool refresh) {
         updateSendControl();
         refreshConnectionControls();
         if (!error.isEmpty()) { models->setProperty("catalogState",error); models->setProperty("effortCatalogueFailure",error); refreshEffortControl(); showError(error); return; }
+        const auto active = state.value("provider").toObject().value("active").toObject();
+        if (r.value("connection_id") != active.value("id") ||
+            r.value("provider_id") != state.value("runtime").toObject().value("agent").toObject().value("id")) {
+            refreshEffortControl(); ensureModelDiscovery(); return;
+        }
         models->setProperty("effortCatalogueFailure", QString());
         models->setProperty("catalogState",r.value("models").toArray().isEmpty()?"No models were reported. Check your connection or refresh.":"");
         auto old = models->currentData();

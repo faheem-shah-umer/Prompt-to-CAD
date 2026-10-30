@@ -26,7 +26,7 @@ class QDoubleSpinBox;
 class QResizeEvent;
 class QTimer;
 class QImage;
-class QToolButton;
+class QFrame;
 
 class WorkspaceWindow : public QMainWindow {
     Q_OBJECT
@@ -61,6 +61,9 @@ class WorkspaceWindow : public QMainWindow {
     void discoverModels(bool refresh = false);
     void updateSendControl();
     void refreshEffortControl();
+    void showEffortPopover();
+    void ensureModelDiscovery();
+    QString modelConnectionContext() const;
     void beginSignIn(const QString &registration = {}, bool newRegistration = false);
     void showOnboarding();
     void submit();
@@ -109,17 +112,18 @@ class WorkspaceWindow : public QMainWindow {
     QPlainTextEdit *composer;
     QPushButton *sendButton, *selectionChip, *accountBadge, *agentButton;
     QPushButton *usageBadge;
-    QTimer *taskPulse, *chatRefresh;
+    QTimer *taskPulse, *chatRefresh, *modelDiscoveryTimer = nullptr;
     QElapsedTimer taskClock;
     QString pendingUser, liveAnswer, currentTaskState, currentTaskMessage;
     QStringList currentActivity, liveOrder;
     QHash<QString, QString> liveMessages, livePhases;
     QLabel *activity, *title, *saved, *conversationTitle;
     QPointer<QDialog> settingsDialog, onboardingDialog;
+    QPointer<QFrame> effortPopover;
     QString activeTaskId;
     QComboBox *models, *selectionMode;
-    QToolButton *effortButton = nullptr;
     QString effortSelection;
+    QString automaticModelContext;
     QLineEdit *search, *treeFilter;
     QFormLayout *operationForm;
     QList<QDoubleSpinBox *> fields;

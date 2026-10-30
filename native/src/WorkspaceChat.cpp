@@ -3,17 +3,24 @@
 #include "WorkspaceIcons.h"
 #include "WorkspaceTheme.h"
 #include "WorkspaceWindow.h"
+#include "WorkspaceControls.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QLocale>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QScreen>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QTimer>
 #include <QToolButton>
+#include <QVBoxLayout>
 
 namespace {
 QString effortPreference(const QString &provider, const QString &model) {
@@ -22,67 +29,144 @@ QString effortPreference(const QString &provider, const QString &model) {
 }
 }
 
+QString WorkspaceWindow::modelConnectionContext() const {
+    const auto connection = state.value("provider").toObject();
+    const auto id = connection.value("active").toObject().value("id").toString();
+    if (connection.value("state") != "ready" || id.isEmpty()) return {};
+    const auto runtime = state.value("runtime").toObject();
+    return runtime.value("agent").toObject().value("id").toString() + "\n" + id + "\n" + runtime.value("executable").toString();
+}
+
+void WorkspaceWindow::ensureModelDiscovery() {
+    if (!modelDiscoveryTimer || smoke) return;
+    const auto context = modelConnectionContext();
+    if (context.isEmpty()) { automaticModelContext.clear(); return; }
+    if (context != automaticModelContext && !busy && !loading && !modelsLoading && !modelDiscoveryTimer->isActive())
+        modelDiscoveryTimer->start(0);
+}
+
 void WorkspaceWindow::refreshEffortControl() {
-    if (!effortButton) return;
-    auto *menu = effortButton->menu();
-    menu->clear(); effortSelection.clear();
     const auto provider = state.value("runtime").toObject().value("agent").toObject().value("id").toString();
     const auto active = state.value("provider").toObject().value("active").toObject();
     const auto model = models->currentData().toString();
     const auto metadata = models->currentData(Qt::UserRole + 1).toJsonObject();
     const auto control = metadata.value("reasoning_effort").toObject();
-    const auto status = control.value("state").toString("unavailable");
-    QString caption = "Effort unavailable";
+    QString caption = "Unavailable";
     QString explanation = control.value("message").toString("Refresh models to load reasoning effort capabilities.");
     const bool connected = state.value("provider").toObject().value("state") == "ready";
     const bool matches = !provider.isEmpty() && metadata.value("provider_id").toString() == provider &&
                          metadata.value("connection_id").toString() == active.value("id").toString();
+    effortSelection.clear();
     bool supported = false;
     if (!connected) explanation = "Reasoning effort unavailable. Connect an agent provider first.";
-    else if (modelsLoading) { caption = "Loading effort…"; explanation = "Loading model capabilities."; }
+    else if (modelsLoading) { caption = "Loading…"; explanation = "Loading model capabilities."; }
     else if (model.isEmpty()) explanation = "Choose a model to see its supported reasoning effort settings.";
     else if (!matches) explanation = "Reasoning effort unavailable for this connection. Refresh models.";
     else if (!models->property("effortCatalogueFailure").toString().isEmpty())
-        explanation = "Reasoning effort unavailable after model discovery failed. Refresh models to retry.\n" + models->property("effortCatalogueFailure").toString();
-    else if (status == "unsupported") caption = "Effort unsupported";
-    else if (status == "supported" && !control.value("options").toArray().isEmpty()) {
+        explanation = "Model discovery failed. Refresh models to retry.\n" + models->property("effortCatalogueFailure").toString();
+    else if (control.value("state") == "unsupported") caption = "Unsupported";
+    else if (control.value("state") == "supported" && !control.value("options").toArray().isEmpty()) {
         supported = true;
         const auto options = control.value("options").toArray();
         const auto defaultId = control.value("default_id").toString();
-        QSettings preferences;
-        const auto remembered = preferences.value(effortPreference(provider, model)).toString();
+        const auto remembered = QSettings().value(effortPreference(provider, model)).toString();
         QStringList ids;
         for (const auto &entry : options) ids << entry.toObject().value("id").toString();
         effortSelection = ids.contains(remembered) ? remembered : ids.contains(defaultId) ? defaultId : QString();
-        caption = "Effort: default";
-        if (defaultId.isEmpty()) explanation += "\nThe provider did not report a usable default; leaving this unset uses its configuration.";
-        if (!remembered.isEmpty() && !ids.contains(remembered)) explanation += "\nThe saved choice is not supported by this model catalogue; it has not been applied.";
+        caption = "Default";
+        if (defaultId.isEmpty()) explanation += "\nNo usable default was reported. Leaving effort unset uses provider configuration.";
+        if (!remembered.isEmpty() && !ids.contains(remembered)) explanation += "\nThe saved effort is not supported and has not been applied.";
         for (const auto &entry : options) {
             const auto option = entry.toObject();
-            const auto id = option.value("id").toString();
-            const auto label = option.value("label").toString(id);
-            auto *action = menu->addAction(label + (id == defaultId ? " · default" : ""));
-            action->setCheckable(true); action->setChecked(id == effortSelection);
-            action->setToolTip(option.value("description").toString());
-            action->setStatusTip(option.value("description").toString());
-            if (id == effortSelection) {
-                caption = "Effort: " + label;
-                explanation += "\n" + label + ": " + option.value("description").toString();
+            if (option.value("id").toString() == effortSelection) {
+                caption = option.value("label").toString(effortSelection);
+                explanation += "\n" + caption + ": " + option.value("description").toString();
             }
-            connect(action, &QAction::triggered, this, [this, provider, model, id] {
-                if (busy || models->currentData().toString() != model ||
-                    state.value("runtime").toObject().value("agent").toObject().value("id").toString() != provider) return;
-                QSettings preferences; preferences.setValue(effortPreference(provider, model), id);
-                refreshEffortControl();
-            });
         }
     }
-    menu->setToolTipsVisible(true);
-    effortButton->setText(effortButton->fontMetrics().elidedText(caption, Qt::ElideRight, 132));
-    effortButton->setToolTip("Reasoning effort · " + caption + "\n" + explanation);
-    effortButton->setAccessibleName("Reasoning effort: " + caption);
-    effortButton->setAccessibleDescription(explanation);
-    effortButton->setEnabled(supported && !busy && !imagePreflight && !modelsLoading);
+    models->setProperty("effortCaption", model.isEmpty() && !modelsLoading ? QString() : caption);
+    models->setProperty("effortExplanation", explanation);
+    models->setProperty("effortSupported", supported);
+    models->setProperty("effortLabel", caption);
+    models->setToolTip(models->currentText() + "\nReasoning effort: " + caption + "\n" + explanation);
+    models->setAccessibleName("Model and reasoning effort: " + models->currentText() + " · " + caption);
+    models->updateGeometry(); models->update();
+    if (effortPopover && (busy || effortPopover->property("context").toString() != modelConnectionContext() + "/" + model ||
+                          effortPopover->property("control").toJsonObject() != control)) effortPopover->close();
+}
+
+void WorkspaceWindow::showEffortPopover() {
+    if (effortPopover) { effortPopover->raise(); return; }
+    refreshEffortControl();
+    const auto provider = state.value("runtime").toObject().value("agent").toObject().value("id").toString();
+    const auto model = models->currentData().toString();
+    const auto control = models->currentData(Qt::UserRole + 1).toJsonObject().value("reasoning_effort").toObject();
+    const auto options = control.value("options").toArray();
+    QStringList ids; for (const auto &entry : options) ids << entry.toObject().value("id").toString();
+    const auto defaultId = control.value("default_id").toString();
+    const auto context = modelConnectionContext() + "/" + model;
+    const bool supported = models->property("effortSupported").toBool();
+    auto *panel = new QFrame(this, Qt::Popup);
+    effortPopover = panel; panel->setAttribute(Qt::WA_DeleteOnClose); panel->setObjectName("effortPopover");
+    panel->setProperty("context", context); panel->setProperty("control", control);
+    auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(16, 14, 16, 14); layout->setSpacing(9);
+    auto *heading = new QHBoxLayout;
+    auto *caption = new QLabel(models->property("effortLabel").toString()); caption->setObjectName("currentEffort");
+    caption->setTextFormat(Qt::PlainText); caption->setAlignment(Qt::AlignCenter);
+    heading->addSpacing(28); heading->addWidget(caption, 1);
+    auto *reset = new QToolButton; setWorkspaceIcon(reset, "undo"); reset->setObjectName("resetEffort");
+    reset->setAccessibleName("Reset to provider default"); reset->setToolTip("Reset reasoning effort to the provider-reported default");
+    reset->setEnabled(supported && ids.contains(defaultId) && !busy); heading->addWidget(reset); layout->addLayout(heading);
+    auto *modelLink = new QToolButton; modelLink->setText((models->currentText().isEmpty() ? "Choose model" : models->currentText()) + " ›");
+    modelLink->setToolButtonStyle(Qt::ToolButtonTextOnly); modelLink->setObjectName("effortModelLink");
+    modelLink->setAccessibleName("Choose model"); modelLink->setEnabled(!modelsLoading);
+    layout->addWidget(modelLink, 0, Qt::AlignHCenter);
+    connect(modelLink, &QToolButton::clicked, panel, [this, panel] {
+        panel->close(); QTimer::singleShot(0, models, [this] { static_cast<ModelPicker *>(models)->showModelPopup(); });
+    });
+    auto *description = new QLabel; description->setObjectName("muted"); description->setWordWrap(true); description->setTextFormat(Qt::PlainText);
+    QSlider *slider = nullptr;
+    if (supported && control.value("presentation") == "steps" && ids.size() > 1 && ids.contains(effortSelection)) {
+        slider = new QSlider(Qt::Horizontal); slider->setObjectName("effortSlider");
+        slider->setRange(0, ids.size() - 1); slider->setSingleStep(1); slider->setPageStep(1);
+        slider->setTickPosition(QSlider::TicksBelow); slider->setTickInterval(1); slider->setValue(ids.indexOf(effortSelection));
+        slider->setAccessibleName("Reasoning effort"); slider->setCursor(Qt::PointingHandCursor); layout->addWidget(slider);
+        slider->setEnabled(!busy && !imagePreflight && !modelsLoading);
+    }
+    QComboBox *choices = nullptr;
+    if (supported && !slider) {
+        choices = new QComboBox; choices->setAccessibleName("Reasoning effort"); choices->setPlaceholderText("Choose effort");
+        for (const auto &entry : options) { const auto option = entry.toObject(); choices->addItem(option.value("label").toString(), option.value("id")); }
+        choices->setCurrentIndex(ids.indexOf(effortSelection)); layout->addWidget(choices);
+        choices->setEnabled(!busy && !imagePreflight && !modelsLoading);
+    }
+    layout->addWidget(description);
+    auto showChoice = [this, caption, description, slider, choices, options, ids] {
+        caption->setText(models->property("effortLabel").toString());
+        const int index = ids.indexOf(effortSelection);
+        description->setText(index >= 0 ? options[index].toObject().value("description").toString() : models->property("effortExplanation").toString());
+        if (slider && index >= 0) { QSignalBlocker blocker(slider); slider->setValue(index); slider->setToolTip(caption->text()); slider->setAccessibleDescription(caption->text()); }
+        if (choices) { QSignalBlocker blocker(choices); choices->setCurrentIndex(index); }
+    };
+    auto choose = [this, provider, model, context, ids, showChoice](int index) {
+        if (busy || index < 0 || index >= ids.size() || modelConnectionContext() + "/" + models->currentData().toString() != context) return;
+        QSettings().setValue(effortPreference(provider, model), ids[index]); refreshEffortControl(); showChoice();
+    };
+    if (slider) connect(slider, &QSlider::valueChanged, panel, choose);
+    if (choices) connect(choices, &QComboBox::currentIndexChanged, panel, choose);
+    connect(reset, &QToolButton::clicked, panel, [this, provider, model, context, showChoice] {
+        if (busy || modelConnectionContext() + "/" + models->currentData().toString() != context) return;
+        QSettings().remove(effortPreference(provider, model)); refreshEffortControl(); showChoice();
+    });
+    auto *refresh = new QToolButton; setWorkspaceIcon(refresh, "redo"); refresh->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    refresh->setText(modelsLoading ? "Loading models…" : "Refresh models"); refresh->setAccessibleName("Refresh models");
+    refresh->setEnabled(!busy && !modelConnectionContext().isEmpty()); layout->addWidget(refresh, 0, Qt::AlignRight);
+    connect(refresh, &QToolButton::clicked, panel, [this, panel] { panel->close(); discoverModels(true); });
+    showChoice(); panel->setFixedWidth(320); panel->adjustSize();
+    auto position = models->mapToGlobal(QPoint(0, 0)); const auto bounds = models->screen()->availableGeometry();
+    position.setX(qBound(bounds.left(), position.x(), bounds.right() - panel->width()));
+    position.setY(qMax(bounds.top(), position.y() - panel->height() - 6)); panel->move(position); panel->show();
+    if (slider) slider->setFocus(); else if (choices) choices->setFocus(); else modelLink->setFocus();
 }
 
 void WorkspaceWindow::applyAppearance() {
