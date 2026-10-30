@@ -1,21 +1,18 @@
 Option Explicit
-Dim shell, files, folder, interpreter, command
-Set shell = CreateObject("WScript.Shell")
+
+Dim files, shell, root, executable, quote
 Set files = CreateObject("Scripting.FileSystemObject")
-folder = files.GetParentFolderName(WScript.ScriptFullName)
+Set shell = CreateObject("WScript.Shell")
+root = files.GetParentFolderName(WScript.ScriptFullName)
+executable = files.BuildPath(root, ".app-runtime\PromptToCAD.exe")
+quote = Chr(34)
 
-If files.FileExists(folder & "\.venv\Scripts\pythonw.exe") Then
-    interpreter = folder & "\.venv\Scripts\pythonw.exe"
-ElseIf files.FileExists("C:\Program Files\Python311\pythonw.exe") Then
-    interpreter = "C:\Program Files\Python311\pythonw.exe"
-Else
-    interpreter = "pythonw.exe"
+If Not files.FileExists(executable) Then
+    MsgBox "The runnable application files are missing. Restore .app-runtime before opening Prompt to CAD.", vbExclamation, "Prompt to CAD"
+    WScript.Quit 1
 End If
 
-shell.CurrentDirectory = folder
-command = """" & interpreter & """ -B """ & folder & "\desktop-app.py"""
-On Error Resume Next
-shell.Run command, 0, False
-If Err.Number <> 0 Then
-    MsgBox "Could not find Python for Prompt to CAD. Install Python or check README.md.", 16, "Prompt to CAD"
-End If
+shell.CurrentDirectory = root
+shell.Environment("Process")("QT_QPA_PLATFORM_PLUGIN_PATH") = files.BuildPath(root, ".app-runtime\plugins\platforms")
+shell.Environment("Process")("CSF_ShadersDirectory") = files.BuildPath(root, ".app-runtime\resources\Shaders")
+shell.Run quote & executable & quote & " --workspace " & quote & root & quote, 1, False

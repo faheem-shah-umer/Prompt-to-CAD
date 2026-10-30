@@ -1,11 +1,15 @@
 # Third-party notices
 
-The MIT licence in this repository covers the project's own code, documentation and pyramid artwork. It does not relicense dependencies or hosted services.
+The repository's MIT licence covers this project's own source and documentation, not its dependencies or hosted services.
 
-Python and JavaScript dependencies are installed separately from their respective package registries. Their licence files and notices are provided with their distributions; retain those notices when distributing a bundled application. Dependency versions are recorded in `backend/requirements*.txt`, `requirements-desktop.txt`, `frontend/package.json` and `frontend/package-lock.json`.
+Runtime dependencies are declared in requirements.txt; build/development dependencies are in requirements-dev.txt and native/requirements-build.txt. Original dependency licence texts and metadata must be retained in distributions.
 
-Microsoft WebView2 is a separately installed Microsoft runtime governed by its own terms.
+The native distribution dynamically links Qt 6 and OpenCascade 7.8.1 and includes Python 3.11 and the CAD/API Python dependencies. Qt and OCCT licence texts/exceptions are retained in licences/qt and licences/occt. Python packages retain their notices. Buildable application source and build scripts are included.
 
-Users supply their own model service or local inference server. Provider access, model licences, charges and usage terms are separate from this project's MIT licence.
+PyJWT, cryptography, Trimesh, SciPy and Pillow retain their upstream licence terms. Exact versions/licences are governed by installed package metadata. NSIS compiles the installer. Codex is installed separately by the user. OpenAI terms and eligible plan/API usage are independent of the repository licence; no inference key or credentials are bundled.
 
-The icon in `frontend/public/app-icon.svg` was drawn for this project from basic geometric polygons. Its PNG and ICO counterparts are rendered from that SVG.
+Interface icons use the separately licensed Flaticon UIcons subset credited below; CAD orientation graphics are rendered by the application. Public CAD references informed the design; no CADAM source or proprietary CAD implementation was copied. No image-generation service, model weights, Claude runtime or commercial CAD translator is included.
+
+## Interface icons
+
+Uicons by [Flaticon](https://www.flaticon.com/uicons), regular rounded subset from @flaticon/flaticon-uicons 3.3.1. The icon paths are separately licensed under the [Flaticon License](assets/icons/LICENSE); see [provenance](assets/icons/README.md). Attribution is available in Help → Credits.

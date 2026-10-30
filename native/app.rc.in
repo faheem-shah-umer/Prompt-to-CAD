@@ -1,0 +1,2 @@
+#include <windows.h>
+IDI_APP_ICON ICON "@CMAKE_CURRENT_SOURCE_DIR@/../assets/app-icon.ico"
