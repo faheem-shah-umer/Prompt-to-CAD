@@ -50,6 +50,10 @@ def clone(projects, project_id, name):
             identities[index["document_id"]] = str(uuid4())
             for path in (doc.folder / "revisions").glob("*.json"):
                 identities[path.stem] = str(uuid4())
+                snapshot = projects.read(path)
+                for record in snapshot.get("definitions", []) + snapshot.get("engineering", []):
+                    if record.get("id"):
+                        identities.setdefault(record["id"], uuid4().hex)
             documents.append((entry, doc))
         for cid in original["conversations"]:
             identities[cid] = uuid4().hex
@@ -58,8 +62,8 @@ def clone(projects, project_id, name):
 
         def rewrite(value, key=""):
             if isinstance(value, dict):
-                if value.get("sha256") and value.get("path"):
-                    asset = projects.check_reference(value)
+                if value.get("sha256") and value.get("path") and (value.get("type") == "image" or Path(value["path"]).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")):
+                    asset = projects.check_reference(value, source)
                     if not asset.is_relative_to(source):
                         if (
                             asset.suffix.lower()
@@ -85,6 +89,7 @@ def clone(projects, project_id, name):
                 return [rewrite(v, key) for v in value]
             if isinstance(value, str):
                 if key.endswith("_id") or key in (
+                    "id",
                     "revisions",
                     "conversations",
                     "tasks",
@@ -165,8 +170,9 @@ def clone(projects, project_id, name):
 
                 def validate_refs(value):
                     if isinstance(value, dict):
-                        if value.get("sha256") and value.get("path"):
-                            reference = Path(value["path"]).resolve()
+                        if value.get("sha256") and value.get("path") and (value.get("type") == "image" or Path(value["path"]).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")):
+                            reference = Path(value["path"])
+                            reference = reference.resolve() if reference.is_absolute() else (target / reference).resolve()
                             if not reference.is_relative_to(target):
                                 raise WorkspaceError(
                                     "A copied reference points outside the project."

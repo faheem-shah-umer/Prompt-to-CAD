@@ -44,9 +44,11 @@ def serve(input_stream=sys.stdin, output_stream=sys.stdout):
                 with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(call, timeout=120) as response:
                     answer = json.load(response)
                 result = {
-                    "content": [{"type": "text", "text": json.dumps(answer.get("result", answer), allow_nan=False)}],
+                    "content": [{"type": "text", "text": json.dumps({k: v for k, v in answer.get("result", answer).items() if k != "image_data"}, allow_nan=False)}],
                     "isError": "error" in answer,
                 }
+                if answer.get("result", {}).get("image_data"):
+                    result["content"].append({"type": "image", "mimeType": "image/png", "data": answer["result"]["image_data"]})
                 if message["name"] == "cad_viewport" and answer.get("result", {}).get("image"):
                     image = answer["result"]["image"]
                     result["content"].append(

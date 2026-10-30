@@ -66,6 +66,11 @@ class Document:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             if digest != part["asset_hash"]:
                 raise WorkspaceError("A geometry asset is missing or has changed.", "invalid_project")
+        from backend.v2.definitions import read
+        for record in snapshot.get("definitions", []):
+            read(self.folder, record)
+        from backend.v2.engineering import validate_records
+        validate_records(snapshot)
         return snapshot
 
     def view(self):
@@ -93,6 +98,9 @@ class Document:
             elif base_revision is not None:
                 raise WorkspaceError("A new project cannot have a base revision.", "revision_conflict")
             snapshot = copy.deepcopy(candidate)
+            snapshot.pop("_component_transaction", None)
+            from backend.v2.definitions import materialize
+            materialize(self.folder, snapshot)
             snapshot.update(schema_version=2, document_id=index["document_id"], revision_id=str(uuid4()),
                             name=index["name"], units="mm", summary=summary, parent_revision_id=base_revision)
             snapshot.pop("project_dir", None)

@@ -755,8 +755,13 @@ class Projects:
         }
 
     @staticmethod
-    def check_reference(reference):
+    def check_reference(reference, base=None):
         path = Path(reference["path"])
+        if not path.is_absolute():
+            if base is None:
+                raise WorkspaceError("A relative reference needs its owning project.", "invalid_attachment")
+            from .attachments import resolve
+            return resolve(base, reference)
         if hashlib.sha256(path.read_bytes()).hexdigest() != reference["sha256"]:
             raise WorkspaceError(
                 "A reference image changed after attachment.", "asset_integrity"

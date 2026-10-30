@@ -222,6 +222,32 @@ class CodexAppServer:
         self.thread_id = result["thread"]["id"]
         return self.thread_id
 
+    def model_catalogue(self):
+        models, cursor = [], None
+        while True:
+            params = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            response = self.request("model/list", params)
+            models.extend(response.get("data", []))
+            next_cursor = response.get("nextCursor")
+            if not next_cursor:
+                break
+            if next_cursor == cursor or len(models) > 1000:
+                raise WorkspaceError("The runtime model catalogue pagination is invalid.", "model_catalogue_failed")
+            cursor = next_cursor
+        return models
+
+    def input_bounds(self, model):
+        try:
+            response = self.request("modelProvider/capabilities/read", {"modelProvider": "promptcad", "model": model})
+            value = response.get("inputModalities")
+            return value if isinstance(value, list) else None
+        except WorkspaceError as error:
+            if error.code != "app_server_error":
+                raise
+            return None  # Older runtimes do not expose provider capability bounds.
+
     def run(self, text, model, cancelled, notify, images=(), timeout=600):
         if cancelled.is_set():
             raise WorkspaceError("Task cancelled before inference.", "cancelled")

@@ -618,6 +618,7 @@ class Connections:
                         "id": m["slug"],
                         "name": m.get("display_name", m["slug"]),
                         "access": "Not yet verified by inference",
+                        "inputModalities": m.get("inputModalities", m.get("input_modalities")),
                     }
                     for m in response.get("models", [])
                     if m.get("visibility") == "list"
@@ -628,6 +629,7 @@ class Connections:
                         "id": m["id"],
                         "name": m["id"],
                         "access": "Catalogue entry; inference not verified",
+                        "inputModalities": m.get("inputModalities", m.get("input_modalities")),
                     }
                     for m in response.get("data", [])
                 ]
