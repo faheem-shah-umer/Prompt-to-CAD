@@ -673,6 +673,14 @@ class WorkspaceV2(Workspace):
             source_root = Path(__file__).resolve().parents[2]
             # Use the real interpreter, avoiding the Windows venv launcher process.
             python = getattr(sys, "_base_executable", sys.executable)
+            if os.name == "nt":
+                # Codex launches MCP itself, so our CREATE_NO_WINDOW flag does not apply.
+                python = str(Path(python).with_name("pythonw.exe"))
+                if not Path(python).is_file():
+                    raise WorkspaceError(
+                        "The Python windowless interpreter is missing. Repair the Python installation before starting an agent task.",
+                        "runtime_missing",
+                    )
             paths = [str(source_root)] + [p for p in sys.path if "site-packages" in p]
             mcp = {
                 "default_tools_approval_mode": "approve",
