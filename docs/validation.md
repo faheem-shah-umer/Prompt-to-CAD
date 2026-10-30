@@ -1,5 +1,7 @@
 # Validation
 
+Development policy: run tests only when the user explicitly requests a task-specific test. Do not automatically run these commands after source edits. Historical results below describe earlier runs; generated validation reports/screenshots have been removed as part of the source-only cleanup.
+
 Run the automated backend, native UI and tracked-file checks:
 
 ```powershell

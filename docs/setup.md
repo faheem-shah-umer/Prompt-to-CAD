@@ -1,16 +1,12 @@
 # Prompt to CAD — text CAD workspace
 
-## Setup and launch
+## Source-only development
 
-Windows x64, Python 3.11 and the dependencies in requirements.txt are required for a source checkout. Native rendering uses Qt 6.9 Widgets and SVG modules with OpenCascade 7.8.1. The geometry worker uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Keep these OCCT versions aligned so face and edge maps match the viewer.
+Keep this checkout focused on source. Do not build, package, generate launchers or run automated/UI/live tests unless the user explicitly requests that work. When testing is requested, target the named task rather than automatically running every suite. Runtime CAD validation remains part of modelling operations.
 
-```powershell
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\python.exe tools\build_native.py --test
-.venv\Scripts\python.exe native-app.py
-```
+Windows x64, Python 3.11 and requirements.txt are the source dependencies. Native rendering requires Qt 6.9 Widgets/SVG and OpenCascade 7.8.1. Geometry uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Matching SDKs and a Visual Studio x64 toolchain must be configured separately when a native build is requested; repository-local SDK/toolchain downloads have been removed.
 
-The launcher detects the configured SDK directories, or accepts CAD_QT_PREFIX and CAD_OCCT_PREFIX. This checkout retains the current OCCT SDK under .native-runtime and the portable MSVC/NSIS tools under .build-tools. A standard x64 Visual Studio developer environment can also be used. Fresh compiler checks explicitly use Release configuration, matching the portable toolchain. An installed Codex CLI is required for agent tasks. The app discovers codex.exe on PATH or the local Codex binary installation; Settings → Advanced can select an explicit executable and test the local protocol handshake. A handshake does not verify model inference or account entitlement.
+The build script remains available for an explicitly requested future build and accepts CAD_QT_PREFIX and CAD_OCCT_PREFIX. It does not generate launchers or shortcuts. There is currently no compiled desktop application or installer in the checkout. An installed Codex CLI is required for agent tasks in a future running build; account and project storage remain separate from generated build outputs.
 
 ## Connections and billing
 

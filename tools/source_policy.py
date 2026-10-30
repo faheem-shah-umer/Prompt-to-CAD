@@ -10,8 +10,6 @@ ROOT_FILES = {
     "THIRD_PARTY_NOTICES.md",
     "requirements.txt",
     "requirements-dev.txt",
-    "native-app.py",
-    "Prompt to CAD.vbs",
 }
 BRANDING = {
     "assets/README.md",

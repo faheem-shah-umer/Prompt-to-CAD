@@ -7,24 +7,6 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def create_launcher():
-    if os.name != "nt":
-        return
-    def literal(path):
-        return "'" + str(path).replace("'", "''") + "'"
-    script = (
-        "$shell = New-Object -ComObject WScript.Shell; "
-        "$shortcut = $shell.CreateShortcut(" + literal(ROOT / "Prompt to CAD.lnk") + "); "
-        "$shortcut.TargetPath = " + literal(Path(os.environ["SystemRoot"]) / "System32/wscript.exe") + "; "
-        "$shortcut.Arguments = " + literal('"' + str(ROOT / "Prompt to CAD.vbs") + '"') + "; "
-        "$shortcut.WorkingDirectory = " + literal(ROOT) + "; "
-        "$shortcut.IconLocation = " + literal(str(ROOT / "assets/app-icon.ico") + ",0") + "; "
-        "$shortcut.Description = 'Prompt to CAD'; $shortcut.Save()"
-    )
-    subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                   check=True, creationflags=subprocess.CREATE_NO_WINDOW)
-
-
 def build_environment(qt_prefix, occt_prefix):
     env = os.environ.copy()
     if os.name == "nt" and not shutil.which("cl"):
@@ -49,8 +31,6 @@ def main():
     parser.add_argument("--qt-prefix", type=Path, default=Path(os.getenv("CAD_QT_PREFIX", str(Path.home() / "anaconda3/envs/occenv/Library"))))
     parser.add_argument("--occt-prefix", type=Path, default=Path(os.getenv("CAD_OCCT_PREFIX", str(ROOT / ".native-runtime/occt/Library"))))
     parser.add_argument("--test", action="store_true")
-    parser.add_argument("--launch", action="store_true")
-    parser.add_argument("--open")
     args = parser.parse_args()
     for prefix in (args.qt_prefix, args.occt_prefix):
         if not prefix.is_dir():
@@ -66,15 +46,9 @@ def main():
                     "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, (args.qt_prefix, args.occt_prefix))),
                     "-DCMAKE_MAKE_PROGRAM=" + str(ROOT / ".venv/Scripts/ninja.exe")], env=env, check=True)
     subprocess.run([cmake, "--build", str(build), "--parallel", "4"], env=env, check=True)
-    create_launcher()
     if args.test:
         ctest = str(ROOT / ".venv/Scripts/ctest.exe")
         subprocess.run([ctest, "--test-dir", str(build), "--output-on-failure"], env=env, check=True)
-    if args.launch:
-        command = [str(build / "bin/PromptToCAD.exe"), "--workspace", str(ROOT)]
-        if args.open:
-            command += ["--open", args.open]
-        subprocess.Popen(command, env=env, cwd=ROOT)
 
 
 if __name__ == "__main__":
