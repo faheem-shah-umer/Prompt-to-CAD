@@ -1,6 +1,7 @@
 """Exercise the real Windows viewport at multiple sizes/scales; no agent inference."""
 
 import json
+import argparse
 import os
 import shutil
 import subprocess
@@ -17,6 +18,11 @@ from tools.fixtures import write_assembly
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case", choices=("laptop-solid", "scaled-mesh", "large-solid")
+    )
+    args = parser.parse_args()
     output = ROOT / "artifacts/validation"
     output.mkdir(parents=True, exist_ok=True)
     fixtures = ROOT / "tmp" / ("ui-fixture-" + uuid4().hex[:8])
@@ -65,6 +71,8 @@ def main():
             "light",
         ),
     ]
+    if args.case:
+        cases = [case for case in cases if case[0] == args.case]
     reports = []
     for name, size, scale, model, theme in cases:
         case_home = fixtures / name
@@ -125,6 +133,11 @@ def main():
         for capture in (
             "settings",
             "onboarding",
+            "notification",
+            "account-details",
+            "library",
+            "model-picker",
+            "usage",
             "appearance",
             "startup",
             "agent-working",

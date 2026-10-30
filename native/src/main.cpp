@@ -1,4 +1,5 @@
 #include "StartupSplash.h"
+#include "WorkspaceControls.h"
 #include "WorkspaceTheme.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
@@ -25,6 +26,7 @@ int main(int argc, char **argv) {
             fflush(stderr);
     });
     QApplication app(argc, argv);
+    installWorkspaceInteraction();
     app.setWindowIcon(QIcon(":/brand/app-icon.png"));
     QCoreApplication::setOrganizationName("PromptToCAD");
     QCoreApplication::setApplicationName("PromptToCADV2");

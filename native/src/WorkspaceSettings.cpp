@@ -21,6 +21,9 @@
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QStyle>
+#include "WorkspaceIcons.h"
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -61,6 +64,7 @@ void WorkspaceWindow::refreshConnectionControls() {
         if (ready) onboardingDialog->accept();
     }
     if (!settingsDialog) return;
+    if (auto *create = settingsDialog->findChild<QPushButton *>("newChatGPTRegistration"))create->setEnabled(!busy&&!signingIn);
     if (auto *start = settingsDialog->findChild<QPushButton *>("connectChatGPT")) {
         start->setVisible(!ready || active.value("connection") != "chatgpt");
         start->setText(active.value("connection") == "chatgpt" ? "Reconnect ChatGPT" : "Continue with ChatGPT");
@@ -82,19 +86,28 @@ void WorkspaceWindow::refreshConnectionControls() {
         cancel->setVisible(signingIn);
     if (auto *disconnect = settingsDialog->findChild<QPushButton *>("disconnectAccount"))
         disconnect->setVisible(active.value("connected").toBool());
-    if (auto *accounts = settingsDialog->findChild<QComboBox *>("savedAccounts")) {
-        const auto previous = accounts->currentData();
-        QSignalBlocker blocker(accounts);
-        accounts->clear();
-        for (auto a : connection.value("accounts").toArray()) {
-            auto item = a.toObject();
-            if (item.value("connection") == "chatgpt")
-                accounts->addItem(item.value("label").toString(), item.value("id"));
+    if(auto *panel=settingsDialog->findChild<QWidget *>("previousRegistrations")) {
+        const auto signature=QJsonDocument(connection).toJson(QJsonDocument::Compact);
+        if(panel->property("signature").toByteArray()!=signature) {
+            panel->setProperty("signature",signature);
+            auto *layout=qobject_cast<QVBoxLayout *>(panel->layout());
+            while(auto *item=layout->takeAt(0)){delete item->widget();delete item;}
+            int count=0;
+            for(auto value:connection.value("accounts").toArray()) {
+                auto item=value.toObject();const auto id=item.value("id").toString();
+                if(item.value("connection")!="chatgpt"||item.value("id")==connection.value("preferred")||item.value("id")==active.value("id"))continue;
+                ++count;auto *row=new QWidget;auto *line=new QHBoxLayout(row);line->setContentsMargins(0,4,0,4);auto *name=label(item.value("label").toString());line->addWidget(name,1);
+                auto *use=new QPushButton("Use");line->addWidget(use);connect(use,&QPushButton::clicked,this,[this,id]{call("provider.select",{{"account_id",id}},[this](auto){call("v2.state");});});
+                auto *remove=new QPushButton;remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));remove->setFixedSize(30,30);remove->setAccessibleName("Remove saved connection "+item.value("label").toString());remove->setToolTip("Remove saved connection");line->addWidget(remove);
+                connect(remove,&QPushButton::clicked,this,[this,id,label=item.value("label").toString()]{
+                    if(busy)return;
+                    if(QMessageBox::question(settingsDialog,"Remove saved connection","Remove “"+label+"” from this application? We will attempt to revoke its session. The registered app must be removed separately in ChatGPT Settings.")!=QMessageBox::Yes)return;
+                    call("provider.forget",{{"account_id",id}},[this](auto result){state["provider"]=result;updateUsage();notify(result.value("message").toString(),result.value("remote_revocation_confirmed").toBool()?"info":"warning");});
+                });
+                layout->addWidget(row);
+            }
+            if(!count)layout->addWidget(label("No previous connections saved."));
         }
-        const int at = accounts->findData(previous);
-        if (at >= 0)
-            accounts->setCurrentIndex(at);
-        accounts->setEnabled(!busy && !signingIn);
     }
     if (auto *usage = settingsDialog->findChild<QLabel *>("usageInfo"))
         usage->setText(usageBadge->toolTip().isEmpty()
@@ -166,6 +179,9 @@ void WorkspaceWindow::account() {
         call("provider.cancel_login", {}, [this](auto) { call("v2.state"); });
     });
     cancelSignIn->setObjectName("cancelSignIn");
+    action("Connect a new account", connectRow, [this] {
+        if(QMessageBox::question(settingsDialog,"Connect a new account","Create a new Prompt to CAD registration? Your current connection remains active until authorization succeeds. Old registered apps can be removed in ChatGPT Settings.") == QMessageBox::Yes)beginSignIn({},true);
+    })->setObjectName("newChatGPTRegistration");
     connectRow->addStretch();
     planLayout->addLayout(connectRow);
     accountCard->addWidget(plan);
@@ -301,23 +317,10 @@ void WorkspaceWindow::account() {
     runtimeCard->addLayout(probeRow);
     auto *registrations = card(advanced, "Previous account registrations");
     registrations->addWidget(label("Older sign-ins are kept separately to protect their credentials. Reconnecting reuses the primary registration. Revoking a session does not delete the app registration in ChatGPT."));
-    auto *accounts = new QComboBox;
-    accounts->setObjectName("savedAccounts");
-    registrations->addWidget(accounts);
-    auto *legacyActions = new QHBoxLayout;
-    action("Use selected", legacyActions, [this, accounts] {
-        if (accounts->currentIndex() >= 0)
-            call("provider.select", {{"account_id", accounts->currentData().toString()}}, [this](auto) { call("v2.state"); });
-    });
-    action("Revoke session…", legacyActions, [this, accounts] {
-        if (accounts->currentIndex() < 0 || busy) return;
-        if (QMessageBox::question(settingsDialog, "Revoke session", "Revoke the session for " + accounts->currentText() + "? Its registration is retained for reconnecting.") != QMessageBox::Yes) return;
-        call("provider.disconnect", {{"account_id", accounts->currentData().toString()}}, [this](auto r) {
-            const auto message = r.value("message").toString();
-            call("v2.state", {}, [this, message](auto) { activity->setText(message); });
-        });
-    });
-    registrations->addLayout(legacyActions);
+    auto *previous = new QWidget;
+    previous->setObjectName("previousRegistrations");
+    auto *previousLayout = new QVBoxLayout(previous);previousLayout->setContentsMargins(0,0,0,0);
+    registrations->addWidget(previous);
     auto *accessActions = new QHBoxLayout;
     action("Manage ChatGPT access ↗", accessActions, [] { QDesktopServices::openUrl(QUrl("https://chatgpt.com/settings")); });
     registrations->addLayout(accessActions);
@@ -383,10 +386,11 @@ void WorkspaceWindow::account() {
     dialog->show();
 }
 
-void WorkspaceWindow::beginSignIn(const QString &registration) {
+void WorkspaceWindow::beginSignIn(const QString &registration, bool newRegistration) {
     if (busy || state.value("provider").toObject().value("signing_in").toBool()) return;
     QJsonObject args;
     if (!registration.isEmpty()) args["account_id"] = registration;
+    if (newRegistration) args["new_registration"] = true;
     call("provider.login", args, [this](auto result) {
         auto connection = state.value("provider").toObject();
         connection["signing_in"] = true;

@@ -88,7 +88,7 @@ void WorkspaceWindow::updateUsage() {
         }
     if (tokens.contains("totalTokens")) {
         const auto total = QLocale().toString(tokens.value("totalTokens").toInteger());
-        if (text.isEmpty()) text = total + " tokens";
+        if (text.isEmpty()) { auto count=tokens.value("totalTokens").toInteger();text=count>=1000000?QString::number(count/1000000.0,'f',1)+"M tokens":count>=1000?QString::number(count/1000.0,'f',1)+"k tokens":total+" tokens"; }
         details << "Reported tokens: " + total;
         for (const auto &field : {qMakePair("inputTokens", "Input"), qMakePair("cachedInputTokens", "Cached input"),
                                   qMakePair("outputTokens", "Output")})
@@ -111,7 +111,7 @@ void WorkspaceWindow::updateUsage() {
         setWorkspaceIcon(accountBadge, "user");
         accountBadge->setProperty("connected", false);
     }
-    accountBadge->setToolTip("Account and connection settings");
+    accountBadge->setToolTip("Account details");
     refreshConnectionControls();
 }
 
@@ -119,7 +119,7 @@ void WorkspaceWindow::updateSendControl() {
     const bool stopping = currentTaskState == "cancelling";
     setWorkspaceIcon(sendButton, taskRunning ? "stop" : "arrow-up", true);
     sendButton->setAccessibleName(taskRunning ? (stopping ? "Stopping task" : "Stop task") : "Send request");
-    sendButton->setToolTip(taskRunning ? (stopping ? "Stopping…" : "Stop task") : "Send · Ctrl+Enter");
+    sendButton->setToolTip(taskRunning ? (stopping ? "Stopping…" : "Stop task") : "Send · Enter (Shift+Enter for a new line)");
     const bool finished = QStringList{"completed", "completed_no_change", "cancelled", "failed", "usage_limit"}.contains(currentTaskState);
     sendButton->setEnabled(taskRunning ? !stopping && !finished : !busy && !state.value("conversation").toObject().isEmpty() &&
                            !composer->toPlainText().trimmed().isEmpty());

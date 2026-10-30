@@ -78,6 +78,11 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel#activitySummary, QLabel#livePhase { color:@muted@; }
         QFrame#changeCard { background:@selected@; border:0; border-radius:9px; padding:3px; }
 
+        QFrame#accountPopover, QFrame#usagePopover, QFrame#modelPopover, QFrame#notificationCard { background:@panel@; border:1px solid @line@; border-radius:12px; }
+        QFrame#notificationHost { background:transparent; }
+        QToolButton#latestMessage { background:@panel@; border:1px solid @line@; border-radius:16px; padding:4px; }
+        QListWidget#modelOptions { border:0; padding:0; }
+        QListWidget#modelOptions::item { padding:9px 10px; border-radius:6px; }
         QFrame#composerFrame, QFrame#settingsCard { background:@panel@; border:1px solid @line@; border-radius:14px; }
         QFrame#composerFrame QPlainTextEdit { background:transparent; border:0; padding:4px; }
         QFrame#composerFrame QComboBox { background:transparent; border:0; padding:4px; }

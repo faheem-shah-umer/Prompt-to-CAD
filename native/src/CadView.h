@@ -7,6 +7,7 @@
 #include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <MeshVS_Mesh.hxx>
+#include <SelectMgr_EntityOwner.hxx>
 
 class CadView : public QWidget {
     Q_OBJECT
@@ -18,6 +19,8 @@ public:
     void standardView(const QString& view);
     void setSelectionMode(const QString& kind);
     void selectInstance(const QString& id);
+    void selectInstances(const QStringList &ids);
+    void removeSelectedEntity(int index);
     void isolateInstance(const QString& id);
     void showAll();
     void setShading(bool edges);
@@ -28,6 +31,7 @@ public:
     int bodyCount() const { return shapes.size()+meshes.size(); }
     QJsonObject topologyReport() const;
     bool smokeSelectFace();
+    bool smokeSelectMultipleFaces();
     bool saveViewport(const QString& path);
     double benchmarkOrbit();
 Q_SIGNALS:
@@ -44,12 +48,16 @@ protected:
 private:
     void initialize();
     void updateSelection();
+    Handle(SelectMgr_EntityOwner) pickMeshFace(const QPoint &point);
     Handle(AIS_InteractiveContext) context;
     Handle(V3d_View) view;
     QMap<QString, Handle(AIS_Shape)> shapes;
     QMap<QString, Handle(MeshVS_Mesh)> meshes;
     QJsonObject document;
     QJsonObject currentSelection;
+    QList<QList<Handle(SelectMgr_EntityOwner)>> selectedOwners;
+    QMap<QString,Handle(SelectMgr_EntityOwner)> meshPickOwners;
+    Handle(SelectMgr_EntityOwner) meshHover;
     QString mode = "body";
     QPoint lastPosition, pressedPosition;
     bool pendingDocument = false;

@@ -7,7 +7,7 @@ backend.v2.service / WorkspaceV2
     ├── Projects, documents, conversations, tasks and revisions
     ├── Protected ChatGPT / API-key connections
     └── Codex App Server adapter
-            │ eight scoped CAD MCP tools
+            │ nine scoped CAD MCP tools
             └── Candidate geometry operations
                     │ private geometry worker
                     └── backend.native
@@ -31,3 +31,13 @@ Usage observations are provider-specific: reported allowance windows become rema
 Normal startup keeps the document and conversation empty. First-run setup is skippable and uses the same app-owned authorization flow as Settings. The preferred ChatGPT registration is retained after disconnect; client IDs and host IDs are reused, while legacy credentials remain separate. Authorization completion, cancellation and expiry emit local connection state. Model discovery is serialized and cached for ten minutes per account; an explicit refresh bypasses a completed cache entry.
 
 Project folders are authoritative. `v2.projects.refresh` rebuilds the catalogue from valid folders and clears missing active context. `v2.project.purge` accepts a project ID; `v2.conversation.purge` also requires a conversation ID. Both require the target to be in trash and reject concurrent writes. Project deletion validates containment and refuses filesystem links; chat deletion retains shared document geometry and revisions. A project can retain documents with no active conversation.
+
+## Workspace selection and copying
+
+Selection version 2 carries a revision-bound entity array across components. Legacy single selections normalize into the same representation. The tool boundary enriches every selected entity with geometry identity and coordinate context, constrains face/edge/region command targets, and checks unselected component fingerprints. Changed sub-entity references become stale when no verified mapping exists. `cad_apply_batch` resolves all planar face-offset/hole tools before applying them to candidate solids; failed/cancelled batches do not replace the accepted document. `v2.command_batch` exposes the same validated path to contextual CAD controls.
+
+`v2.project.save` checkpoints accepted metadata without adding a geometry revision. `v2.project.save_as` stages an independent project copy, remaps project/document/conversation/task/revision IDs and structured links (including retained branch revisions), verifies geometry/reference assets, clears provider-session bindings, and publishes a new named project folder. `v2.conversations.batch` accepts stable project/chat pairs and archive, trash, restore, unarchive or purge; results are reported per item. Archive and Trash have separate filtered views. Restore only clears trash; unarchive clears archive, making repeated actions idempotent.
+
+The native composer handles Enter/Shift+Enter and IME composition. Model choice and reported usage use themed popovers; account details are separate from Settings. Application notices render outside conversation history. User scroll actions carry a generation so delayed message-layout callbacks cannot override a newer reading position.
+
+`provider.login` accepts an explicit `new_registration` flag; normal reconnect continues to reuse the primary registration. Cross-window authorization uses an OS-held lease. `provider.forget` removes only an old local registration after attempted session revocation and refuses the active/preferred registration. Removing a local record does not remove a registered app from ChatGPT.

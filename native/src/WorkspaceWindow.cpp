@@ -1,4 +1,5 @@
 #include "WorkspaceWindow.h"
+#include "WorkspaceControls.h"
 #include "CadView.h"
 #include "ConversationView.h"
 #include "WorkspaceIcons.h"
@@ -44,6 +45,9 @@
 #include <QTextCursor>
 #include <QTimer>
 #include <QEvent>
+#include <QKeyEvent>
+#include <QInputMethodEvent>
+#include <QScrollBar>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -127,9 +131,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     usage->setWordWrap(true);
     usage->setObjectName("muted");
     nav->addWidget(usage);
-    accountBadge = button("", railLayout, [this] { account(); });
+    accountBadge = button("", railLayout, [this] { showAccountDetails(); });
     accountBadge->setFixedSize(34, 34);
-    accountBadge->setAccessibleName("Account settings");
+    accountBadge->setAccessibleName("Account details");
     accountBadge->setObjectName("accountBadge");
     split->addWidget(navigation);
     auto *workspacePane = new QWidget;
@@ -140,23 +144,27 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     documentHeader->setContentsMargins(12, 8, 12, 8);
     title = new QLabel("Create a project to begin");
     title->setStyleSheet("font-weight:600");
-    title->setMaximumWidth(320);
+    title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     saved = new QLabel("Saved locally");
     saved->setObjectName("muted");
     documentHeader->addWidget(title, 1);
     documentHeader->addWidget(saved);
-    setWorkspaceIcon(button("Save", documentHeader,
-           [this] { call("v2.state", {}, [this](auto) { saved->setText("All changes saved locally"); }); }), "disk");
-    auto *undoButton = button("Undo", documentHeader, [this] {
+    auto *undoButton = button("", documentHeader, [this] {
         if (undoAction->isEnabled())
             undoAction->trigger();
     });
     undoButton->setObjectName("undoToolbar");
-    auto *redoButton = button("Redo", documentHeader, [this] {
+    undoButton->setFixedSize(32,32);
+    undoButton->setAccessibleName("Undo");
+    undoButton->setToolTip("Undo · Ctrl+Z");
+    auto *redoButton = button("", documentHeader, [this] {
         if (redoAction->isEnabled())
             redoAction->trigger();
     });
     redoButton->setObjectName("redoToolbar");
+    redoButton->setFixedSize(32,32);
+    redoButton->setAccessibleName("Redo");
+    redoButton->setToolTip("Redo · Ctrl+Y");
     auto *searchButton = button("", documentHeader, [this] {
         if (auto *a = findChild<QAction *>("commandSearch"))
             a->trigger();
@@ -356,12 +364,18 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     selectionChip->hide();
     selectionChip->setToolTip("Remove selection context from the next task");
     compose->addWidget(selectionChip);
-    composer = new QPlainTextEdit;
+    auto *input = new ComposerEdit;
+    composer = input;
+    composer->setObjectName("conversationComposer");
+    connect(input,&ComposerEdit::sendRequested,this,&WorkspaceWindow::submit);
     composer->setPlaceholderText("Describe a design or ask for a change…");
     composer->setFixedHeight(68);
     compose->addWidget(composer);
     auto *providerRow = new QHBoxLayout;
-    models = new QComboBox;
+    auto *picker = new ModelPicker;
+    models = picker;
+    models->setObjectName("modelPicker");
+    connect(picker,&ModelPicker::refreshRequested,this,[this] { discoverModels(true); });
     models->setMinimumContentsLength(7);
     models->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     models->setPlaceholderText("Choose model");
@@ -377,7 +391,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     sendButton->setObjectName("primaryButton");
     sendButton->setFixedSize(30, 30);
     sendButton->setAccessibleName("Send request");
-    sendButton->setToolTip("Send · Ctrl+Enter");
+    sendButton->setToolTip("Send · Enter (Shift+Enter for a new line)");
     sendButton->setEnabled(false);
     compose->addLayout(providerRow);
     conversation->addWidget(composerFrame);
@@ -389,10 +403,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     conversation->addLayout(usageRow);
     usageBadge->hide();
     connect(usageBadge, &QPushButton::clicked, this, [this] {
-        QMenu menu;
-        for (const auto &line : usageBadge->toolTip().split('\n'))
-            menu.addAction(line)->setEnabled(false);
-        menu.exec(usageBadge->mapToGlobal(QPoint(0, 0)));
+        showUsageDetails();
     });
     taskPulse = new QTimer(this);
     taskPulse->setInterval(1000);
@@ -419,8 +430,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     file->addAction("Open native project…", this, &WorkspaceWindow::openNativeProject);
     file->addAction(
         "Save", this,
-        [this] { activity->setText("All accepted revisions and conversations are saved atomically."); },
+        [this] { call("v2.project.save", {}, [this](auto) { saved->setText("Saved"); notify("Project saved.", "info"); }); },
         QKeySequence::Save);
+    file->addAction("Save As…", this, &WorkspaceWindow::saveAs, QKeySequence("Ctrl+Shift+S"));
     file->addAction("Export STEP / STL / GLB…", this, [this] {
         if (busy || focusOpenDialog()) return;
         auto p = QFileDialog::getSaveFileName(this, "Export model", QDir::homePath() + "/Design.step",
@@ -467,7 +479,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             viewCommands->addAction(action);
     auto *toolsMenu = menuBar()->addMenu("&Tools");
     toolsMenu->addAction("Settings…", this, &WorkspaceWindow::account);
-    toolsMenu->addAction("Manage archived and deleted items…", this, &WorkspaceWindow::manageProjects);
+    toolsMenu->addAction("Archive…", this, [this] { setProperty("librarySection",0); manageProjects(); });
+    toolsMenu->addAction("Trash…", this, [this] { setProperty("librarySection",1); manageProjects(); });
     toolsMenu->addAction("Refresh available models", this, [this] { discoverModels(true); });
     toolsMenu->addAction("Restart provider session for this conversation", this,
                          [this] { call("v2.conversation.restart_session"); });
@@ -534,11 +547,17 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     statusBar()->addWidget(activity, 1);
     auto *units = new QLabel("mm  ·  Local workspace");
     statusBar()->addPermanentWidget(units);
-    connect(new QShortcut(QKeySequence("Ctrl+Return"), this), &QShortcut::activated, this,
-            &WorkspaceWindow::submit);
+
     connect(selectionChip, &QPushButton::clicked, this, [this] {
-        selected = {};
-        selectionChip->hide();
+        const auto entities=selected.value("entities").toArray();
+        if(entities.size()<2) { viewer->removeSelectedEntity(-1); return; }
+        QMenu menu;
+        for(int i=0;i<entities.size();++i) {
+            auto entry=entities[i].toObject();auto *action=menu.addAction("Remove " + entry.value("instance_id").toString()+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt()));
+            connect(action,&QAction::triggered,this,[this,i]{viewer->removeSelectedEntity(i);});
+        }
+        menu.addSeparator();menu.addAction("Clear selection",this,[this]{viewer->removeSelectedEntity(-1);});
+        menu.exec(selectionChip->mapToGlobal(QPoint(0,selectionChip->height())));
     });
     connect(selectionMode, &QComboBox::currentTextChanged, this,
             [this](const QString &kind) { viewer->setSelectionMode(kind.toLower()); });
@@ -573,7 +592,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         }
     });
     connect(projects, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int) {
-        if (busy || loading)
+        if (busy || loading || (QApplication::keyboardModifiers() & (Qt::ControlModifier|Qt::ShiftModifier)))
             return;
         auto pid = item->data(0, Qt::UserRole).toString();
         auto cid = item->data(0, Qt::UserRole + 1).toString();
@@ -584,11 +603,20 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         else if (pid != state.value("project").toObject().value("project_id").toString())
             call("v2.project.open", {{"project_id", pid}});
     });
+    projects->setSelectionMode(QAbstractItemView::ExtendedSelection);
     projects->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(projects, &QTreeWidget::customContextMenuRequested, this, [this](QPoint position) {
         auto *item = projects->itemAt(position);
         if (!item || item->isDisabled() || busy)
             return;
+        if(projects->selectedItems().size()>1) {
+            QJsonArray items;bool onlyChats=true;
+            for(auto *row:projects->selectedItems()) { auto cid=row->data(0,Qt::UserRole+1).toString(); if(cid.isEmpty()){onlyChats=false;break;} items.append(QJsonObject{{"project_id",row->data(0,Qt::UserRole).toString()},{"conversation_id",cid}}); }
+            QMenu menu;
+            if(onlyChats) { auto *archive=menu.addAction("Archive "+QString::number(items.size())+" conversations");auto *trash=menu.addAction("Move "+QString::number(items.size())+" conversations to trash");auto *choice=menu.exec(projects->viewport()->mapToGlobal(position));if(choice)batchConversations(items,choice==archive?"archive":"trash"); Q_UNUSED(trash); }
+            else { auto *hint=menu.addAction("Select conversation rows for bulk actions");hint->setEnabled(false);menu.exec(projects->viewport()->mapToGlobal(position)); }
+            return;
+        }
         auto cid = item->data(0, Qt::UserRole + 1).toString();
         auto pid = item->data(0, Qt::UserRole).toString();
         QMenu menu;
@@ -628,9 +656,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             return;
         call(method, args);
     });
-    connect(modelTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int) {
-        if (!loading)
-            viewer->selectInstance(item->data(0, Qt::UserRole).toString());
+    modelTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    connect(modelTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *, int) {
+        if(loading)return;QStringList ids;for(auto *item:modelTree->selectedItems()) { auto id=item->data(0,Qt::UserRole).toString();if(!id.isEmpty())ids<<id; }
+        viewer->selectInstances(ids);
     });
     connect(modelTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int) {
         if (!loading)
@@ -777,7 +806,7 @@ QJsonObject WorkspaceWindow::base() const { return {{"base_revision_id", documen
 void WorkspaceWindow::showError(const QString &message) {
     qWarning().noquote() << message;
     activity->setText(message);
-    chat->notice(message);
+    notify(message);
     if (smoke)
         QApplication::exit(2);
 }
@@ -974,13 +1003,12 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     auto project = value.value("project").toObject();
     conversationTitle->setText(
         value.value("conversation").toObject().value("title").toString("Design conversation"));
-    title->setText(project.value("name").toString("Create a project to begin") + "  /  " +
-                   document.value("name").toString());
+    title->setText(project.value("name").toString("Create a project to begin"));
     setWindowTitle(project.isEmpty() ? "Prompt to CAD"
                                      : project.value("name").toString() + " · Prompt to CAD");
     saved->setText(document.value("components").toArray().isEmpty()
                        ? "Empty document"
-                       : "Saved · " + document.value("revision_id").toString().left(8));
+                       : "Saved");
     undoAction->setEnabled(document.value("can_undo").toBool());
     redoAction->setEnabled(document.value("can_redo").toBool());
     auto previousDoc = project.value("active_document_id").toString();
@@ -1085,6 +1113,16 @@ void WorkspaceWindow::select(const QJsonObject &selection) {
     selected = selection;
     selected["document_id"] = document.value("document_id");
     selected["project_id"] = state.value("project").toObject().value("project_id");
+    const auto entities = selection.value("entities").toArray();
+    if(entities.size()>1) {
+        QStringList labels,ids;
+        for(auto value:entities){auto entry=value.toObject();auto id=entry.value("instance_id").toString();if(!ids.contains(id))ids<<id;labels<<id+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt());}
+        selectionChip->setText("Selected: "+QString::number(entities.size())+" entities · "+QString::number(ids.size())+" components  ×");selectionChip->setToolTip(labels.join('\n'));selectionChip->show();
+        properties->setPlainText("Selected geometry · mm\n\n"+labels.join('\n'));
+        QSignalBlocker blocker(modelTree);
+        modelTree->clearSelection();for(QTreeWidgetItemIterator it(modelTree);*it;++it)if(ids.contains((*it)->data(0,Qt::UserRole).toString()))(*it)->setSelected(true);
+        activity->setText(QString::number(entities.size())+" selected entities · mm");return;
+    }
     auto id = selection.value("instance_id").toString();
     for (auto p : document.value("components").toArray()) {
         auto part = p.toObject();
@@ -1181,6 +1219,7 @@ void WorkspaceWindow::submit() {
 void WorkspaceWindow::discoverModels(bool refresh) {
     if (modelsLoading || busy) return;
     modelsLoading = true;
+    models->setProperty("catalogState","Loading models…");
     busy = true;
     updateSendControl();
     rpc->call("provider.models", {{"refresh", refresh}}, [this](auto r, auto error) {
@@ -1188,7 +1227,8 @@ void WorkspaceWindow::discoverModels(bool refresh) {
         busy = false;
         updateSendControl();
         refreshConnectionControls();
-        if (!error.isEmpty()) { showError(error); return; }
+        if (!error.isEmpty()) { models->setProperty("catalogState",error);showError(error); return; }
+        models->setProperty("catalogState",r.value("models").toArray().isEmpty()?"No models were reported. Check your connection or refresh.":"");
         auto old = models->currentData();
         models->clear();
         for (auto value : r.value("models").toArray()) {
@@ -1209,6 +1249,12 @@ void WorkspaceWindow::operation(const QString &kind) {
     if (kind != "block" && selected.isEmpty()) {
         showError("Select the component or face to modify.");
         return;
+    }
+    const auto entities=selected.value("entities").toArray();
+    if(entities.size()>1 && kind!="thickness" && kind!="holes") {
+        bool sameEdges=kind=="fillet"||kind=="chamfer";
+        for(auto value:entities) { auto entity=value.toObject();sameEdges=sameEdges&&entity.value("kind")=="edge"&&entity.value("instance_id")==selected.value("instance_id"); }
+        if(!sameEdges){notify("Use the agent for this multi-component operation, or select one component.","info");return;}
     }
     currentOperation = kind;
     operationSelection = selected;
@@ -1337,8 +1383,11 @@ void WorkspaceWindow::applyOperation() {
         command["size"] = fields[0]->value();
         command["edge_indices"] = edges;
     }
-    p["command"] = command;
-    call("v2.command", p);
+    const auto entities=selected.value("entities").toArray();
+    if(entities.size()>1 && (currentOperation=="thickness"||currentOperation=="holes")) {
+        QJsonArray commands;for(auto value:entities) { auto entity=value.toObject();if(entity.value("kind")!="face"){notify("Select planar faces for a face operation.","warning");return;}auto next=command;next["instance_id"]=entity.value("instance_id");next["face_index"]=entity.value("index");commands.append(next); }
+        p["commands"]=commands;call("v2.command_batch",p);
+    } else {p["command"] = command;call("v2.command", p);}
 }
 void WorkspaceWindow::smokeCheck() {
     if (!onboardingVerified) {
@@ -1372,6 +1421,45 @@ void WorkspaceWindow::smokeCheck() {
             showError("Stop control did not return to Send."); return;
         }
         onboardingVerified = true;
+    }
+    if (!polishVerified) {
+        busy=true;
+        auto *input=qobject_cast<ComposerEdit *>(composer);int sends=0;
+        const auto connection=connect(input,&ComposerEdit::sendRequested,this,[&sends]{++sends;});
+        composer->setPlainText("Synthetic input");
+        QKeyEvent newline(QEvent::KeyPress,Qt::Key_Return,Qt::ShiftModifier);QApplication::sendEvent(input,&newline);
+        if(!composer->toPlainText().contains('\n')||sends){showError("Shift+Enter did not insert a newline.");return;}
+        QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QApplication::sendEvent(input,&enter);
+        QKeyEvent repeated(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier,QString(),true);QApplication::sendEvent(input,&repeated);
+        QInputMethodEvent composition("fixture",{});QApplication::sendEvent(input,&composition);QApplication::sendEvent(input,&enter);
+        QInputMethodEvent commit;commit.setCommitString("fixture");QApplication::sendEvent(input,&commit);
+        disconnect(connection);
+        if(sends!=1){showError("Enter autorepeat or IME composition submitted unexpectedly.");return;}
+        composer->clear();busy=false;updateSendControl();
+        if(findChild<QPushButton *>("undoToolbar")->text().size()||findChild<QPushButton *>("redoToolbar")->text().size()||title->text().contains(" / ")||saved->text().contains(document.value("revision_id").toString().left(8))){showError("Header naming or icon regression failed.");return;}
+        auto original=chat->plainText();notify("Synthetic application notice","info");notify("Synthetic application notice","info");
+        if(chat->plainText()!=original||findChildren<QFrame *>("notificationCard").size()!=1){showError("Application notices polluted chat or duplicated.");return;}
+        findChild<QFrame *>("notificationHost")->grab().save(workspace+"/tmp/native-notification.png");
+        delete findChild<QFrame *>("notificationHost");
+        showAccountDetails();if(settingsDialog||!findChild<QFrame *>("accountPopover")){showError("Account icon opened Settings.");return;}
+        findChild<QFrame *>("accountPopover")->grab().save(workspace+"/tmp/native-account-details.png");findChild<QFrame *>("accountPopover")->close();QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        if(!viewer->smokeSelectMultipleFaces()||selected.value("entities").toArray().size()<2){showError("Multi-component viewport selection failed.");return;}
+        auto selectedCount=selected.value("entities").toArray().size();viewer->removeSelectedEntity(0);
+        if(selected.value("entities").toArray().size()!=selectedCount-1){showError("Removing one selection context did not update the viewport.");return;}
+        viewer->smokeSelectFace();
+        const int originalModelCount=models->count(),originalModel=models->currentIndex();
+        models->addItem("Fixture model A","fixture-a");models->addItem("Fixture model B","fixture-b");
+        models->showPopup();QApplication::processEvents();
+        auto *modelPanel=findChild<QFrame *>("modelPopover");auto *modelSearch=modelPanel?modelPanel->findChild<QLineEdit *>("modelSearch"):nullptr;
+        if(!modelSearch){showError("Searchable model popover did not open.");return;}
+        modelSearch->setText("model B");modelPanel->grab().save(workspace+"/tmp/native-model-picker.png");QApplication::sendEvent(modelSearch,&enter);QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        if(models->currentData().toString()!="fixture-b"){showError("Model search keyboard choice failed.");return;}
+        while(models->count()>originalModelCount)models->removeItem(models->count()-1);models->setCurrentIndex(originalModel);
+        if(findChild<QPushButton *>("undoToolbar")->isEnabled()&&findChild<QPushButton *>("undoToolbar")->cursor().shape()!=Qt::PointingHandCursor){showError("Clickable button cursor regression failed.");return;}
+        manageProjects();auto *library=findChild<QDialog *>("projectCatalogue");auto *libraryTabs=library?library->findChild<QTabWidget *>("libraryTabs"):nullptr;
+        if(!libraryTabs||libraryTabs->count()!=2||libraryTabs->tabText(0)!="Archive"||libraryTabs->tabText(1)!="Trash"){showError("Archive and Trash were not separate views.");return;}
+        library->grab().save(workspace+"/tmp/native-library.png");library->reject();QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        polishVerified=true;
     }
     if (!conversationsVerified) {
         auto *trigger = findChild<QPushButton *>("newConversationButton");
@@ -1516,6 +1604,12 @@ void WorkspaceWindow::smokeCheck() {
     QDir().mkpath(workspace + "/tmp");
     QJsonObject report{
         {"passed", true},
+        {"workspace_polish_controls",polishVerified},
+        {"multi_component_selection",polishVerified},
+        {"enter_shift_enter_and_ime",polishVerified},
+        {"notifications_outside_chat",polishVerified},
+        {"account_details_separate",polishVerified},
+        {"separate_archive_trash",polishVerified},
         {"empty_startup", startupEmpty},
         {"onboarding_skip_and_singleton", onboardingVerified},
         {"single_send_stop_control", onboardingVerified},
@@ -1642,7 +1736,18 @@ void WorkspaceWindow::smokeCheck() {
     completedPainter.drawImage(QRect(viewer->mapTo(this, QPoint(0, 0)), viewer->size()), QImage(path));
     completedPainter.end();
     completed.save(workspace + "/tmp/native-agent-completed.png");
+    showUsageDetails();
+    if(auto *usagePanel=findChild<QFrame *>("usagePopover")){usagePanel->grab().save(workspace+"/tmp/native-usage.png");usagePanel->close();QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);}else{showError("Usage information card did not open.");return;}
+    chatRefresh->stop();
+    QJsonArray longHistory;for(int i=0;i<40;++i)longHistory.append(QJsonObject{{"role","assistant"},{"content","Synthetic scroll entry "+QString::number(i)+"\n\nAdditional context for the scrolling fixture."}});
+    chat->setMessages(longHistory,"scroll-fixture");QApplication::processEvents();QApplication::processEvents();chat->scrollToLatest();chat->verticalScrollBar()->triggerAction(QAbstractSlider::SliderToMinimum);
+    longHistory.append(QJsonObject{{"role","assistant"},{"content","New synthetic streamed response."}});chat->setMessages(longHistory,"scroll-fixture");QApplication::processEvents();QApplication::processEvents();
+    auto *latest=chat->findChild<QToolButton *>("latestMessage");
+    if(!latest||!latest->isVisible()||chat->verticalScrollBar()->value()>5){showError(QString("Streaming scroll regression: position=%1 maximum=%2 latest=%3").arg(chat->verticalScrollBar()->value()).arg(chat->verticalScrollBar()->maximum()).arg(latest&&latest->isVisible()));return;}
+    latest->click();if(chat->verticalScrollBar()->value()!=chat->verticalScrollBar()->maximum()){showError("Go to latest message failed.");return;}
+    report["scroll_follow_and_latest_button"]=true;report["searchable_model_popover"]=true;report["usage_information_card"]=true;
     state["conversation"] = originalConversation;
+    renderChat();
     updateUsage();
     if (!usageBadge->isHidden()) {
         showError("An unreported allowance badge must stay hidden.");
@@ -1655,68 +1760,6 @@ void WorkspaceWindow::smokeCheck() {
     QApplication::exit(0);
 }
 
-void WorkspaceWindow::manageProjects() {
-    if (busy || focusOpenDialog()) return;
-    auto *dialog = new QDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setObjectName("projectCatalogue");
-    dialog->setWindowModality(Qt::WindowModal);
-    dialog->setWindowTitle("Projects · Archive and trash");
-    auto *layout = new QVBoxLayout(dialog);
-    auto *tree = new QTreeWidget;
-    tree->setObjectName("trashTree");
-    tree->setHeaderLabels({"Project / conversation", "State"});
-    layout->addWidget(tree);
-    for (auto value : state.value("catalog").toObject().value("projects").toArray()) {
-        auto project = value.toObject();
-        auto status = [](const QJsonObject &item) {
-            return item.value("trashed").toBool() ? "Trash" : item.value("archived").toBool() ? "Archived" : "Active";
-        };
-        auto *parent = new QTreeWidgetItem(tree, {project.value("name").toString(), status(project)});
-        parent->setData(0, Qt::UserRole, project.value("project_id"));
-        for (auto entry : project.value("conversation_summaries").toArray()) {
-            auto chat = entry.toObject();
-            auto *item = new QTreeWidgetItem(parent, {chat.value("title").toString(), status(chat)});
-            item->setData(0, Qt::UserRole, project.value("project_id"));
-            item->setData(0, Qt::UserRole + 1, chat.value("conversation_id"));
-        }
-        parent->setExpanded(true);
-    }
-    auto *note = new QLabel("Trash keeps local files until you delete them permanently. Deleting a conversation preserves its CAD document and revisions.");
-    note->setWordWrap(true);
-    layout->addWidget(note);
-    auto *actions = new QHBoxLayout;
-    auto perform = [this, tree, dialog](bool purge) {
-        auto *item = tree->currentItem();
-        if (!item || busy) return;
-        const bool project = item->data(0, Qt::UserRole + 1).toString().isEmpty();
-        if (purge && QMessageBox::question(dialog, "Delete permanently",
-                "Permanently delete “" + item->text(0) + "”? " +
-                (project ? "Its local project folder, models and conversations will be removed." : "Its conversation and task records will be removed. CAD geometry and revisions will be kept.") +
-                " This cannot be undone.") != QMessageBox::Yes) return;
-        QJsonObject args{{"project_id", item->data(0, Qt::UserRole).toString()}};
-        if (!project) args["conversation_id"] = item->data(0, Qt::UserRole + 1).toString();
-        if (!purge) { args["archived"] = false; args["trashed"] = false; }
-        const auto method = QString(project ? "v2.project." : "v2.conversation.") + (purge ? "purge" : "update");
-        dialog->close();
-        call(method, args, [this](auto) { manageProjects(); });
-    };
-    auto *restore = button("Restore", actions, [perform] { perform(false); });
-    restore->setObjectName("restoreTrashItem");
-    auto *purge = button("Delete permanently…", actions, [perform] { perform(true); });
-    purge->setObjectName("purgeTrashItem");
-    restore->setEnabled(false);
-    purge->setEnabled(false);
-    connect(tree, &QTreeWidget::currentItemChanged, dialog, [restore, purge](QTreeWidgetItem *item) {
-        restore->setEnabled(item && item->text(1) != "Active");
-        purge->setEnabled(item && item->text(1) == "Trash");
-    });
-    actions->addStretch();
-    button("Close", actions, [dialog] { dialog->close(); });
-    layout->addLayout(actions);
-    dialog->resize(640, 460);
-    dialog->show();
-}
 
 void WorkspaceWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);

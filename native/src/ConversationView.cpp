@@ -12,6 +12,8 @@
 #include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
+#include <QWheelEvent>
+#include <QKeyEvent>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -66,11 +68,28 @@ ConversationView::ConversationView(QWidget *parent) : QScrollArea(parent) {
     setWidgetResizable(true);
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    latest = new QToolButton(this);
+    latest->setObjectName("latestMessage");
+    latest->setArrowType(Qt::DownArrow);
+    latest->setToolTip("Go to latest message");
+    latest->setAccessibleName("Go to latest message");
+    latest->setFixedSize(32,32);
+    latest->hide();
+    connect(latest,&QToolButton::clicked,this,&ConversationView::scrollToLatest);
+    connect(verticalScrollBar(),&QScrollBar::valueChanged,this,[this] {
+
+        latest->setVisible(!following); latest->raise();
+    });
+    connect(verticalScrollBar(),&QScrollBar::actionTriggered,this,[this](int action) {
+        ++scrollGeneration;following=action==QAbstractSlider::SliderToMaximum;
+        latest->setVisible(!following);
+    });
+    connect(verticalScrollBar(),&QScrollBar::sliderMoved,this,[this](int position) { ++scrollGeneration;following=verticalScrollBar()->maximum()-position<45;latest->setVisible(!following); });
+    connect(verticalScrollBar(),&QScrollBar::rangeChanged,this,[this] {
+        if(!restoring&&following) verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+    });
 }
-void ConversationView::notice(const QString &text) {
-    notices.append(QJsonObject{{"role", "system"}, {"content", text}});
-    rebuild();
-}
+void ConversationView::scrollToLatest() { ++scrollGeneration;following=true;verticalScrollBar()->setValue(verticalScrollBar()->maximum());latest->hide(); }
 QString ConversationView::plainText() const {
     QStringList result;
     for (auto value : entries)
@@ -80,7 +99,7 @@ QString ConversationView::plainText() const {
 void ConversationView::setMessages(const QJsonArray &messages, const QString &conversation) {
     if (context != conversation) {
         context = conversation;
-        notices = {};
+        following = true;
         expanded.clear();
         cachedTheme.clear();
     }
@@ -91,23 +110,41 @@ void ConversationView::setMessages(const QJsonArray &messages, const QString &co
     cachedTheme = theme;
     rebuild();
 }
+void ConversationView::wheelEvent(QWheelEvent *event) {
+    ++scrollGeneration;
+    const bool upward=event->angleDelta().y()>0||event->pixelDelta().y()>0;
+    if(upward)following=false;
+    QScrollArea::wheelEvent(event);
+    if(!upward&&verticalScrollBar()->maximum()-verticalScrollBar()->value()<45)following=true;
+    latest->setVisible(!following);
+}
+void ConversationView::keyPressEvent(QKeyEvent *event) {
+    ++scrollGeneration;
+    const bool upward=event->key()==Qt::Key_Home||event->key()==Qt::Key_PageUp||event->key()==Qt::Key_Up;
+    if(upward)following=false;
+    QScrollArea::keyPressEvent(event);
+    if(event->key()==Qt::Key_End||(!upward&&verticalScrollBar()->maximum()-verticalScrollBar()->value()<45))following=true;
+    latest->setVisible(!following);
+}
 void ConversationView::resizeEvent(QResizeEvent *event) {
     QScrollArea::resizeEvent(event);
+    latest->move(width()/2-16,height()-44);
     for (auto *bubble : widget() ? widget()->findChildren<QFrame *>("messageBubble") : QList<QFrame *>{})
         bubble->setMaximumWidth(bubble->property("user").toBool() ? int(viewport()->width() * 0.87)
                                                                                : viewport()->width() - 12);
 }
 void ConversationView::rebuild() {
     const int oldScroll = verticalScrollBar()->value();
-    const bool follow = oldScroll >= verticalScrollBar()->maximum() - 45;
+    const bool follow = following;
+    const auto generation=scrollGeneration;
+    restoring = true;
     auto *content = new QWidget;
     content->setObjectName("chatContents");
     auto *stack = new QVBoxLayout(content);
     stack->setContentsMargins(0, 8, 0, 14);
     stack->setSpacing(22);
     auto messages = entries;
-    for (auto entry : notices)
-        messages.append(entry);
+
     if (messages.isEmpty()) {
         auto *welcome = new QLabel("<h3>What would you like to build?</h3><p>Describe a part, include dimensions, "
                                    "or select geometry to focus a change.</p>");
@@ -117,6 +154,7 @@ void ConversationView::rebuild() {
     int index = 0;
     for (auto value : messages) {
         const auto message = value.toObject();
+        if (message.value("role") != "user" && message.value("role") != "assistant") continue;
         const bool user = message.value("role") == "user";
         const bool assistant = message.value("role") == "assistant";
         auto *row = new QWidget;
@@ -215,7 +253,11 @@ void ConversationView::rebuild() {
     auto *old = takeWidget();
     setWidget(content);
     delete old;
-    QTimer::singleShot(0, this, [this, follow, oldScroll] {
-        verticalScrollBar()->setValue(follow ? verticalScrollBar()->maximum() : oldScroll);
+    QTimer::singleShot(0, this, [this, follow, oldScroll, generation] {
+        if(generation==scrollGeneration) { verticalScrollBar()->setValue(follow ? verticalScrollBar()->maximum() : oldScroll);following=follow; }
+        else if(following)verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+        restoring = false;
+        latest->setVisible(!following && verticalScrollBar()->maximum()-verticalScrollBar()->value()>45);
+        latest->raise();
     });
 }

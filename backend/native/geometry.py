@@ -462,3 +462,51 @@ def measure_entities(folder, snapshot, first, second):
     a, b = entity(first), entity(second)
     return {"minimum_distance_mm": a.distance(b), "centre_distance_mm": (a.Center() - b.Center()).Length,
             "coordinates": "assembly world", "units": "mm"}
+
+
+def apply_face_batch(folder, snapshot, values):
+    if not isinstance(values, list) or not 1 <= len(values) <= 32:
+        raise WorkspaceError("Use a batch of 1–32 face commands.")
+    commands = [COMMAND.validate_python(value) for value in values]
+    candidate = copy.deepcopy(snapshot)
+    originals, operations, used = {}, {}, set()
+    for command in commands:
+        if command.type not in ("offset_face", "face_holes"):
+            raise WorkspaceError("Atomic face batches support planar offsets and holes only.")
+        part = next((p for p in candidate["components"] if p["instance_id"] == command.instance_id), None)
+        if not part or part.get("representation") == "mesh":
+            raise WorkspaceError("A face batch requires existing solid components.")
+        if command.instance_id not in originals:
+            originals[command.instance_id] = load_shape(folder, part)
+        faces = indexed(originals[command.instance_id], TopAbs_FACE)
+        if command.face_index > len(faces):
+            raise WorkspaceError("A batch face reference is stale.", "stale_selection")
+        key = (command.instance_id, command.face_index)
+        if key in used:
+            raise WorkspaceError("Combine edits to the same face into one batch command.")
+        used.add(key)
+        face = faces[command.face_index-1]
+        if face.geomType() != "PLANE":
+            raise WorkspaceError("This batch requires planar faces.")
+        normal = face.normalAt()
+        tools = operations.setdefault(command.instance_id, [])
+        if command.type == "offset_face":
+            if abs(command.distance) < 1e-6:
+                raise WorkspaceError("Choose a nonzero face offset.")
+            tools.append(("add" if command.distance > 0 else "cut", cq.Solid.extrudeLinear(face.outerWire(), face.innerWires(), normal.multiply(command.distance))))
+        else:
+            plane = cq.Plane(origin=face.Center(), normal=normal)
+            for x, y in command.centres:
+                origin = plane.toWorldCoords((x, y))
+                tools.append(("cut", cq.Solid.makeCylinder(command.diameter/2, command.depth+0.02, origin.add(normal.multiply(0.01)), normal.multiply(-1))))
+    for part in candidate["components"]:
+        if part["instance_id"] not in originals:
+            continue
+        body = originals[part["instance_id"]]
+        for operation, tool in operations[part["instance_id"]]:
+            body = boolean_apply(body, tool, operation)
+        part.update(store_shape(folder, body))
+        part["definition_id"] = str(uuid4())
+    candidate["direct_edits"] = True
+    check_new_intersections(folder, snapshot, candidate, {"type": "batch"})
+    return candidate

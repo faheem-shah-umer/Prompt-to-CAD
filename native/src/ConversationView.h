@@ -4,20 +4,26 @@
 #include <QSet>
 #include <QUrl>
 class QVBoxLayout;
+class QToolButton;
 class ConversationView : public QScrollArea {
     Q_OBJECT
   public:
     explicit ConversationView(QWidget *parent = nullptr);
     void setMessages(const QJsonArray &messages, const QString &conversation);
-    void notice(const QString &text);
+    void scrollToLatest();
     QString plainText() const;
   Q_SIGNALS:
     void anchorClicked(const QUrl &url);
   protected:
     void resizeEvent(QResizeEvent *event) override;
+    void wheelEvent(QWheelEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
   private:
     void rebuild();
-    QJsonArray entries, notices;
+    QJsonArray entries;
+    QToolButton *latest;
+    bool following = true, restoring = false;
+    unsigned scrollGeneration = 0;
     QSet<QString> expanded;
     QString cachedTheme, context;
 };

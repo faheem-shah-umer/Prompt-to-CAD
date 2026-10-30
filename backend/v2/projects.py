@@ -604,6 +604,75 @@ class Projects:
             "catalog": self.listing(),
         }
 
+    def batch_conversations(self, items, action):
+        if (
+            action not in ("archive", "trash", "restore", "unarchive", "purge")
+            or not isinstance(items, list)
+            or not 1 <= len(items) <= 256
+        ):
+            raise WorkspaceError("Choose 1–256 conversations and a supported action.")
+        unique = list(
+            dict.fromkeys(
+                (identifier(i["project_id"]), identifier(i["conversation_id"]))
+                for i in items
+            )
+        )
+        results = []
+        with self.write_lock():
+            prepared = []
+            for pid, cid in unique:
+                try:
+                    prepared.append((pid, cid, self.conversation(pid, cid)))
+                except (OSError, ValueError, WorkspaceError) as error:
+                    results.append(
+                        {
+                            "project_id": pid,
+                            "conversation_id": cid,
+                            "passed": False,
+                            "error": str(error),
+                        }
+                    )
+            for pid, cid, chat in prepared:
+                try:
+                    if action == "purge":
+                        self.purge(pid, cid)
+                    else:
+                        if action == "archive":
+                            if chat.get("trashed"):
+                                raise WorkspaceError(
+                                    "Restore this conversation from Trash before archiving it."
+                                )
+                            chat["archived"] = True
+                        elif action == "trash":
+                            chat["trashed"] = True
+                        elif action == "restore":
+                            chat["trashed"] = False
+                        else:
+                            if chat.get("trashed"):
+                                raise WorkspaceError(
+                                    "Restore this conversation from Trash first."
+                                )
+                            chat["archived"] = False
+                        self.save_conversation(pid, chat)
+                        project = self.project(pid)
+                        if project.get("active_conversation_id") == cid and (
+                            chat.get("trashed") or chat.get("archived")
+                        ):
+                            self.update(pid, active_conversation_id=None)
+                    results.append(
+                        {"project_id": pid, "conversation_id": cid, "passed": True}
+                    )
+                except (OSError, ValueError, WorkspaceError, RevisionConflict) as error:
+                    results.append(
+                        {
+                            "project_id": pid,
+                            "conversation_id": cid,
+                            "passed": False,
+                            "error": str(error),
+                        }
+                    )
+        return results
+
     def reference(self, project_id, source):
         source = Path(source).resolve()
         if (

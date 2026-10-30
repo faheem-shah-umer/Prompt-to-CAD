@@ -89,6 +89,23 @@ gp_Pnt MeshSource::triangleCentre(int id) const {
     auto a = points[f[0]], b = points[f[1]], c = points[f[2]];
     return gp_Pnt((a.X() + b.X() + c.X()) / 3, (a.Y() + b.Y() + c.Y()) / 3, (a.Z() + b.Z() + c.Z()) / 3);
 }
+int MeshSource::rayHit(const gp_Pnt &origin, const gp_Vec &direction, double &distance) const {
+    int result=0;
+    for(int i=0;i<int(triangles.size());++i) {
+        const auto &face=triangles[i];const auto &a=points[face[0]];
+        gp_Vec edge1(a,points[face[1]]),edge2(a,points[face[2]]);
+        const auto cross=direction.Crossed(edge2);const double determinant=edge1.Dot(cross);
+        if(std::abs(determinant)<1e-12)continue;
+        gp_Vec offset(a,origin);const double u=offset.Dot(cross)/determinant;
+        if(u<0||u>1)continue;
+        const auto q=offset.Crossed(edge1);const double v=direction.Dot(q)/determinant;
+        if(v<0||u+v>1)continue;
+        const double hit=edge2.Dot(q)/determinant;
+        if(hit>=0&&hit<distance){distance=hit;result=i+1;}
+    }
+    return result;
+}
+
 Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset) {
     Handle(MeshSource) source = new MeshSource(asset);
     Handle(MeshVS_Mesh) mesh = new MeshVS_Mesh;

@@ -1,4 +1,5 @@
 #include "CadView.h"
+#include <QSet>
 #include "MeshSource.h"
 #include <QJsonDocument>
 #include <MeshVS_SelectionModeFlags.hxx>
@@ -11,6 +12,7 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -124,6 +126,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
             presentation->SetLocalTransformation(trsf);
             next.insert(id, presentation);
         }
+        meshPickOwners.clear();meshHover.Nullify();
         context->RemoveAll(false);
         shapes = next;meshes=nextMeshes;
         for(const auto& mesh:meshes)context->Display(mesh,MeshVS_DMF_Shading|MeshVS_DMF_ElementalColorDataPrs,MeshVS_SMF_Mesh,false);
@@ -147,6 +150,7 @@ void CadView::standardView(const QString& direction) {
 void CadView::setSelectionMode(const QString& kind) {
     mode = kind;
     if (context.IsNull()) return;
+    if(!meshHover.IsNull()&&!context->IsSelected(meshHover))meshHover->Unhilight(context->MainPrsMgr(),0);meshHover.Nullify();
     context->ClearSelected(false); context->Deactivate();
     const int selectionMode = kind == "body" ? 0 : AIS_Shape::SelectionMode(topologyKind(kind));
     for (const auto& shape : shapes) context->Activate(shape, selectionMode);
@@ -154,12 +158,21 @@ void CadView::setSelectionMode(const QString& kind) {
     currentSelection = {};
     Q_EMIT selectionChanged({}); view->Redraw();
 }
-void CadView::selectInstance(const QString& id) {
-    if (context.IsNull() || (!shapes.contains(id)&&!meshes.contains(id))) return;
+void CadView::selectInstance(const QString& id) { selectInstances({id}); }
+void CadView::selectInstances(const QStringList &ids) {
+    if(context.IsNull())return;
     context->ClearSelected(false);
-    if(shapes.contains(id))context->SetSelected(shapes[id],false);else context->SetSelected(meshes[id],false);
-    currentSelection = {{"revision_id", document.value("revision_id")}, {"instance_id", id}, {"kind", "body"}, {"index", 0}};
-    Q_EMIT selectionChanged(currentSelection); view->Redraw();
+    for(const auto &id:ids) {
+        if(shapes.contains(id))context->AddOrRemoveSelected(shapes[id],false);
+        else if(meshes.contains(id))context->AddOrRemoveSelected(meshes[id],false);
+    }
+    updateSelection();view->Redraw();
+}
+void CadView::removeSelectedEntity(int index) {
+    if(context.IsNull())return;
+    if(index<0)context->ClearSelected(false);
+    else if(index<selectedOwners.size())for(const auto &owner:selectedOwners[index])context->AddOrRemoveSelected(owner,false);
+    updateSelection();view->Redraw();
 }
 void CadView::setVisibleInstance(const QString& id, bool visible) {
     if(context.IsNull())return;
@@ -179,12 +192,22 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     else if (event->buttons() & Qt::LeftButton) {
         if ((point - pressedPosition).manhattanLength() > 4) view->Rotation(point.x(), point.y());
     } else if (event->buttons() & Qt::RightButton) view->Zoom(lastPosition.x(), lastPosition.y(), point.x(), point.y());
-    else context->MoveTo(point.x(), point.y(), view, true);
+    else {
+        if(!meshHover.IsNull()&&!context->IsSelected(meshHover))meshHover->Unhilight(context->MainPrsMgr(),0);meshHover.Nullify();
+        context->MoveTo(point.x(), point.y(), view, true);
+        if(!context->HasDetected()&&mode=="face") {meshHover=pickMeshFace(point);if(!meshHover.IsNull()&&!context->IsSelected(meshHover)){meshHover->HilightWithColor(context->MainPrsMgr(),context->HighlightStyle(),0);view->Redraw();}}
+    }
     lastPosition = point;
 }
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
     if (view.IsNull() || event->button() != Qt::LeftButton || (QPoint(qRound(event->position().x() * devicePixelRatioF()), qRound(event->position().y() * devicePixelRatioF())) - pressedPosition).manhattanLength() > 4) return;
-    context->MoveTo(lastPosition.x(), lastPosition.y(), view, false);
+    const QPoint point(qRound(event->position().x()*devicePixelRatioF()),qRound(event->position().y()*devicePixelRatioF()));
+    context->MoveTo(point.x(), point.y(), view, false);
+    if(!context->HasDetected()&&mode=="face") {
+        auto owner=pickMeshFace(point);
+        if(!owner.IsNull()){if(!(event->modifiers()&Qt::ControlModifier))context->ClearSelected(false);context->AddOrRemoveSelected(owner,false);updateSelection();view->Redraw();return;}
+    }
+    if((event->modifiers() & Qt::ControlModifier) && !context->HasDetected())return;
     context->SelectDetected(event->modifiers() & Qt::ControlModifier ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
     updateSelection(); view->Redraw();
 }
@@ -192,38 +215,77 @@ void CadView::wheelEvent(QWheelEvent* event) {
     if (view.IsNull()) return;
     view->SetScale(view->Scale() * std::pow(1.0015, event->angleDelta().y())); view->Redraw();
 }
+Handle(SelectMgr_EntityOwner) CadView::pickMeshFace(const QPoint &point) {
+    if(view.IsNull()||meshes.isEmpty())return {};
+    double x,y,z,dx,dy,dz;view->ConvertWithProj(point.x(),point.y(),x,y,z,dx,dy,dz);
+    gp_Pnt origin(x,y,z);gp_Vec direction(dx,dy,dz);
+    if(direction.SquareMagnitude()<1e-20)return {};
+    direction.Normalize();if(direction.Dot(gp_Vec(view->Camera()->Direction()))<0)direction.Reverse();
+    double span=1;
+    for(auto value:document.value("components").toArray()) {
+        auto part=value.toObject();auto bounds=part.value("metrics").toObject().value("bounds_mm").toArray();if(bounds.size()!=2)continue;
+        auto low=bounds[0].toArray(),high=bounds[1].toArray();auto id=part.value("instance_id").toString();if(!meshes.contains(id))continue;
+        for(int corner=0;corner<8;++corner){gp_Pnt p((corner&1?high:low)[0].toDouble(),(corner&2?high:low)[1].toDouble(),(corner&4?high:low)[2].toDouble());p.Transform(meshes[id]->LocalTransformation());span=qMax(span,origin.Distance(p)+1);}
+    }
+    origin.Translate(direction.Multiplied(-span));
+    double nearest=std::numeric_limits<double>::max();QString hitId;int triangle=0;
+    for(auto it=meshes.cbegin();it!=meshes.cend();++it) {
+        if(!context->IsDisplayed(it.value()))continue;
+        auto *source=dynamic_cast<MeshSource *>(it.value()->GetDataSource().get());if(!source)continue;
+        const auto inverse=it.value()->LocalTransformation().Inverted();double distance=nearest;
+        int face=source->rayHit(origin.Transformed(inverse),direction.Transformed(inverse),distance);
+        if(face){nearest=distance;triangle=face;hitId=it.key();}
+    }
+    if(hitId.isEmpty())return {};
+    for(context->InitSelected();context->MoreSelected();context->NextSelected()) {
+        auto owner=Handle(MeshVS_MeshEntityOwner)::DownCast(context->SelectedOwner());
+        if(context->SelectedInteractive()==meshes[hitId]&&!owner.IsNull()&&owner->Type()==MeshVS_ET_Face&&owner->ID()==triangle)return owner;
+    }
+    auto key=hitId+":"+QString::number(triangle);
+    if(!meshPickOwners.contains(key))meshPickOwners[key]=new MeshVS_MeshEntityOwner(meshes[hitId].get(),triangle,nullptr,MeshVS_ET_Face,5);
+    return meshPickOwners[key];
+}
+
 void CadView::updateSelection() {
-    currentSelection = {};
-    context->InitSelected();
-    if (context->MoreSelected()) {
-        auto object = Handle(AIS_Shape)::DownCast(context->SelectedInteractive());
+    currentSelection = {}; selectedOwners.clear();
+    QJsonArray entities;
+    QMap<QString,int> regions;
+    for(context->InitSelected();context->MoreSelected();context->NextSelected()) {
+        auto selectedOwner=context->SelectedOwner();
+        auto object=Handle(AIS_Shape)::DownCast(context->SelectedInteractive());
         QString id;
-        for (auto it = shapes.cbegin(); it != shapes.cend(); ++it) if (it.value() == object) { id = it.key(); break; }
-        if (!id.isEmpty()) {
-            int index = 0; QString kind = "body";
-            auto owner = Handle(StdSelect_BRepOwner)::DownCast(context->SelectedOwner());
-            if (!owner.IsNull() && owner->HasShape() && mode != "body") {
-                auto subshape = owner->Shape(); kind = shapeKind(subshape.ShapeType());
-                TopTools_IndexedMapOfShape map;
-                TopExp::MapShapes(object->Shape(), subshape.ShapeType(), map);
-                index = map.FindIndex(subshape);
+        for(auto it=shapes.cbegin();it!=shapes.cend();++it)if(it.value()==object&&!object.IsNull()){id=it.key();break;}
+        if(!id.isEmpty()) {
+            int index=0;QString kind="body";
+            auto owner=Handle(StdSelect_BRepOwner)::DownCast(selectedOwner);
+            if(!owner.IsNull()&&owner->HasShape()&&mode!="body") {
+                auto subshape=owner->Shape();kind=shapeKind(subshape.ShapeType());
+                if(kind!="body") { TopTools_IndexedMapOfShape map;TopExp::MapShapes(object->Shape(),subshape.ShapeType(),map);index=map.FindIndex(subshape); }
             }
-            if (kind == "body" || index > 0) currentSelection = {{"revision_id", document.value("revision_id")},
-                {"instance_id", id}, {"kind", kind}, {"index", index}};
+            if(kind=="body"||index>0) {
+                entities.append(QJsonObject{{"instance_id",id},{"kind",kind},{"index",index}});
+                selectedOwners.append(QList<Handle(SelectMgr_EntityOwner)>{selectedOwner});
+            }
+            continue;
+        }
+        auto mesh=Handle(MeshVS_Mesh)::DownCast(context->SelectedInteractive());
+        for(auto it=meshes.cbegin();it!=meshes.cend();++it)if(it.value()==mesh&&!mesh.IsNull()){id=it.key();break;}
+        if(id.isEmpty())continue;
+        auto owner=Handle(MeshVS_MeshEntityOwner)::DownCast(selectedOwner);
+        const bool face=!owner.IsNull()&&owner->Type()==MeshVS_ET_Face;
+        if(face&&regions.contains(id)) {
+            int position=regions[id];auto entry=entities[position].toObject();auto triangles=entry["triangle_indices"].toArray();triangles.append(owner->ID());entry["triangle_indices"]=triangles;entities[position]=entry;selectedOwners[position].append(selectedOwner);
+        } else {
+            QJsonObject entry{{"instance_id",id},{"kind",face?"region":"body"},{"index",face?owner->ID():0}};
+            if(face){entry["triangle_indices"]=QJsonArray{owner->ID()};regions[id]=entities.size();}
+            entities.append(entry);selectedOwners.append(QList<Handle(SelectMgr_EntityOwner)>{selectedOwner});
         }
     }
-    if(currentSelection.isEmpty()) {
-        context->InitSelected();if(context->MoreSelected()) {
-            auto object=Handle(MeshVS_Mesh)::DownCast(context->SelectedInteractive());QString id;
-            for(auto it=meshes.cbegin();it!=meshes.cend();++it)if(it.value()==object){id=it.key();break;}
-            if(!id.isEmpty()) {
-                QJsonArray triangles;
-                for(context->InitSelected();context->MoreSelected();context->NextSelected())if(context->SelectedInteractive()==object){auto owner=Handle(MeshVS_MeshEntityOwner)::DownCast(context->SelectedOwner());if(!owner.IsNull()&&owner->Type()==MeshVS_ET_Face)triangles.append(owner->ID());}
-                currentSelection={{"revision_id",document.value("revision_id")},{"instance_id",id},{"kind",triangles.isEmpty()?"body":"region"},{"index",triangles.isEmpty()?0:triangles[0].toInt()},{"triangle_indices",triangles}};
-            }
-        }
+    if(!entities.isEmpty()) {
+        currentSelection=entities.first().toObject();
+        currentSelection["version"]=2;currentSelection["revision_id"]=document.value("revision_id");currentSelection["document_id"]=document.value("document_id");currentSelection["entities"]=entities;
+        if(entities.size()==1&&currentSelection["kind"]=="edge")currentSelection["edge_indices"]=selectedEdges(currentSelection["instance_id"].toString());
     }
-    if(currentSelection.value("kind")=="edge")currentSelection["edge_indices"]=selectedEdges(currentSelection.value("instance_id").toString());
     Q_EMIT selectionChanged(currentSelection);
 }
 QJsonArray CadView::selectedEdges(const QString& id) const {
@@ -274,6 +336,28 @@ bool CadView::smokeSelectFace() {
             QCoreApplication::sendEvent(this, &release);
             if (currentSelection.value("kind") == "face" && currentSelection.value("index").toInt() > 0) return true;
         }
+    }
+    return false;
+}
+
+bool CadView::smokeSelectMultipleFaces() {
+    setSelectionMode("face");
+    auto pick=[this](const gp_Pnt &point) {
+        int x,y;view->Convert(point.X(),point.Y(),point.Z(),x,y);
+        QPointF position(x/devicePixelRatioF(),y/devicePixelRatioF());
+        QMouseEvent press(QEvent::MouseButtonPress,position,position,Qt::LeftButton,Qt::LeftButton,Qt::ControlModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,position,position,Qt::LeftButton,Qt::NoButton,Qt::ControlModifier);
+        QCoreApplication::sendEvent(this,&press);QCoreApplication::sendEvent(this,&release);
+        QSet<QString> ids;for(auto value:currentSelection.value("entities").toArray())ids.insert(value.toObject().value("instance_id").toString());
+        return ids.size()>1;
+    };
+    for(const auto &object:shapes) {
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(object->Shape(),TopAbs_FACE,faces);
+        for(int index=1;index<=faces.Extent();++index){GProp_GProps properties;BRepGProp::SurfaceProperties(faces(index),properties);if(pick(properties.CentreOfMass().Transformed(object->LocalTransformation())))return true;bool found=false;for(auto value:currentSelection.value("entities").toArray())if(value.toObject().value("instance_id").toString()==shapes.key(object))found=true;if(found)break;}
+    }
+    for(const auto &mesh:meshes) {
+        auto *source=dynamic_cast<MeshSource *>(mesh->GetDataSource().get());if(!source)continue;
+        for(int index=1;index<=source->triangleCount();++index){if(pick(source->triangleCentre(index).Transformed(mesh->LocalTransformation())))return true;bool found=false;for(auto value:currentSelection.value("entities").toArray())if(value.toObject().value("instance_id").toString()==meshes.key(mesh))found=true;if(found)break;}
     }
     return false;
 }

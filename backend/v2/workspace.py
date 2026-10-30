@@ -197,6 +197,7 @@ class WorkspaceV2(Workspace):
                     in {
                         "v2.task",
                         "v2.command",
+                        "v2.command_batch",
                         "v2.script",
                         "v2.undo",
                         "v2.redo",
@@ -252,6 +253,30 @@ class WorkspaceV2(Workspace):
                 self.project_id = None
                 self.document = None
             return self.state()
+        if method == "v2.project.save":
+            if not self.project_id:
+                raise WorkspaceError("Open a project first.")
+            project = self.projects.project(self.project_id)
+            for entry in project["documents"]:
+                doc = self.projects.document(project, entry["document_id"])
+                if doc.index()["cursor"] >= 0:
+                    doc.current()
+                write_json(doc.index_path, doc.index())
+            write_json(
+                self.projects.project_path(self.project_id) / "workspace.json", project
+            )
+            return self.state()
+        if method == "v2.project.save_as":
+            from .project_copy import clone
+
+            if not self.project_id:
+                raise WorkspaceError("Open a project first.")
+            return self.activate(clone(self.projects, self.project_id, params["name"]))
+        if method == "v2.conversations.batch":
+            results = self.projects.batch_conversations(
+                params["items"], params["action"]
+            )
+            return {**self.state(), "results": results}
         if method == "v2.project.create":
             return self.activate(
                 self.projects.create(params.get("name", "Untitled project"))[
@@ -348,9 +373,13 @@ class WorkspaceV2(Workspace):
         if method == "provider.status":
             return self.state()["provider"]
         if method == "provider.login":
-            return self.connections.begin(params.get("account_id"))
+            return self.connections.begin(
+                params.get("account_id"), bool(params.get("new_registration"))
+            )
         if method == "provider.cancel_login":
             return self.connections.cancel_login()
+        if method == "provider.forget":
+            return self.connections.forget(params["account_id"])
         if method == "provider.api_key":
             return self.connections.api_key(params["key"])
         if method == "provider.select":
@@ -465,7 +494,7 @@ class WorkspaceV2(Workspace):
                 )
             self.projects.adopt(self.project_id, document)
             return self.activate(self.project_id)
-        if method in ("v2.command", "v2.script"):
+        if method in ("v2.command", "v2.command_batch", "v2.script"):
             if not self.document:
                 raise WorkspaceError("Open or create a document first.", "no_document")
             snapshot = (
@@ -481,7 +510,15 @@ class WorkspaceV2(Workspace):
                 self.project_id,
                 uuid4().hex,
             )
-            if method == "v2.command":
+            if method == "v2.command_batch":
+                tools.call(
+                    "cad_apply_batch",
+                    {
+                        "candidate_id": tools.candidate_id,
+                        "commands": params["commands"],
+                    },
+                )
+            elif method == "v2.command":
                 tools.call(
                     "cad_apply",
                     {"candidate_id": tools.candidate_id, "command": params["command"]},

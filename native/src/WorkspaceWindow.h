@@ -51,9 +51,14 @@ class WorkspaceWindow : public QMainWindow {
     void revealConversation();
     void manageProjects();
     void account();
+    void showAccountDetails();
+    void showUsageDetails();
+    void saveAs();
+    void notify(const QString &, const QString &severity = "error");
+    void batchConversations(const QJsonArray &, const QString &action);
     void discoverModels(bool refresh = false);
     void updateSendControl();
-    void beginSignIn(const QString &registration = {});
+    void beginSignIn(const QString &registration = {}, bool newRegistration = false);
     void showOnboarding();
     void submit();
     QString takeComposerText();
@@ -98,6 +103,7 @@ class WorkspaceWindow : public QMainWindow {
     QAction *undoAction, *redoAction;
     QJsonObject state, document, selected, operationSelection;
     QString workspace, currentOperation;
+    bool polishVerified = false;
     bool settingsVerified = false, conversationsVerified = false, onboardingVerified = false, startupEmpty = false;
     int settingsSaves = 0;
     bool taskRunning = false, modelsLoading = false, refreshScheduled = false;

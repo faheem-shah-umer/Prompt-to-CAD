@@ -48,6 +48,8 @@ def dispatch(method, params):
         candidate = execute(folder, params["snapshot"], params["source"], params.get("parameters", {}), params.get("instance_id"))
         geometry.check_new_intersections(folder, params["snapshot"], candidate, {"type": "script"})
         return candidate
+    if method == "apply_batch":
+        return geometry.apply_face_batch(folder, params["snapshot"], params["commands"])
     if method == "apply":
         candidate = geometry.apply_command(folder, params["snapshot"], params["command"])
         geometry.check_new_intersections(folder, params["snapshot"], candidate, params["command"])

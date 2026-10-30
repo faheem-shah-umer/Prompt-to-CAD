@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import httpx
 
-from backend.native.project_lock import revision_lock
+from backend.native.project_lock import revision_lock, RevisionConflict
 from backend.native.contracts import WorkspaceError
 
 APP_NAME = "Prompt to CAD"
@@ -169,6 +169,7 @@ class Connections:
         self.vault = vault or Vault(folder)
         self.notify = notify
         self.pending = None
+        self.login_lease = None
         self.lock = threading.RLock()
         self.last_error = ""
         self.model_lock = threading.Lock()
@@ -201,6 +202,7 @@ class Connections:
                 "id": key,
                 "label": a.get("email", "API key") + " · " + key[-6:],
                 "email": a.get("email", "API key"),
+                "name": a.get("name", ""),
                 "workspace": a.get("workspace", "Workspace not reported"),
                 "connection": a["mode"],
                 "connected": bool(a.get("access_token") or a.get("api_key")),
@@ -245,7 +247,38 @@ class Connections:
             "usage_url": "https://chatgpt.com/settings/usage",
         }
 
-    def begin(self, account_id=None):
+    def begin(self, account_id=None, new_registration=False):
+        with self.lock:
+            if self.pending:
+                raise WorkspaceError(
+                    "A sign-in is already in progress.", "sign_in_pending"
+                )
+            if new_registration and account_id:
+                raise WorkspaceError(
+                    "Choose a new registration or a saved account, not both."
+                )
+            lease = revision_lock(self.vault.folder / ".authorization")
+            try:
+                lease.__enter__()
+            except Exception:
+                raise WorkspaceError(
+                    "Sign-in is already open in another application window.",
+                    "sign_in_pending",
+                ) from None
+            self.login_lease = lease
+            try:
+                return self._begin(account_id, new_registration)
+            except Exception:
+                self.release_login()
+                raise
+
+    def release_login(self):
+        with self.lock:
+            lease, self.login_lease = self.login_lease, None
+            if lease:
+                lease.__exit__(None, None, None)
+
+    def _begin(self, account_id=None, new_registration=False):
         with self.lock:
             if self.pending:
                 raise WorkspaceError(
@@ -253,7 +286,9 @@ class Connections:
                 )
             with self.vault.lock:
                 data = self.vault.read()
-            account_id = account_id or data.get("preferred")
+            account_id = (
+                None if new_registration else account_id or data.get("preferred")
+            )
             old = data["accounts"].get(account_id) if account_id else None
             if account_id and (not old or old["mode"] != "chatgpt"):
                 raise WorkspaceError("Choose a saved ChatGPT registration.")
@@ -324,6 +359,7 @@ class Connections:
                     self.wfile.write(message.encode())
                     if owner.pending is server:
                         owner.pending = None
+                    owner.release_login()
                     owner.connection_event(message)
                     threading.Thread(target=server.shutdown, daemon=True).start()
 
@@ -406,6 +442,7 @@ class Connections:
             "subject": claims["sub"],
             "client_id": issued,
             "email": claims.get("email", "ChatGPT account"),
+            "name": claims.get("name", ""),
             "workspace": "Workspace name not reported · registration " + issued[-8:],
             "scopes": scopes,
             "expires_at": time.time() + tokens["expires_in"],
@@ -443,6 +480,7 @@ class Connections:
             self.pending = None
             self.last_error = "Sign-in expired. Try again."
         server.shutdown()
+        self.release_login()
         self.connection_event(self.last_error)
 
     def cancel_login(self):
@@ -450,6 +488,7 @@ class Connections:
             server, self.pending = self.pending, None
         if server:
             server.shutdown()
+            self.release_login()
             self.connection_event("Sign-in cancelled.")
         return self.status()
 
@@ -651,3 +690,53 @@ class Connections:
             if confirmed
             else "Disconnected locally. Remote revocation was not confirmed; manage access in ChatGPT Settings.",
         }
+
+    def forget(self, key_id):
+        with self.lock:
+            if self.pending:
+                raise WorkspaceError(
+                    "Finish or cancel sign-in first.", "sign_in_pending"
+                )
+            try:
+                with revision_lock(self.vault.folder / ".authorization"):
+                    return self._forget(key_id)
+            except RevisionConflict:
+                raise WorkspaceError(
+                    "Sign-in is open in another application window.", "sign_in_pending"
+                ) from None
+
+    def _forget(self, key_id):
+        with self.lock:
+            if self.pending:
+                raise WorkspaceError(
+                    "Finish or cancel sign-in before removing a saved connection."
+                )
+            with self.vault.lock:
+                data = self.vault.read()
+                if key_id in (data.get("active"), data.get("preferred")):
+                    raise WorkspaceError(
+                        "Switch the primary connection before removing it.",
+                        "primary_account",
+                    )
+                if key_id not in data["accounts"]:
+                    raise WorkspaceError("Unknown account registration.")
+            result = self.disconnect(key_id)
+            with self.vault.lock, revision_lock(self.vault.folder):
+                data = self.vault.read()
+                if key_id in (data.get("active"), data.get("preferred")):
+                    raise WorkspaceError(
+                        "This registration became the primary connection; it was retained."
+                    )
+                data["accounts"].pop(key_id, None)
+                self.vault.write(data)
+            return {
+                **self.status(),
+                "remote_revocation_confirmed": result["remote_revocation_confirmed"],
+                "message": "Saved connection removed locally. "
+                + (
+                    "Session revocation confirmed. "
+                    if result["remote_revocation_confirmed"]
+                    else "Remote session revocation was not confirmed. "
+                )
+                + "Remove the registered app separately in ChatGPT Settings.",
+            }

@@ -9,7 +9,8 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from backend.native.contracts import Command, WorkspaceError
+from backend.native.contracts import Command, FaceOffset, FaceHoles, WorkspaceError
+from .selection import normalize, check_command
 
 
 def schema(properties=None, required=()):
@@ -128,6 +129,27 @@ TOOLS = [
 ]
 
 
+TOOLS.append(
+    {
+        "name": "cad_apply_batch",
+        "description": "Atomically apply planar face offsets/holes to multiple submitted faces and components. All face references resolve against this candidate before any topology changes. Failure leaves the prior candidate unchanged.",
+        "inputSchema": schema(
+            {
+                "candidate_id": TOKEN,
+                "commands": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "items": inline_schema(
+                        TypeAdapter(FaceOffset | FaceHoles).json_schema()
+                    ),
+                },
+            },
+            ["candidate_id", "commands"],
+        ),
+    }
+)
+
 for tool in TOOLS:
     tool["annotations"] = {
         "readOnlyHint": tool["name"]
@@ -161,87 +183,19 @@ class TaskTools:
         self.commands = []
         self.lock = threading.RLock()
         self.closed = False
-        self.scope = selection["instance_id"] if selection else None
-        if selection:
-            if (
-                selection.get("revision_id") != snapshot.get("revision_id")
-                or selection.get("document_id", snapshot["document_id"])
-                != snapshot["document_id"]
-            ):
-                raise WorkspaceError(
-                    "Selection is stale. Select the part in the current revision.",
-                    "stale_selection",
-                )
-            part = next(
-                (p for p in snapshot["components"] if p["instance_id"] == self.scope),
-                None,
-            )
-            if not part:
-                raise WorkspaceError(
-                    "The selected component is missing.", "stale_selection"
-                )
-            kind = selection.get("kind", "body")
-            count = part["topology"].get(
-                {
-                    "face": "faces",
-                    "edge": "edges",
-                    "vertex": "vertices",
-                    "region": "triangles",
-                }.get(kind, ""),
-                0,
-            )
-            if kind not in ("body", "face", "edge", "vertex", "region") or (
-                kind != "body" and not 1 <= selection.get("index", 0) <= count
-            ):
-                raise WorkspaceError(
-                    "The selected topology reference is invalid.", "stale_selection"
-                )
-            if kind == "region":
-                indices = selection.get("triangle_indices", [selection["index"]])
-                if (
-                    not isinstance(indices, list)
-                    or not indices
-                    or any(type(i) != int or not 1 <= i <= count for i in indices)
-                ):
-                    raise WorkspaceError(
-                        "The submitted mesh region is invalid.", "stale_selection"
-                    )
-            self.selection.update(
-                project_id=project_id,
-                document_id=snapshot["document_id"],
-                body_id=part["definition_id"],
-                asset_hash=part["asset_hash"],
-                local_to_world=part["matrix"],
-                units="mm",
-                measurements=part["metrics"],
-            )
-            if kind != "body":
-                description = self.geometry(
-                    "inspect",
-                    instance_id=self.scope,
-                    offset=selection["index"] - 1,
-                    limit=1,
-                )["components"][0]
-                entries = description.get(
-                    {
-                        "face": "faces",
-                        "edge": "edges",
-                        "vertex": "vertices",
-                        "region": "regions",
-                    }[kind],
-                    [],
-                )
-                if entries:
-                    entity = entries[0]
-                    self.selection["local_entity"] = entity
-                    point = entity.get("centre", entity.get("point"))
-                    if point:
-                        pose = part["matrix"]
-                        self.selection["world_position_mm"] = [
-                            sum(pose[row * 4 + axis] * point[axis] for axis in range(3))
-                            + pose[row * 4 + 3]
-                            for row in range(3)
-                        ]
+        self.selection = normalize(
+            selection,
+            snapshot,
+            project_id,
+            lambda target, offset: self.geometry(
+                "inspect", instance_id=target, offset=offset, limit=1
+            )["components"][0],
+        )
+        self.scope = (
+            {e["instance_id"] for e in self.selection["entities"]}
+            if self.selection
+            else set()
+        )
 
     def geometry(self, method, **params):
         return self.workspace.geometry(
@@ -261,7 +215,7 @@ class TaskTools:
                 p for p in candidate["components"] if p["instance_id"] not in before
             ]
             allowed = all(
-                p.get("source_instance_id") == self.scope
+                p.get("source_instance_id") in self.scope
                 and p.get("representation") == "mesh"
                 for p in additions
             )
@@ -269,7 +223,9 @@ class TaskTools:
                 not set(before) <= set(after)
                 or not allowed
                 or any(
-                    after[k] != value for k, value in before.items() if k != self.scope
+                    after[k] != value
+                    for k, value in before.items()
+                    if k not in self.scope
                 )
             ):
                 raise WorkspaceError(
@@ -278,8 +234,10 @@ class TaskTools:
                 )
         return {
             "passed": True,
-            "unrelated_components_checked": len(before) - 1 if self.scope else 0,
-            "scope": self.scope or "document",
+            "unrelated_components_checked": len(before) - len(self.scope)
+            if self.scope
+            else 0,
+            "scope": sorted(self.scope) if self.scope else "document",
             "component_count": len(candidate["components"]),
         }
 
@@ -405,51 +363,45 @@ class TaskTools:
                     "scope": self.scope_check(self.candidate),
                     "candidate_id": self.candidate_id,
                 }
-            if name not in ("cad_apply", "cad_script"):
+            if name not in ("cad_apply", "cad_apply_batch", "cad_script"):
                 raise WorkspaceError("Unknown CAD capability.", "method_not_found")
             if len(self.commands) >= 32:
                 raise WorkspaceError(
                     "The task reached its 32-operation budget. Finish or ask for a smaller task.",
                     "operation_limit",
                 )
-            target = (
-                params.get("instance_id")
-                if name == "cad_script"
-                else params["command"]["instance_id"]
+            commands = (
+                params.get("commands", [])
+                if name == "cad_apply_batch"
+                else [params["command"]]
+                if name == "cad_apply"
+                else []
             )
-            if self.scope and target != self.scope:
+            if name == "cad_apply_batch" and (not commands or len(commands) > 32):
+                raise WorkspaceError("Use a batch of 1–32 supported face operations.")
+            if len(self.commands) + max(1, len(commands)) > 32:
                 raise WorkspaceError(
-                    "This task can only modify its submitted selection.",
-                    "scope_violation",
+                    "The task reached its operation budget.", "operation_limit"
                 )
+            for command in commands:
+                check_command(self.selection, self.candidate, command=command)
+            target = params.get("instance_id")
+            if name == "cad_script":
+                check_command(self.selection, self.candidate, script_target=target)
             self.workspace.notify(
                 {
                     "stage": "modelling",
-                    "message": "Running CAD script"
+                    "message": "Applying selected geometry batch"
+                    if name == "cad_apply_batch"
+                    else "Running CAD script"
                     if name == "cad_script"
-                    else "Applying " + params["command"]["type"],
+                    else "Applying " + commands[0]["type"],
                 }
             )
-            if self.selection and self.selection.get("kind") == "region":
-                if name != "cad_apply" or params["command"]["type"] not in (
-                    "mesh_color",
-                    "mesh_region_move",
-                    "mesh_separate",
-                ):
-                    raise WorkspaceError(
-                        "A region-scoped task can only edit its selected triangles.",
-                        "scope_violation",
-                    )
-                requested = set(params["command"].get("triangle_indices", []))
-                submitted = set(
-                    self.selection.get("triangle_indices", [self.selection["index"]])
-                )
-                if not requested or not requested <= submitted:
-                    raise WorkspaceError(
-                        "This operation targets triangles outside the submitted region.",
-                        "scope_violation",
-                    )
-            if name == "cad_apply":
+            if name == "cad_apply_batch":
+                updated = self.geometry("apply_batch", commands=commands)
+                record = {"type": "batch", "commands": commands}
+            elif name == "cad_apply":
                 updated = self.geometry("apply", command=params["command"])
                 record = params["command"]
             else:
@@ -476,7 +428,7 @@ class TaskTools:
                 )
             self.candidate = updated
             self.candidate_id = uuid4().hex
-            self.commands.append(record)
+            self.commands.extend(commands if name == "cad_apply_batch" else [record])
             self.workspace.notify(
                 {
                     "stage": "candidate",

@@ -260,6 +260,48 @@ class ConnectionTests(unittest.TestCase):
             self.assertFalse(events[-1]["provider_status"]["signing_in"])
             self.assertEqual(request.call_count, 0)
 
+    def test_explicit_replacement_and_host_login_lease_keep_primary_until_success(self):
+        self.complete(self.tokens())
+        before = self.connections.status()["active"]["id"]
+        uri = self.connections.begin(new_registration=True)["authorization_url"]
+        query = parse_qs(urlsplit(uri).query)
+        self.assertEqual(query["client_id"], ["dynamic_agent_client"])
+        self.assertEqual(query["agent_name_hint"], ["Prompt to CAD"])
+        self.assertEqual(self.connections.status()["active"]["id"], before)
+        other = Connections(self.connections.vault.folder)
+        with self.assertRaises(WorkspaceError) as pending:
+            other.begin()
+        self.assertEqual(pending.exception.code, "sign_in_pending")
+        self.connections.cancel_login()
+        other.begin()
+        other.cancel_login()
+        self.assertEqual(self.connections.status()["active"]["id"], before)
+
+    def test_forget_legacy_removes_only_local_entry_and_preserves_primary_and_host(
+        self,
+    ):
+        self.complete(self.tokens())
+        data = self.connections.vault.read()
+        primary = data["active"]
+        host = data["host_id"]
+        data["accounts"]["legacy-account"] = {
+            **data["accounts"][primary],
+            "client_id": "legacy-client",
+        }
+        self.connections.vault.write(data)
+        with self.assertRaises(WorkspaceError):
+            self.connections.forget(primary)
+        with patch(
+            "backend.v2.auth.request_json",
+            side_effect=WorkspaceError("Synthetic offline"),
+        ):
+            result = self.connections.forget("legacy-account")
+        self.assertFalse(result["remote_revocation_confirmed"])
+        after = self.connections.vault.read()
+        self.assertNotIn("legacy-account", after["accounts"])
+        self.assertEqual(after["active"], primary)
+        self.assertEqual(after["host_id"], host)
+
     def test_refresh_rotates_atomically_and_terminal_revocation_never_switches_billing(
         self,
     ):

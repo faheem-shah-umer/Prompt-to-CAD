@@ -27,6 +27,7 @@ class MeshSource : public MeshVS_DataSource {
     Standard_Boolean GetNodeNormal(Standard_Integer, Standard_Integer, Standard_Real &, Standard_Real &,
                                    Standard_Real &) const override;
     gp_Pnt triangleCentre(int id) const;
+    int rayHit(const gp_Pnt &origin, const gp_Vec &direction, double &distance) const;
     int triangleCount() const {
         return int(triangles.size());
     }
