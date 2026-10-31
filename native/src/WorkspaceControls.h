@@ -62,3 +62,12 @@ private:
   QPointer<QFrame> popup;
 };
 void installWorkspaceInteraction();
+
+class QSplitter;
+QSplitter *workspaceSplitter(Qt::Orientation, QWidget *parent = nullptr);
+
+class QTreeWidget;
+QTreeWidget *workspaceModelTree(QWidget *parent = nullptr);
+
+class QLabel;
+QLabel *workspaceTitle(const QString &text, QWidget *parent = nullptr);

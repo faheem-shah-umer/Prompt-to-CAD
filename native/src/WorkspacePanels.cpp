@@ -182,7 +182,7 @@ void WorkspaceWindow::syncModelVisibility() {
   const QSignalBlocker blocker(modelTree);
   for (QTreeWidgetItemIterator it(modelTree); *it; ++it) {
     const auto id = (*it)->data(0, Qt::UserRole).toString();
-    if (!id.isEmpty()) (*it)->setCheckState(0, viewer->isInstanceVisible(id) ? Qt::Checked : Qt::Unchecked);
+    if (!id.isEmpty()) (*it)->setCheckState(1, viewer->isInstanceVisible(id) ? Qt::Checked : Qt::Unchecked);
   }
   const bool any = !document.value("components").toArray().isEmpty();
   for (const auto& name : {"showAllModels", "hideAllModels", "selectAllModels"})
@@ -300,7 +300,9 @@ void WorkspaceWindow::notify(const QString &message, const QString &severity) {
                                          : QStyle::SP_MessageBoxInformation)
                       .pixmap(22, 22));
   row->addWidget(icon, 0, Qt::AlignTop);
-  row->addWidget(text(message), 1);
+  auto *summary = text(message.size() > 360 ? message.left(360) + "…" : message);
+  summary->setToolTip(message);
+  row->addWidget(summary, 1);
   auto *close = new QPushButton;
   close->setFixedSize(32, 32);
   setWorkspaceIcon(close, "cross");

@@ -81,23 +81,26 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     root->setSpacing(0);
     auto *rail = new QWidget;
     rail->setObjectName("rail");
-    rail->setFixedWidth(46);
+    rail->setFixedWidth(48);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(3, 10, 3, 8);
     auto *projectsToggle =
-        button("", railLayout, [this] { navigation->setVisible(!navigation->isVisible()); });
+        button("", railLayout, [this] { setPanelVisible("navigation", !navigation->isVisible()); });
     setWorkspaceIcon(projectsToggle, "folder");
     projectsToggle->setAccessibleName("Projects and conversations");
     projectsToggle->setToolTip("Projects and conversations");
-    auto *modelToggle = button("", railLayout, [this] { manager->setVisible(!manager->isVisible()); });
+    auto *modelToggle = button("", railLayout, [this] { setPanelVisible("manager", !manager->isVisible()); });
     setWorkspaceIcon(modelToggle, "cube");
     modelToggle->setAccessibleName("CAD manager");
     modelToggle->setToolTip("CAD manager");
     auto *chatToggle =
-        button("", railLayout, [this] { conversationPane->setVisible(!conversationPane->isVisible()); });
+        button("", railLayout, [this] { setPanelVisible("conversation", !conversationPane->isVisible()); });
     setWorkspaceIcon(chatToggle, "comment-alt");
     chatToggle->setAccessibleName("Agent conversation");
     chatToggle->setToolTip("Agent conversation");
+    for (auto pair : {qMakePair(projectsToggle, "navigationToggle"), qMakePair(modelToggle, "managerToggle"), qMakePair(chatToggle, "conversationToggle")}) {
+        pair.first->setObjectName(pair.second); pair.first->setCheckable(true); pair.first->setFixedSize(40, 40);
+    }
     railLayout->addStretch();
     auto *settingsButton = button("", railLayout, [this] { account(); });
     setWorkspaceIcon(settingsButton, "settings");
@@ -105,15 +108,15 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     settingsButton->setObjectName("settingsButton");
     settingsButton->setToolTip("Settings");
     root->addWidget(rail);
-    split = new QSplitter(Qt::Horizontal);
+    split = workspaceSplitter(Qt::Horizontal);
     root->addWidget(split, 1);
     setCentralWidget(central);
     navigation = new QWidget;
     navigation->setObjectName("navigation");
     auto *nav = new QVBoxLayout(navigation);
     nav->setContentsMargins(12, 14, 12, 12);
-    auto *heading = new QLabel("Prompt to CAD");
-    heading->setStyleSheet("font-weight:600;font-size:15px;padding:6px 0 16px");
+    auto *heading = new QLabel("Projects");
+    heading->setObjectName("panelTitle");
     nav->addWidget(heading);
     setWorkspaceIcon(button("New project", nav, [this] { newProject(); }), "add");
     setWorkspaceIcon(button("Open project…", nav, [this] { openNativeProject(); }), "folder-open");
@@ -178,8 +181,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     work->setContentsMargins(0, 0, 0, 0);
     work->setSpacing(0);
     auto *documentHeader = new QHBoxLayout;
-    documentHeader->setContentsMargins(12, 8, 12, 8);
-    title = new QLabel("Create a project to begin");
+    documentHeader->setContentsMargins(12, 4, 12, 4);
+    title = workspaceTitle("Create a project to begin");
     title->setStyleSheet("font-weight:600");
     title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     saved = new QLabel("Saved locally");
@@ -217,8 +220,13 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *headerFrame = new QFrame;
     headerFrame->setObjectName("documentHeader");
     headerFrame->setLayout(documentHeader);
+    headerFrame->setMinimumHeight(44);
     work->addWidget(headerFrame);
     documentTabs = new QTabBar;
+    documentTabs->setObjectName("documentTabs");
+    documentTabs->setAccessibleName("CAD documents");
+    documentTabs->setElideMode(Qt::ElideRight);
+    documentTabs->setUsesScrollButtons(true);
     documentTabs->setExpanding(false);
     documentTabs->setDrawBase(false);
     work->addWidget(documentTabs);
@@ -234,7 +242,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *commands = commandPage("Modify");
     auto add = [this, &commands](const QString &name, const QString &op) {
         auto *a = commands->addAction(name);
-        auto icon = op == "block" ? "cube" : op == "move" ? "arrows" : op == "pattern" ? "add" : "edit";
+        auto icon = op == "move" ? QString("arrows") : QStringList{"thickness", "holes", "fillet", "chamfer", "parameters"}.contains(op) ? op : QString("edit");
+        a->setProperty("cadOperation", op);
         a->setProperty("workspaceIcon", icon);
         a->setIcon(workspaceIcon(icon));
         connect(a, &QAction::triggered, this, [this, op] { operation(op); });
@@ -246,25 +255,31 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     add("Named parameters", "parameters");
     add("Mesh scale", "mesh_scale");
     add("Separate region", "mesh_separate");
-    auto *colour = commands->addAction(workspaceIcon("edit"), "Colour");
+    auto *colour = commands->addAction(workspaceIcon("palette"), "Colour");
+    colour->setProperty("workspaceIcon", "palette"); colour->setProperty("cadOperation", "colour");
     connect(colour, &QAction::triggered, this, [this] { chooseComponentColour(); });
     auto *engineering = commands->addAction(workspaceIcon("edit"), "Engineering information");
+    engineering->setProperty("cadOperation", "engineering");
     connect(engineering, &QAction::triggered, this, [this] { editEngineeringRecord(); });
     commands = commandPage("Assembly");
     add("Move", "move");
     commands = commandPage("Inspect");
-    auto *inspect = commands->addAction("Inspect");
+    auto *inspect = commands->addAction("Properties");
+    inspect->setProperty("cadOperation", "inspect");
     connect(inspect, &QAction::triggered, this, [this] {
         if (!selected.isEmpty()) {
             auto p = base();
             p["instance_id"] = selected.value("instance_id");
             call("v2.inspect", p, [this](auto r) {
-                properties->setPlainText(QJsonDocument(r).toJson(QJsonDocument::Indented));
+                Q_UNUSED(r);
+                showSelectionProperties();
                 managerTabs->setCurrentWidget(properties);
+                setPanelVisible("manager", true);
             });
         }
     });
     auto *clearance = commands->addAction("Clearance");
+    clearance->setProperty("cadOperation", "clearance");
     connect(clearance, &QAction::triggered, this, [this] {
         if (selected.isEmpty()) {
             showError("Select the first body to measure.");
@@ -289,16 +304,20 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         auto p = base();
         p["first"] = QJsonObject{{"instance_id", selected.value("instance_id")}, {"kind", "body"}};
         p["second"] = QJsonObject{{"instance_id", ids[labels.indexOf(name)]}, {"kind", "body"}};
-        call("v2.measure", p, [this](auto r) {
-            properties->setPlainText(QJsonDocument(r).toJson(QJsonDocument::Indented));
-            managerTabs->setCurrentWidget(properties);
-            manager->show();
+        const auto firstName = componentName(selected.value("instance_id").toString());
+        const auto secondName = name;
+        call("v2.measure", p, [this, firstName, secondName](auto r) {
+            auto data = r;
+            data["first_name"] = firstName; data["second_name"] = secondName;
+            showDiagnostic("Clearance measurement", data);
         });
     });
     auto *viewCommands = commandPage("View");
+    viewCommands->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     commandGroups->setMaximumHeight(86);
     work->addWidget(commandGroups);
-    auto *inner = new QSplitter(Qt::Horizontal);
+    auto *inner = workspaceSplitter(Qt::Horizontal);
+    modelSplit = inner;
     inner->setObjectName("modelSplit");
     manager = new QWidget;
     manager->setObjectName("cadManager");
@@ -309,7 +328,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *modelLayout = new QVBoxLayout(modelPane);
     modelLayout->setContentsMargins(0, 8, 0, 0);
     treeFilter = new QLineEdit;
-    treeFilter->setPlaceholderText("Filter model tree");
+    treeFilter->setPlaceholderText("Filter components");
+    treeFilter->setAccessibleName("Filter model tree");
+    treeFilter->addAction(workspaceIcon("search"), QLineEdit::LeadingPosition);
     modelLayout->addWidget(treeFilter);
     auto *visibilityControls = new QHBoxLayout;
     visibilityControls->setSpacing(5);
@@ -336,26 +357,38 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *clearModels = button("Clear selection", selectionControls, [this] { viewer->removeSelectedEntity(-1); });
     clearModels->setObjectName("clearModelSelection");
     modelLayout->addLayout(selectionControls);
-    modelTree = new QTreeWidget;
+    modelTree = workspaceModelTree();
     modelTree->setObjectName("modelTree");
-    modelTree->setHeaderHidden(true);
-    modelLayout->addWidget(modelTree);
+    modelTree->setHeaderLabels({"Component", "Show"});
+    modelTree->setColumnCount(2);
+    modelTree->setIndentation(14);
+    modelLayout->addWidget(modelTree, 1);
+    modelSummary = new QLabel("Select geometry to inspect dimensions.");
+    modelSummary->setObjectName("managerSummary"); modelSummary->setWordWrap(true);
+    modelLayout->addWidget(modelSummary);
     properties = new QTextBrowser;
+    properties->setObjectName("selectionProperties");
     properties->setOpenLinks(false);
     connect(properties, &QTextBrowser::anchorClicked, this, [this](const QUrl& link) {
-        if (link.scheme() == "engineering") editEngineeringRecord(link.path() == "new" ? QString() : link.path());
+        if (link.scheme() == "diagnostic") showDiagnostic("Selection diagnostics", QJsonObject{{"selection", selected}, {"document", document}});
+        else if (link.scheme() == "parameters") operation("parameters");
+        else if (link.scheme() == "engineering") editEngineeringRecord(link.path() == "new" ? QString() : link.path());
         else if (link.scheme() == "appearance") chooseComponentColour(link.path() == "source");
     });
     properties->setPlaceholderText("Select a component, face or edge to inspect "
                                    "dimensions and named parameters.");
     revisions = new QTreeWidget;
-    revisions->setHeaderLabels({"Accepted revisions"});
+    revisions->setHeaderLabels({"Revision", "Status"});
+    revisions->setAccessibleName("Document revision history");
     managerTabs->addTab(modelPane, "Model");
     managerTabs->addTab(properties, "Properties");
     managerTabs->addTab(revisions, "Revisions");
     management->addWidget(managerTabs, 1);
     operationPane = new QWidget;
     operationForm = new QFormLayout(operationPane);
+    operationForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    operationForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    operationForm->setContentsMargins(8, 12, 8, 8);
     operationPane->hide();
     management->addWidget(operationPane);
     inner->addWidget(manager);
@@ -368,13 +401,24 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     selectionMode = new QComboBox;
     selectionMode->addItems({"Body", "Face", "Edge", "Vertex"});
     views->addWidget(selectionMode);
-    for (const auto &name : {"Fit", "Isometric", "Front", "Top", "Right"})
-        button(name, views, [this, name] {
-            if (QString(name) == "Fit")
-                viewer->fitAll();
-            else
-                viewer->standardView(QString(name).toLower());
+    selectionMode->setAccessibleName("Geometry selection mode");
+    views->addStretch();
+    auto *standard = new QToolButton;
+    standard->setText("Isometric");
+    standard->setPopupMode(QToolButton::InstantPopup);
+    standard->setAccessibleName("Standard view");
+    auto *standardMenu = new QMenu(standard);
+    for (const auto &name : {"Isometric", "Front", "Top", "Right"}) {
+        auto *action = standardMenu->addAction(name);
+        connect(action, &QAction::triggered, this, [this, standard, name] {
+            viewer->standardView(QString(name).toLower()); standard->setText(name);
         });
+    }
+    standard->setMenu(standardMenu);
+    views->addWidget(standard);
+    auto *fit = button("", views, [this] { viewer->fitAll(); });
+    setWorkspaceIcon(fit, "fit"); fit->setFixedSize(32, 32);
+    fit->setAccessibleName("Fit model"); fit->setToolTip("Fit model");
     views->addStretch();
     vp->addLayout(views);
     emptyPage = new QWidget;
@@ -393,7 +437,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     button("New project", emptyLayout, [this] { newProject(); });
     button("Import supported model", emptyLayout, [this] { openFile(); });
     button("Describe a design", emptyLayout, [this] {
-        conversationPane->show();
+        setPanelVisible("conversation", true);
         composer->setFocus();
     });
     emptyLayout->addStretch();
@@ -403,7 +447,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     vp->addWidget(viewer, 1);
     inner->addWidget(viewportPane);
     inner->setStretchFactor(1, 1);
-    inner->setSizes({245, 760});
+    inner->setSizes({232, 760});
     work->addWidget(inner, 1);
     split->addWidget(workspacePane);
     conversationPane = new QWidget;
@@ -517,11 +561,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         updateSendControl();
     });
     split->addWidget(conversationPane);
-    split->setSizes({245, 915, 360});
+    split->setSizes({224, 952, 384});
     split->setStretchFactor(1, 1);
-    navigation->setMinimumWidth(190);
-    manager->setMinimumWidth(185);
-    conversationPane->setMinimumWidth(290);
+    navigation->setMinimumWidth(200);
+    manager->setMinimumWidth(216);
+    conversationPane->setMinimumWidth(320);
     auto *file = menuBar()->addMenu("&File");
     file->addAction("New project…", this, &WorkspaceWindow::newProject, QKeySequence::New);
     file->addAction("New conversation", this, &WorkspaceWindow::newConversation, QKeySequence("Ctrl+Shift+N"));
@@ -559,7 +603,12 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
                                                       {"CAD manager", manager},
                                                       {"Agent panel", conversationPane}}) {
         auto *a = viewMenu->addAction(pair.first);
-        connect(a, &QAction::triggered, this, [pair] { pair.second->setVisible(!pair.second->isVisible()); });
+        a->setCheckable(true);
+        const auto key = pair.second == navigation ? QString("navigation") : pair.second == manager ? QString("manager") : QString("conversation");
+        if (pair.second == navigation) navigationAction = a;
+        else if (pair.second == manager) managerAction = a;
+        else conversationAction = a;
+        connect(a, &QAction::triggered, this, [this, key](bool shown) { setPanelVisible(key, shown); });
     }
     viewMenu->addAction("Fit model", viewer, &CadView::fitAll);
     viewMenu->addAction("Hide selected", this, [this] {
@@ -584,7 +633,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     for (auto *action : viewMenu->actions())
         if (QStringList{"Fit model", "Hide selected", "Isolate selected", "Show all", "Show solid edges"}
                 .contains(action->text()))
-            viewCommands->addAction(action);
+            { viewCommands->addAction(action); action->setProperty("requiresGeometry", true); }
     auto *toolsMenu = menuBar()->addMenu("&Tools");
     toolsMenu->addAction("Settings…", this, &WorkspaceWindow::account);
     toolsMenu->addAction("Archive…", this, [this] { setProperty("librarySection",0); manageProjects(); });
@@ -672,7 +721,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         if(entities.size()<2) { viewer->removeSelectedEntity(-1); return; }
         QMenu menu;
         for(int i=0;i<entities.size();++i) {
-            auto entry=entities[i].toObject();auto *action=menu.addAction("Remove " + entry.value("instance_id").toString()+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt()));
+            auto entry=entities[i].toObject();auto *action=menu.addAction("Remove " + componentName(entry.value("instance_id").toString())+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt()));
             connect(action,&QAction::triggered,this,[this,i]{viewer->removeSelectedEntity(i);});
         }
         menu.addSeparator();menu.addAction("Clear selection",this,[this]{viewer->removeSelectedEntity(-1);});
@@ -755,16 +804,22 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         call(method, args);
     });
     modelTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    connect(modelTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *, int) {
-        if(loading)return;QStringList ids;for(auto *item:modelTree->selectedItems()) { auto id=item->data(0,Qt::UserRole).toString();if(!id.isEmpty())ids<<id; }
+    connect(modelTree, &QTreeWidget::itemSelectionChanged, this, [this] {
+        if (loading) return;
+        QStringList ids;
+        for (auto *item : modelTree->selectedItems()) {
+            const auto id = item->data(0, Qt::UserRole).toString();
+            if (!id.isEmpty() && viewer->isInstanceVisible(id)) ids << id;
+        }
+        if (ids.size() > 256) { notify("Select no more than 256 components.", "info"); return; }
         viewer->selectInstances(ids);
     });
-    connect(modelTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int) {
-        if (!loading)
+    connect(modelTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int column) {
+        if (!loading && column == 1 && !item->data(0, Qt::UserRole).toString().isEmpty())
             viewer->setVisibleInstance(item->data(0, Qt::UserRole).toString(),
-                                       item->checkState(0) == Qt::Checked);
+                                       item->checkState(1) == Qt::Checked);
     });
-    connect(revisions, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
+    connect(revisions, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem *item, int) {
         auto p = base();
         p["revision_id"] = item->data(0, Qt::UserRole).toString();
         call("v2.restore", p);
@@ -873,9 +928,24 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     restoreGeometry(prefs.value("v2/geometry").toByteArray());
     split->restoreState(prefs.value("v2/panels").toByteArray());
     inner->restoreState(prefs.value("v2/modelPanels").toByteArray());
-    navigation->setVisible(prefs.value("v2/navigationVisible", false).toBool());
-    manager->setVisible(prefs.value("v2/managerVisible", true).toBool());
-    conversationPane->setVisible(prefs.value("v2/conversationVisible", true).toBool());
+    navigationPreferred = prefs.value("v2/navigationVisible", true).toBool();
+    managerPreferred = prefs.value("v2/managerVisible", true).toBool();
+    conversationPreferred = prefs.value("v2/conversationVisible", true).toBool();
+    navigationWidth = qBound(200, prefs.value("v2/navigationWidth", split->sizes().value(0) > 0 ? split->sizes().value(0) : 224).toInt(), 360);
+    managerWidth = qBound(216, prefs.value("v2/managerWidth", inner->sizes().value(0) > 0 ? inner->sizes().value(0) : 232).toInt(), 420);
+    conversationWidth = qBound(320, prefs.value("v2/conversationWidth", split->sizes().value(2) > 0 ? split->sizes().value(2) : 384).toInt(), 640);
+    layoutReady = true;
+    connect(split, &QSplitter::splitterMoved, this, [this] {
+        if (adjustingLayout) return;
+        if (navigation->isVisible()) navigationWidth = qBound(200, split->sizes().value(0), 360);
+        if (conversationPane->isVisible()) conversationWidth = qBound(320, split->sizes().value(2), 640);
+        positionNotifications();
+    });
+    connect(inner, &QSplitter::splitterMoved, this, [this] {
+        if (!adjustingLayout && manager->isVisible()) managerWidth = qBound(216, modelSplit->sizes().value(0), 420);
+        positionNotifications();
+    });
+    updateWorkspaceLayout();
     viewer->setShading(prefs.value("v2/edges", true).toBool());
     applyAppearance();
     rpc->start(workspace, python, "backend.v2.service");
@@ -884,22 +954,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
 WorkspaceWindow::~WorkspaceWindow() {
     QSettings p;
     p.setValue("v2/model", models->currentData().toString());
-    p.setValue("v2/navigationVisible", navigation->isVisible());
-    p.setValue("v2/managerVisible", manager->isVisible());
-    p.setValue("v2/conversationVisible", conversationPane->isVisible());
-    p.setValue("v2/geometry", saveGeometry());
-    p.setValue("v2/panels", split->saveState());
-    auto *inner = findChild<QSplitter *>("modelSplit");
-    if (inner)
-        p.setValue("v2/modelPanels", inner->saveState());
+    saveWorkspaceLayout();
 }
 void WorkspaceWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
-    if (width() < 1400)
-        navigation->hide();
-    if (width() < 1150)
-        manager->hide();
-    positionNotifications();
+    updateWorkspaceLayout();
 }
 QJsonObject WorkspaceWindow::base() const { return {{"base_revision_id", document.value("revision_id")}}; }
 void WorkspaceWindow::showError(const QString &message) {
@@ -952,22 +1011,7 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     });
 }
 void WorkspaceWindow::revealConversation() {
-    conversationPane->show();
-    auto sizes = split->sizes();
-    const int index = split->indexOf(conversationPane);
-    if (index >= 0 && sizes[index] < conversationPane->minimumWidth()) {
-        const int total = split->width() - split->handleWidth() * (split->count() - 1);
-        const int chatWidth = qBound(290, total / 3, 400);
-        int navigationWidth = navigation->isVisible() ? sizes[0] : 0;
-        if (total - navigationWidth - chatWidth < 450) {
-            navigation->hide();
-            navigationWidth = 0;
-        }
-        sizes[0] = navigationWidth;
-        sizes[1] = qMax(1, total - navigationWidth - chatWidth);
-        sizes[index] = chatWidth;
-        split->setSizes(sizes);
-    }
+    setPanelVisible("conversation", true);
     composer->setFocus(Qt::OtherFocusReason);
 }
 void WorkspaceWindow::newConversation() {
@@ -1108,6 +1152,8 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     conversationTitle->setText(
         value.value("conversation").toObject().value("title").toString("Design conversation"));
     title->setText(project.value("name").toString("Create a project to begin"));
+    title->setToolTip(title->text());
+    conversationTitle->setToolTip(conversationTitle->text());
     setWindowTitle(project.isEmpty() ? "Prompt to CAD"
                                      : project.value("name").toString() + " · Prompt to CAD");
     saved->setText(document.value("components").toArray().isEmpty()
@@ -1126,48 +1172,59 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
             documentTabs->setCurrentIndex(i);
     }
     refreshProjectTree();
+    QHash<QString, bool> expanded;
+    const int treeScroll = modelTree->verticalScrollBar()->value();
+    for (QTreeWidgetItemIterator it(modelTree); *it; ++it)
+        if ((*it)->childCount()) expanded[(*it)->data(0, Qt::UserRole + 2).toString()] = (*it)->isExpanded();
     modelTree->clear();
     QMap<QString, QTreeWidgetItem *> groups;
-    for (auto node : document.value("assembly_nodes").toArray()) {
-        auto o = node.toObject();
-        auto *item = new QTreeWidgetItem({o.value("name").toString()});
-        auto *parent = groups.value(o.value("parent_id").toString(), nullptr);
-        if (parent)
-            parent->addChild(item);
-        else
-            modelTree->addTopLevelItem(item);
-        item->setExpanded(true);
-        groups.insert(o.value("id").toString(), item);
+    for (const auto &node : document.value("assembly_nodes").toArray()) {
+        const auto group = node.toObject();
+        auto *item = new QTreeWidgetItem({group.value("name").toString(), ""});
+        item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+        item->setData(0, Qt::UserRole + 2, group.value("id"));
+        item->setIcon(0, workspaceIcon("folder"));
+        groups.insert(group.value("id").toString(), item);
     }
-    for (auto part : document.value("components").toArray()) {
-        auto o = part.toObject();
-        auto *item = new QTreeWidgetItem({o.value("name").toString()});
-        auto *parent = groups.value(o.value("parent_id").toString(), nullptr);
-        if (parent)
-            parent->addChild(item);
-        else
-            modelTree->addTopLevelItem(item);
-        item->setData(0, Qt::UserRole, o.value("instance_id"));
-        item->setCheckState(0, viewer->isInstanceVisible(o.value("instance_id").toString()) ? Qt::Checked : Qt::Unchecked);
-        item->setToolTip(0, o.value("representation") == "mesh"
-                                ? "Visual mesh · explicit triangle regions; no original feature "
-                                  "history"
-                            : o.value("parameters").toObject().isEmpty()
-                                ? "Solid geometry · original feature history unavailable"
-                                : "Editable named parameters available in Properties");
+    for (const auto &node : document.value("assembly_nodes").toArray()) {
+        const auto group = node.toObject();
+        auto *item = groups.value(group.value("id").toString());
+        auto *parent = groups.value(group.value("parent_id").toString());
+        if (parent && parent != item) parent->addChild(item); else modelTree->addTopLevelItem(item);
+        item->setExpanded(expanded.value(group.value("id").toString(), true));
     }
+    for (const auto &value : document.value("components").toArray()) {
+        const auto part = value.toObject();
+        auto *item = new QTreeWidgetItem({part.value("name").toString(), ""});
+        if (auto *parent = groups.value(part.value("parent_id").toString())) parent->addChild(item);
+        else modelTree->addTopLevelItem(item);
+        item->setData(0, Qt::UserRole, part.value("instance_id"));
+        item->setIcon(0, workspaceIcon("cube"));
+        item->setCheckState(1, viewer->isInstanceVisible(part.value("instance_id").toString()) ? Qt::Checked : Qt::Unchecked);
+        item->setToolTip(1, "Visibility only · does not select geometry for the agent");
+        item->setToolTip(0, part.value("name").toString() + "\n" + QString(part.value("representation") == "mesh"
+            ? "Visual mesh · explicit regions; no original feature history"
+            : part.value("parameters").toObject().isEmpty()
+            ? "Engineering solid · original feature history unavailable" : "Editable named parameters"));
+    }
+    modelTree->setColumnWidth(0, qMax(120, managerWidth - 84));
+    modelTree->setColumnWidth(1, 52);
+    modelTree->verticalScrollBar()->setValue(treeScroll);
     filterModels();
     if (!changed && !selected.isEmpty()) select(selected);
     syncModelVisibility();
     revisions->clear();
     for (auto revision : document.value("history").toArray()) {
         auto o = revision.toObject();
-        auto *item = new QTreeWidgetItem(revisions, {o.value("summary").toString().left(90)});
+        auto *item = new QTreeWidgetItem(revisions, {o.value("summary").toString().left(90), o.value("revision_id") == document.value("revision_id") ? "Current" : "Saved"});
         item->setData(0, Qt::UserRole, o.value("revision_id"));
-        item->setToolTip(0, o.value("revision_id").toString() + "\nDouble-click to restore this revision");
+        item->setToolTip(0, o.value("summary").toString() + "\nEnter or double-click to restore this revision");
         if (o.value("revision_id") == document.value("revision_id"))
             revisions->setCurrentItem(item);
     }
+    showSelectionProperties();
+    refreshDocumentControls();
+    chat->setDocumentContext(document);
     renderChat();
     auto connection = value.value("provider").toObject();
     auto active = connection.value("active").toObject();
@@ -1191,81 +1248,47 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     }
     updateSendControl();
     loading = false;
+    refreshConnectionControls();
     ensureModelDiscovery();
 }
 void WorkspaceWindow::select(const QJsonObject &selection) {
-    if (selection.isEmpty()) {
-        selected = {};
-        selectionChip->hide();
-        QSignalBlocker blocker(modelTree);
-        modelTree->clearSelection();
-        properties->clear();
-        operationPane->hide();
-        return;
-    }
     selected = selection;
-    selected["document_id"] = document.value("document_id");
-    selected["project_id"] = state.value("project").toObject().value("project_id");
-    const auto entities = selection.value("entities").toArray();
-    if(entities.size()>1) {
-        QStringList labels,ids;
-        for(auto value:entities){auto entry=value.toObject();auto id=entry.value("instance_id").toString();if(!ids.contains(id))ids<<id;labels<<id+" → "+entry.value("kind").toString()+" "+QString::number(entry.value("index").toInt());}
-        selectionChip->setText("Selected: "+QString::number(entities.size())+" entities · "+QString::number(ids.size())+" components  ×");selectionChip->setToolTip(labels.join('\n'));selectionChip->show();
-        properties->setHtml("<h3>Selected geometry · mm</h3>" + labels.join('\n').toHtmlEscaped().replace("\n", "<br>") + engineeringHtml(ids));
-        QSignalBlocker blocker(modelTree);
-        modelTree->clearSelection();for(QTreeWidgetItemIterator it(modelTree);*it;++it)if(ids.contains((*it)->data(0,Qt::UserRole).toString()))(*it)->setSelected(true);
-        activity->setText(QString::number(entities.size())+" selected entities · mm");return;
+    if (!selection.isEmpty()) {
+        selected["document_id"] = document.value("document_id");
+        selected["project_id"] = state.value("project").toObject().value("project_id");
+    } else {
+        operationPane->hide();
     }
-    auto id = selection.value("instance_id").toString();
-    for (auto p : document.value("components").toArray()) {
-        auto part = p.toObject();
-        if (part.value("instance_id").toString() != id)
-            continue;
-        auto name = part.value("name").toString();
-        selectionChip->setText("Selected: " + name + " → " + selection.value("kind").toString() + " " +
-                               QString::number(selection.value("index").toInt()) + "  ×");
-        selectionChip->show();
-        auto metrics = part.value("metrics").toObject();
-        auto bounds = metrics.value("bounds_mm").toArray();
-        QString body = "<h3>" + html(name) + "</h3><p>" + html(selection.value("kind").toString()) +
-                       " · mm · revision " + html(document.value("revision_id").toString().left(8)) + "</p>";
-        if (bounds.size() == 2) {
-            auto low = bounds[0].toArray(), high = bounds[1].toArray();
-            body += "<table cellspacing='8'><tr><th "
-                    "align='left'>Dimensions</th><th>mm</th></tr>";
-            for (int axis = 0; axis < 3; ++axis)
-                body += "<tr><td>" + QStringList{"X", "Y", "Z"}[axis] + "</td><td>" +
-                        QString::number(high[axis].toDouble() - low[axis].toDouble(), 'f', 3) + "</td></tr>";
-            body += "</table>";
-        }
-        if (metrics.contains("volume_mm3"))
-            body +=
-                "<p>Volume · " + QString::number(metrics.value("volume_mm3").toDouble(), 'f', 3) + " mm³</p>";
-        auto parameters = part.value("parameters").toObject();
-        if (!parameters.isEmpty()) {
-            body += "<h4>Editable parameters</h4><table cellspacing='8'>";
-            for (auto it = parameters.begin(); it != parameters.end(); ++it)
-                body += "<tr><td>" + html(it.key()) + "</td><td>" + QString::number(it.value().toDouble()) +
-                        "</td></tr>";
-            body += "</table><p>Modify → Named parameters</p>";
-        } else
-            body += "<p>Original feature history unavailable.</p>";
-        auto matrix = part.value("matrix").toArray();
-        if (matrix.size() == 12)
-            body += "<h4>World placement / mm</h4><p>X " + QString::number(matrix[3].toDouble()) + " · Y " +
-                    QString::number(matrix[7].toDouble()) + " · Z " + QString::number(matrix[11].toDouble()) +
-                    "</p>";
-        properties->setHtml(body + engineeringHtml({id}));
+    auto entities = selected.value("entities").toArray();
+    if (entities.isEmpty() && !selected.isEmpty()) entities.append(selected);
+    QStringList ids, labels;
+    for (const auto &value : entities) {
+        const auto entity = value.toObject();
+        const auto id = entity.value("instance_id").toString();
+        if (!ids.contains(id)) ids << id;
+        auto label = componentName(id) + " → " + entity.value("kind").toString();
+        if (entity.value("kind") != "body" && entity.contains("index"))
+            label += " " + QString::number(entity.value("index").toInt());
+        labels << label;
+    }
+    selectionChip->setText(entities.size() == 1 ? labels.first() + "  ×"
+        : QString::number(entities.size()) + " entities · " + QString::number(ids.size()) + " components  ×");
+    selectionChip->setToolTip(labels.join('\n') + "\nClick to remove selection context");
+    selectionChip->setAccessibleName(entities.isEmpty() ? "No geometry selected" : "Selected: " + labels.join(", "));
+    selectionChip->setVisible(!entities.isEmpty());
+    {
+        const QSignalBlocker blocker(modelTree);
+        modelTree->clearSelection();
         for (QTreeWidgetItemIterator it(modelTree); *it; ++it)
-            if ((*it)->data(0, Qt::UserRole).toString() == id) {
-                QSignalBlocker block(modelTree);
-                modelTree->setCurrentItem(*it);
-                for (auto *parent = (*it)->parent(); parent; parent = parent->parent())
-                    parent->setExpanded(true);
-                break;
+            if (ids.contains((*it)->data(0, Qt::UserRole).toString())) {
+                (*it)->setSelected(true);
+                for (auto *parent = (*it)->parent(); parent; parent = parent->parent()) parent->setExpanded(true);
             }
     }
-    activity->setText("Selected " + id + " · " + selection.value("kind").toString() + " · mm");
+    showSelectionProperties();
+    refreshDocumentControls();
+    activity->setText(entities.isEmpty() ? "mm · No selection"
+        : "mm · " + (labels.size() == 1 ? labels.first() : QString::number(entities.size()) + " selected entities"));
 }
 QString WorkspaceWindow::takeComposerText() {
     auto prompt = composer->toPlainText();
@@ -1367,9 +1390,16 @@ void WorkspaceWindow::operation(const QString &kind) {
             delete item->widget();
         delete item;
     }
-    operationForm->addRow(new QLabel(kind == "block" ? "Create · editable block" : "Modify · " + kind));
+    const QMap<QString, QString> names{{"thickness", "Offset planar face"}, {"holes", "Mounting holes"},
+        {"fillet", "Fillet selected edges"}, {"chamfer", "Chamfer selected edges"}, {"move", "Component placement"},
+        {"parameters", "Named parameters"}, {"mesh_scale", "Scale visual mesh"}, {"mesh_separate", "Separate selected region"}};
+    auto *operationTitle = new QLabel(names.value(kind, "Create editable block"));
+    operationTitle->setObjectName("panelTitle"); operationTitle->setWordWrap(true);
+    operationForm->addRow(operationTitle);
     auto field = [this](const QString &label, double value, double minimum = -10000) {
         auto *input = new QDoubleSpinBox;
+        input->setAccessibleName(label);
+        input->setKeyboardTracking(false);
         input->setRange(minimum, 10000);
         input->setDecimals(3);
         input->setValue(value);
@@ -1415,12 +1445,14 @@ void WorkspaceWindow::operation(const QString &kind) {
     } else
         field("Size / mm", 1, 0.01);
     auto *apply = new QPushButton("Apply and validate");
+    apply->setObjectName("applyCADOperation");
+    apply->setToolTip("Validate and accept this operation as an undoable change");
     operationForm->addRow(apply);
     connect(apply, &QPushButton::clicked, this, &WorkspaceWindow::applyOperation);
     auto *close = new QPushButton("Close");
     operationForm->addRow(close);
     connect(close, &QPushButton::clicked, operationPane, &QWidget::hide);
-    manager->show();
+    setPanelVisible("manager", true);
     operationPane->show();
 }
 void WorkspaceWindow::applyOperation() {

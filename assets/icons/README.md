@@ -7,3 +7,5 @@ Only the symbols used by this application are included. The SVG paths were extra
 Attribution is visible in Help → Credits and THIRD_PARTY_NOTICES.md. No icon service or network request is required at runtime.
 
 `paperclip.svg` is an original application icon, licensed with the application source rather than the Flaticon assets.
+
+The CAD glyphs chamfer, fillet, fit, holes, palette, parameters and thickness are original application artwork (20 px viewBox, 1.5 px strokes), licensed with the application source. They do not use Flaticon paths.

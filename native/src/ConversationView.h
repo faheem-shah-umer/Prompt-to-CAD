@@ -13,6 +13,7 @@ class ConversationView : public QScrollArea {
     explicit ConversationView(QWidget *parent = nullptr);
     void setMessages(const QJsonArray &messages, const QString &conversation);
     void scrollToLatest();
+    void setDocumentContext(const QJsonObject &document);
     QString plainText() const;
   Q_SIGNALS:
     void anchorClicked(const QUrl &url);
@@ -30,4 +31,6 @@ class ConversationView : public QScrollArea {
     QSet<QString> expanded;
     QHash<QString, qint64> copiedUntil;
     QString cachedTheme, context;
+    QHash<QString, QString> componentNames;
+    QSet<QString> workingTasks;
 };

@@ -35,7 +35,7 @@ WorkspaceTheme.h/.cpp is the native mapping of the approved token roles. It is s
 
 Control/overlay radii remain 8/12 logical px; user bubbles 16. The 14 px default applies only when a saved text-size choice is absent. Existing 12/14 px preferences remain valid; Appearance also offers 16 px. Rich text and icons use the same roles. OpenCascade display changes affect background/highlight presentation, not materials, shape assets or revisions.
 
-The existing panel arrangement and saved geometry are retained. This focused pass does not implement every layout recommendation from the proposal. Full viewport-budget/collapse policy and keyboard splitter controls remain separate work.
+The approved three-pane arrangement and existing saved geometry are retained. The 48 px rail controls navigation, CAD manager and conversation independently. Preferred widths (224/232/384 px initially) are stored separately from temporary collapse: narrowing the window hides navigation and then the manager before reducing the viewport from a preferred 640 px to a compact 480 px. Explicitly opening a pane gives it priority. Chat remains at least 320 px when shown. Splitter handles have an 8 px pointer target and keyboard arrows resize in 16 px steps. These are logical layout budgets, not verified guarantees for every DPI or text size.
 
 Compact controls are desktop pointer targets, not a claim of 44 px touch hitboxes or accessibility certification. Larger text, long labels and DPI still require native review.
 
@@ -49,12 +49,22 @@ Compact controls are desktop pointer targets, not a claim of 44 px touch hitboxe
 - Transient notices use the approved 4-second lifetime, paused during reading/inactivity; error notices have no auto-dismiss timer.
 - Enter/Shift+Enter, IME composition, frozen task selections, per-conversation drafts and attachment submission remain in their existing implementation.
 
-## Source stages and validation boundary
+## Completed implementation areas
 
-1. Shared palette/control states: WorkspaceTheme, WorkspaceIcons, ConversationView, CadView, startup font default.
-2. Popup/keyboard behaviour: WorkspaceControls, WorkspaceChat, account/usage popovers.
-3. Connection/settings/notices: WorkspaceSettings, WorkspacePanels and menu wiring.
+The earlier theme/control and popup/connection commits are preserved. This pass extends their native widgets rather than replacing the design system.
 
-Only source inspection and diff review were performed. **No tests, builds, app execution, screenshots, installers, authentication or push were performed.** Existing screenshots are design illustrations, not evidence of these native changes. Compilation, runtime behaviour, Windows scaling, focus paths and tooltip timing are pending separately requested validation.
+1. **Theme and controls:** semantic light/dark palette, immediate enabled/hover/pressed/checked/disabled/focus states, shared popup behavior, authored CAD command glyphs and original branding.
+2. **Shell and viewport:** elided project title with full tooltip, document tabs, checked rail/menu panel controls, persistent pane preferences and keyboard-resizable splitters. The original command groups and supported operations remain.
+3. **Conversation:** unboxed assistant text, rounded user bubbles, accessible collapsed task history, human-readable component links and change summaries. Validation text uses only retained reported fields. Existing drafts, Markdown, attachments, task snapshots, copy, scroll-follow and provider-owned model/effort behavior remain.
+4. **CAD manager:** nonselectable assembly groups, separate visibility column, filtering and geometry selection, human-readable Properties with reported dimensions/units, named parameters and engineering records. Raw identifiers and JSON remain behind explicit technical diagnostics. Revision lists show summaries rather than hashes; restoring retains existing behavior.
+5. **Connection and notices:** distinct reported account/workspace/billing rows, aligned reported usage, catalogue discovery state, folded separately billed API access and advanced registration cleanup. Existing account storage/reuse is unchanged. Notices remain outside chat; concise summaries retain full diagnostics, and error lifetime remains persistent until dismissal.
+
+## Delivery and verification boundary
+
+The native executable was compiled using the isolated MSVC 14.40.33807 toolchain and exact OpenCascade 7.8.1 SDK outside the checkout. Build output and runtime dependencies are in the sibling Prompt-to-CAD-build directory. The existing VBS/shortcut opens that executable; no installer is generated.
+
+The requested native launch inspection confirmed an empty workspace and the updated conversation panel. It did not open project content, authenticate, initiate inference or perform CAD operations. This is a launch observation, not automated acceptance testing. Prior proposal images remain design illustrations, not screenshots of the native implementation.
+
+No application tests were run. Dark/light interaction matrices, laptop/narrow layouts, Windows scaling, screen-reader paths, loaded-model properties, provider flows and task execution remain unverified at runtime. A requested independent source review could not complete because the reviewer agent reached its usage limit; it is not counted as a passed review. Build diagnostics include optional Vulkan headers absent and existing deprecated-action/shadow warnings.
 
 API references consulted: [Qt events](https://doc.qt.io/qt-6/qevent.html), [Qt style hints](https://doc.qt.io/qt-6/qstyle.html), [OCCT 7.8.1 interaction/highlight API](https://github.com/Open-Cascade-SAS/OCCT/blob/V7_8_1/src/AIS/AIS_InteractiveContext.hxx).

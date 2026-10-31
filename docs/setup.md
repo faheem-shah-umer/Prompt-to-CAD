@@ -8,7 +8,7 @@ Keep this checkout focused on source. Do not build, package, generate launchers 
 
 Windows x64, Python 3.11 and requirements.txt are the source dependencies. Native rendering requires Qt 6.9 Widgets/SVG and OpenCascade 7.8.1. Geometry uses CadQuery 2.7 / cadquery-ocp 7.8.1.1.post1. Matching SDKs and a Visual Studio x64 toolchain must be configured separately when a native build is requested; repository-local SDK/toolchain downloads have been removed.
 
-Double-click **Prompt to CAD.lnk** at the repository root to open the restored local app. Its **Prompt to CAD.vbs** launcher runs **.app-runtime/PromptToCAD.exe** against this repository's backend and existing **.venv/**. The shortcut uses our original logo. Runtime files are ignored by Git; temporary compiler, SDK and build files used for this restoration have been removed. This one-time restoration does not enable automatic rebuilds or tests. There is no installer.
+Double-click **Prompt to CAD.lnk** at the repository root to open the local app. Its **Prompt to CAD.vbs** launcher runs **../Prompt-to-CAD-build/bin/PromptToCAD.exe** against this repository's backend and existing **.venv/**. The build-folder name follows the checkout folder name with a -build suffix. The shortcut uses our original logo. The earlier .app-runtime files are preserved but are no longer the launcher target. Toolchain, generated build output and runtime dependencies remain outside the checkout. This explicitly requested rebuild does not enable automatic tests. There is no installer.
 
 The build script remains available for an explicitly requested future build and accepts CAD_QT_PREFIX and CAD_OCCT_PREFIX. It does not generate launchers or shortcuts. An installed Codex CLI is required for agent tasks; account and project storage remain separate from generated build outputs.
 
@@ -58,7 +58,21 @@ Engineering import: STEP/STP and the application's editable JSON recipes. Mesh i
 
 Projects default to Projects/<project name>/ in the repository, or beside a packaged application. Duplicate names receive a numeric suffix; Windows-reserved filename characters are sanitized. Documents use project-relative paths so a project folder can be moved with its conversations. Runtime preferences and provider state use the ignored .promptcad/ folder. Existing account credentials remain protected by Windows in user storage; existing older project locations are preserved. PROMPTCAD_HOME selects an isolated data directory for testing, and PROMPTCAD_PROJECTS_DIR can explicitly override the project root. Project, document, conversation, task and revision IDs are distinct. Atomic JSON saves, asset hashes and recovery journals are retained. Existing models/reference assets are preserved. The retired image-service credential is removed from the protected vault during migration; active image-generation routes and tool definitions are absent. No image generation dependency was exclusive to that adapter: HTTPX remains needed by OAuth/provider calls and mesh libraries remain needed for existing imported models.
 
-## Build, package and validate
+## Explicitly requested native build
+
+The local restoration uses the existing Qt SDK at %USERPROFILE%/anaconda3/envs/occenv/Library, isolated compiler at ../Prompt-to-CAD-toolchain/msvc/VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/cl.exe, Windows SDK 10.0.22621.0, and exact OCCT 7.8.1 SDK at ../Prompt-to-CAD-toolchain/occt-7.8.1/Library. The installed OCCT 7.9.0 SDK is preserved and is not used for this build. No existing toolchain was deleted or moved.
+
+```powershell
+.venv\Scripts\python.exe -m tools.build_native `
+  --qt-prefix "$env:USERPROFILE/anaconda3/envs/occenv/Library" `
+  --occt-prefix "../Prompt-to-CAD-toolchain/occt-7.8.1/Library" `
+  --toolchain-env "../Prompt-to-CAD-toolchain/environment.json" `
+  --build-dir "../Prompt-to-CAD-build"
+```
+
+Use absolute SDK paths or resolve them from the checkout when configuring another build directory. The build script defaults to a sibling build folder and runs application tests only with the explicit --test flag. Runtime Qt plugins and matching OCCT libraries/shaders must be deployed beside the executable; the build command does not package or download them.
+
+## Separately requested packaging and validation
 
 ```powershell
 .venv\Scripts\python.exe -m tools.validate

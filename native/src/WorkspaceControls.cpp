@@ -20,6 +20,9 @@
 #include <QWheelEvent>
 #include <QPushButton>
 #include <QScreen>
+#include <QSplitter>
+#include <QSplitterHandle>
+#include <QPainter>
 #include <QStyleOptionComboBox>
 #include <QStylePainter>
 #include <QTabBar>
@@ -356,4 +359,92 @@ void installWorkspaceInteraction() {
                       Qt::UI_AnimateTooltip, Qt::UI_FadeTooltip})
     QApplication::setEffectEnabled(effect, false);
   qApp->installEventFilter(new Interaction(qApp));
+}
+
+namespace {
+class WorkspaceHandle : public QSplitterHandle {
+public:
+  WorkspaceHandle(Qt::Orientation orientation, QSplitter *splitter)
+      : QSplitterHandle(orientation, splitter) {
+    setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName("Resize workspace panels");
+    setToolTip("Drag to resize · arrow keys resize when focused");
+  }
+protected:
+  void keyPressEvent(QKeyEvent *event) override {
+    const bool horizontal = orientation() == Qt::Horizontal;
+    const bool backward = event->key() == (horizontal ? Qt::Key_Left : Qt::Key_Up);
+    const bool forward = event->key() == (horizontal ? Qt::Key_Right : Qt::Key_Down);
+    if (backward || forward) {
+      moveSplitter((horizontal ? pos().x() : pos().y()) + (forward ? 16 : -16));
+      event->accept();
+      return;
+    }
+    QSplitterHandle::keyPressEvent(event);
+  }
+  void paintEvent(QPaintEvent *event) override {
+    QSplitterHandle::paintEvent(event);
+    QPainter painter(this);
+    painter.setPen(QPen(hasFocus() ? workspaceColors().focus : workspaceColors().border,
+                        hasFocus() ? 2 : 1));
+    if (orientation() == Qt::Horizontal)
+      painter.drawLine(width() / 2, 0, width() / 2, height());
+    else
+      painter.drawLine(0, height() / 2, width(), height() / 2);
+  }
+};
+class WorkspaceSplitter : public QSplitter {
+public:
+  WorkspaceSplitter(Qt::Orientation orientation, QWidget *parent) : QSplitter(orientation, parent) {
+    setHandleWidth(8);
+    setChildrenCollapsible(false);
+  }
+protected:
+  QSplitterHandle *createHandle() override { return new WorkspaceHandle(orientation(), this); }
+};
+}
+QSplitter *workspaceSplitter(Qt::Orientation orientation, QWidget *parent) {
+  return new WorkspaceSplitter(orientation, parent);
+}
+
+namespace {
+class ModelTree : public QTreeWidget {
+public:
+  using QTreeWidget::QTreeWidget;
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    auto *item = itemAt(event->position().toPoint());
+    if (event->button() == Qt::LeftButton && item && columnAt(event->position().x()) == 1 && !item->data(0, Qt::UserRole).toString().isEmpty()) {
+      item->setCheckState(1, item->checkState(1) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+      event->accept(); return;
+    }
+    QTreeWidget::mousePressEvent(event);
+  }
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (columnAt(event->position().x()) == 1) { event->accept(); return; }
+    QTreeWidget::mouseReleaseEvent(event);
+  }
+};
+}
+QTreeWidget *workspaceModelTree(QWidget *parent) { return new ModelTree(parent); }
+
+namespace {
+class ElidedTitle : public QLabel {
+public:
+  using QLabel::QLabel;
+protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter painter(this);
+    painter.setFont(font());
+    painter.setPen(palette().color(QPalette::WindowText));
+    painter.drawText(contentsRect(), Qt::AlignLeft | Qt::AlignVCenter,
+                     fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+  }
+};
+}
+QLabel *workspaceTitle(const QString &text, QWidget *parent) {
+  auto *label = new ElidedTitle(text, parent);
+  label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  label->setMinimumHeight(label->fontMetrics().lineSpacing());
+  return label;
 }

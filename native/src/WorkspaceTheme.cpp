@@ -50,6 +50,10 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QMainWindow, QDialog { background:@base@; }
         QLabel { background:transparent; }
         QLabel#muted, QLabel#settingsCaption { color:@secondary@; }
+        QLabel#panelTitle { font-weight:600; padding:4px 0; }
+        QLabel#managerSummary { color:@secondary@; padding:12px 4px; border-top:1px solid @border@; font-size:12px; }
+        QTextBrowser#selectionProperties { background:transparent; border:0; }
+        QTabBar#documentTabs::tab { min-height:24px; padding:6px 12px; }
         QLabel#pageTitle { font-size:24px; font-weight:600; }
         QLabel#sectionTitle { font-size:17px; font-weight:600; }
         QMenuBar, QToolBar, QStatusBar { background:@base@; border:0; padding:4px; }

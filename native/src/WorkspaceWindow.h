@@ -58,6 +58,13 @@ class WorkspaceWindow : public QMainWindow {
     void saveAs();
     void notify(const QString &, const QString &severity = "error");
     void positionNotifications();
+    void setPanelVisible(const QString &, bool);
+    void updateWorkspaceLayout();
+    void saveWorkspaceLayout();
+    void refreshDocumentControls();
+    QString componentName(const QString &) const;
+    void showSelectionProperties();
+    void showDiagnostic(const QString &, const QJsonObject &);
     void batchConversations(const QJsonArray &, const QString &action);
     void discoverModels(bool refresh = false);
     void updateSendControl();
@@ -102,7 +109,12 @@ class WorkspaceWindow : public QMainWindow {
     QJsonObject base() const;
     CadView *viewer;
     RpcClient *rpc;
-    QSplitter *split;
+    QSplitter *split, *modelSplit = nullptr;
+    bool layoutReady = false, adjustingLayout = false;
+    bool navigationPreferred = true, managerPreferred = true, conversationPreferred = true;
+    int navigationWidth = 224, managerWidth = 232, conversationWidth = 384;
+    QString priorityPanel;
+    QAction *navigationAction = nullptr, *managerAction = nullptr, *conversationAction = nullptr;
     QWidget *navigation, *manager, *conversationPane, *operationPane, *emptyPage;
     QWidget *attachmentStrip;
     QTreeWidget *projects, *modelTree, *revisions;
@@ -118,7 +130,7 @@ class WorkspaceWindow : public QMainWindow {
     QString pendingUser, liveAnswer, currentTaskState, currentTaskMessage;
     QStringList currentActivity, liveOrder;
     QHash<QString, QString> liveMessages, livePhases;
-    QLabel *activity, *title, *saved, *conversationTitle;
+    QLabel *activity, *title, *saved, *conversationTitle, *modelSummary = nullptr;
     QPointer<QDialog> settingsDialog, onboardingDialog;
     QPointer<QFrame> effortPopover;
     QString activeTaskId;

@@ -299,6 +299,7 @@ void WorkspaceWindow::updateUsage() {
 }
 
 void WorkspaceWindow::updateSendControl() {
+    refreshDocumentControls();
     const bool stopping = currentTaskState == "cancelling";
     setWorkspaceIcon(sendButton, taskRunning ? "stop" : "arrow-up", true);
     sendButton->setAccessibleName(taskRunning ? (stopping ? "Stopping task" : "Stop task") : "Send request");

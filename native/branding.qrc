@@ -3,6 +3,13 @@
         <file alias="app-icon.png">../assets/app-icon.png</file>
     </qresource>
     <qresource prefix="/icons">
+        <file alias="thickness.svg">../assets/icons/thickness.svg</file>
+        <file alias="holes.svg">../assets/icons/holes.svg</file>
+        <file alias="fillet.svg">../assets/icons/fillet.svg</file>
+        <file alias="chamfer.svg">../assets/icons/chamfer.svg</file>
+        <file alias="parameters.svg">../assets/icons/parameters.svg</file>
+        <file alias="palette.svg">../assets/icons/palette.svg</file>
+        <file alias="fit.svg">../assets/icons/fit.svg</file>
         <file alias="add.svg">../assets/icons/add.svg</file>
         <file alias="arrow-up.svg">../assets/icons/arrow-up.svg</file>
         <file alias="arrows.svg">../assets/icons/arrows.svg</file>
