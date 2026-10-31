@@ -24,17 +24,25 @@ QIcon workspaceIcon(const QString &name, bool inverse) {
         renderer.render(&painter, QRectF(3, 3, 42, 42));
     }
     painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-    painter.fillRect(image.rect(), QColor(inverse ? (lightWorkspaceTheme() ? "#ffffff" : "#202024")
-                                                : (lightWorkspaceTheme() ? "#4b586b" : "#b8bac3")));
+    const auto colors = workspaceColors();
+    painter.fillRect(image.rect(), inverse ? colors.onAction : colors.secondary);
     painter.end();
     image.setDevicePixelRatio(2);
-    return QIcon(image);
+    QIcon icon(image);
+    auto disabled = image;
+    QPainter muted(&disabled);
+    muted.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    muted.fillRect(disabled.rect(), colors.disabled);
+    muted.end();
+    icon.addPixmap(disabled, QIcon::Disabled);
+    return icon;
 }
 void setWorkspaceIcon(QAbstractButton *button, const QString &name, bool inverse) {
     button->setProperty("workspaceIcon", name);
     button->setProperty("inverseIcon", inverse);
     button->setIcon(workspaceIcon(name, inverse));
-    button->setIconSize(QSize(18, 18));
+    button->setIconSize(QSize(WorkspaceMetrics::Icon, WorkspaceMetrics::Icon));
+    button->setProperty("workspaceIconOnly", button->text().isEmpty());
 }
 void refreshWorkspaceIcons(QWidget *root) {
     for (auto *button : root->findChildren<QAbstractButton *>()) {

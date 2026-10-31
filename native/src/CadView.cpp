@@ -1,4 +1,5 @@
 #include "CadView.h"
+#include "WorkspaceTheme.h"
 #include <QSet>
 #include "MeshSource.h"
 #include <QJsonDocument>
@@ -487,8 +488,15 @@ void CadView::setLightTheme(bool light) {
         label->SetColor(light ? Quantity_NOC_GRAY20 : Quantity_NOC_GRAY90);
         context->Redisplay(label, false);
     }
-    view->SetBgGradientColors(light ? Quantity_Color(0.95, 0.95, 0.96, Quantity_TOC_RGB) : Quantity_Color(0.14, 0.14, 0.16, Quantity_TOC_RGB),
-                              light ? Quantity_Color(0.85, 0.87, 0.90, Quantity_TOC_RGB) : Quantity_Color(0.09, 0.09, 0.11, Quantity_TOC_RGB), Aspect_GFM_VER, false);
+    const auto colors = workspaceColors(light);
+    const Quantity_Color selectionColor(colors.selection.redF(), colors.selection.greenF(), colors.selection.blueF(), Quantity_TOC_RGB);
+    for (auto type : {Prs3d_TypeOfHighlight_Dynamic, Prs3d_TypeOfHighlight_LocalDynamic,
+                      Prs3d_TypeOfHighlight_Selected, Prs3d_TypeOfHighlight_LocalSelected})
+        context->HighlightStyle(type)->SetColor(selectionColor);
+    context->HilightSelected(false);
+    const auto background = colors.canvas;
+    const Quantity_Color color(background.redF(), background.greenF(), background.blueF(), Quantity_TOC_RGB);
+    view->SetBgGradientColors(color, color, Aspect_GFM_VER, false);
     view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, light ? Quantity_NOC_GRAY40 : Quantity_NOC_GRAY80, 0.08, V3d_ZBUFFER);
     view->Redraw();
 }

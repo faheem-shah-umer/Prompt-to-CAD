@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
     if (parser.isSet("smoke-test") && qEnvironmentVariableIsSet("CAD_UI_THEME"))
         QSettings().setValue("v2/theme", qEnvironmentVariable("CAD_UI_THEME"));
     applyWorkspaceTheme(QSettings().value("v2/theme", "dark").toString(),
-                        QSettings().value("v2/textSize", 12).toInt());
+                        QSettings().value("v2/textSize", 14).toInt());
     if (parser.isSet("smoke-test") && qEnvironmentVariableIsEmpty("PROMPTCAD_HOME"))
         qputenv(
             "PROMPTCAD_HOME",

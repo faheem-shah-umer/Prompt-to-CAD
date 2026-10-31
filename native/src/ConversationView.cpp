@@ -42,7 +42,7 @@ class MessageText : public QTextBrowser {
         document()->setDefaultFont(qApp->font());
         document()->setDefaultStyleSheet("p {margin-top:0; margin-bottom:12px; line-height:150%;} "
                                         "li {margin-bottom:7px;} pre,code {font-family:Consolas;} "
-                                        "a {color:" + QString(lightWorkspaceTheme() ? "#216650" : "#abd9c6") + ";}");
+                                        "a {color:" + workspaceColors().link.name() + ";}");
         auto safe = text;
         safe.replace("![", "\\![");
         auto features = QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub);
