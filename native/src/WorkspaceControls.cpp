@@ -498,3 +498,35 @@ QLabel *workspaceTitle(const QString &text, QWidget *parent) {
   label->setMinimumHeight(label->fontMetrics().lineSpacing());
   return label;
 }
+
+namespace {
+class AccountButton : public QPushButton {
+public:
+  explicit AccountButton(QWidget *parent) : QPushButton(parent) { setFixedSize(36, 36); }
+protected:
+  void paintEvent(QPaintEvent *) override {
+    const auto colors = workspaceColors();
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF circle = QRectF(rect()).adjusted(2, 2, -2, -2);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(isDown() ? colors.pressed : underMouse() ? colors.hover : colors.raised);
+    painter.drawEllipse(circle);
+    if (hasFocus() && property("keyboardFocus").toBool()) {
+      painter.setPen(QPen(colors.focus, 1.5));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawEllipse(circle);
+    }
+    if (text().isEmpty()) icon().paint(&painter, QRect(rect().center() - QPoint(8, 8), QSize(16, 16)), Qt::AlignCenter,
+                                       isEnabled() ? QIcon::Normal : QIcon::Disabled);
+    else {
+      painter.setPen(isEnabled() ? colors.text : colors.disabled);
+      auto initialsFont = font();
+      initialsFont.setWeight(QFont::DemiBold);
+      painter.setFont(initialsFont);
+      painter.drawText(rect(), Qt::AlignCenter, text());
+    }
+  }
+};
+}
+QPushButton *workspaceAccountButton(QWidget *parent) { return new AccountButton(parent); }

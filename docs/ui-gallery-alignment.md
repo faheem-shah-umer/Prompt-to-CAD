@@ -59,3 +59,7 @@ All reference filenames below are under the gallery's opendesigner/review/illust
 The native build succeeded using the existing isolated MSVC/Qt/OCCT 7.8.1 toolchain. Generated output stays in the sibling Prompt-to-CAD-build directory. The existing Prompt to CAD.lnk → Prompt to CAD.vbs launcher still targets that directory's bin/PromptToCAD.exe; no new installer or shortcut is required. Build warnings include optional Vulkan headers absent, the vendor OCCT CMake warning and existing deprecated-action/shadow warnings.
 
 Only reviewed source, original glyphs and documentation belong in Git. The gallery, toolchain, executable, personal content and review output remain outside tracked source.
+
+## Owner refinements — 31 October 2026
+
+The subsequent requested refinements supersede the corresponding gallery details: File/Edit/View/Tools/Help start at the left of the application header, with Prompt to CAD centered and project/document naming retained in the existing document tabs and Windows title. All four command groups are visible tabs in the compact command row. Archive and Trash are icon-only rail controls above Settings/account, with tooltips and accessible names. Advanced registration removal uses the same application trash glyph. The account button paints a circular face directly so its initials do not depend on platform rectangular button styling. Existing account, project, conversation and CAD handlers remain unchanged.

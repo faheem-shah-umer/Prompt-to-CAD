@@ -105,11 +105,22 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         pair.first->setObjectName(pair.second); pair.first->setCheckable(true); pair.first->setFixedSize(40, 40);
     }
     railLayout->addStretch();
+    auto *archive = button("", railLayout, [this] { setProperty("librarySection", 0); manageProjects(); });
+    setWorkspaceIcon(archive, "archive");
+    archive->setFixedSize(40, 40);
+    archive->setAccessibleName("Archive");
+    archive->setToolTip("Archive");
+    auto *trash = button("", railLayout, [this] { setProperty("librarySection", 1); manageProjects(); });
+    setWorkspaceIcon(trash, "trash");
+    trash->setFixedSize(40, 40);
+    trash->setAccessibleName("Trash");
+    trash->setToolTip("Trash");
     auto *settingsButton = button("", railLayout, [this] { account(); });
     setWorkspaceIcon(settingsButton, "settings");
     settingsButton->setAccessibleName("Settings");
     settingsButton->setObjectName("settingsButton");
     settingsButton->setToolTip("Settings");
+    settingsButton->setFixedSize(40, 40);
     root->addWidget(rail);
     split = workspaceSplitter(Qt::Horizontal);
     root->addWidget(split, 1);
@@ -176,19 +187,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     projects->setHeaderHidden(true);
     projects->setIndentation(14);
     nav->addWidget(projects, 1);
-    auto *archive = button("Archive", nav, [this] { setProperty("librarySection", 0); manageProjects(); });
-    setWorkspaceIcon(archive, "archive");
-    archive->setProperty("controlRole", "quiet");
-    auto *trash = button("Trash", nav, [this] { setProperty("librarySection", 1); manageProjects(); });
-    setWorkspaceIcon(trash, "trash");
-    trash->setProperty("controlRole", "quiet");
     auto *usage = new QLabel("Local projects");
     usage->setToolTip("Project files stay on this PC. Open an existing folder with File → Open native project.");
     usage->setWordWrap(true);
     usage->setObjectName("muted");
     nav->addWidget(usage);
-    accountBadge = button("", railLayout, [this] { showAccountDetails(); });
-    accountBadge->setFixedSize(34, 34);
+    accountBadge = workspaceAccountButton();
+    railLayout->addWidget(accountBadge, 0, Qt::AlignHCenter);
+    connect(accountBadge, &QPushButton::clicked, this, &WorkspaceWindow::showAccountDetails);
     accountBadge->setAccessibleName("Account details");
     accountBadge->setObjectName("accountBadge");
     split->addWidget(navigation);
@@ -198,7 +204,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     work->setSpacing(0);
     auto *documentHeader = new QHBoxLayout;
     documentHeader->setContentsMargins(12, 4, 12, 4);
-    title = workspaceTitle("Create a project to begin");
+    title = workspaceTitle("Prompt to CAD");
     title->setStyleSheet("font-weight:600");
     title->setAlignment(Qt::AlignCenter);
     title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
@@ -238,12 +244,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     headerFrame->setObjectName("documentHeader");
     headerFrame->setLayout(documentHeader);
     headerFrame->setMinimumHeight(44);
-    auto *brandTitle = new QLabel("Prompt to CAD");
-    brandTitle->setObjectName("applicationBrand");
-    brandTitle->setMinimumWidth(144);
     applicationMenus->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-    documentHeader->insertWidget(0, brandTitle);
-    documentHeader->insertWidget(1, applicationMenus);
+    documentHeader->insertWidget(0, applicationMenus);
     setMenuWidget(headerFrame);
     documentTabs = new QTabBar;
     documentTabs->setObjectName("documentTabs");
@@ -258,30 +260,25 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *commandRow = new QHBoxLayout(commandGroups);
     commandRow->setContentsMargins(12, 0, 4, 0);
     commandRow->setSpacing(8);
-    auto *commandSelector = new QToolButton;
-    commandSelector->setText("Modify");
-    setWorkspaceIcon(commandSelector, "cube");
-    commandSelector->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    commandSelector->setPopupMode(QToolButton::InstantPopup);
-    commandSelector->setAccessibleName("Modelling command group");
-    commandSelector->setToolTip("Choose Modify, Assembly, Inspect or View commands");
-    auto *commandMenu = new QMenu(commandSelector);
-    commandSelector->setMenu(commandMenu);
-    commandRow->addWidget(commandSelector);
+    auto *commandTabs = new QTabBar;
+    commandTabs->setObjectName("commandGroupTabs");
+    commandTabs->setAccessibleName("Modelling command groups");
+    commandTabs->setExpanding(false);
+    commandTabs->setDrawBase(false);
+    commandTabs->setUsesScrollButtons(false);
+    commandRow->addWidget(commandTabs);
     auto *commandPages = new QStackedWidget;
     commandPages->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     commandPages->setMinimumWidth(0);
     commandRow->addWidget(commandPages, 1);
-    auto commandPage = [commandPages, commandSelector, commandMenu](const QString &label) {
+    connect(commandTabs, &QTabBar::currentChanged, commandPages, &QStackedWidget::setCurrentIndex);
+    auto commandPage = [commandPages, commandTabs](const QString &label) {
         auto *toolbar = new QToolBar;
         toolbar->setMovable(false);
         toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        const int index = commandPages->addWidget(toolbar);
-        auto *choice = commandMenu->addAction(label);
-        QObject::connect(choice, &QAction::triggered, commandPages, [commandPages, commandSelector, label, index] {
-            commandPages->setCurrentIndex(index);
-            commandSelector->setText(label);
-        });
+        commandPages->addWidget(toolbar);
+        const int index = commandTabs->addTab(label);
+        commandTabs->setTabToolTip(index, label + " commands");
         return toolbar;
     };
     auto *commands = commandPage("Modify");
@@ -1234,7 +1231,7 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     auto project = value.value("project").toObject();
     conversationTitle->setText(
         value.value("conversation").toObject().value("title").toString("Design conversation"));
-    title->setText(project.value("name").toString("Create a project to begin"));
+    title->setText("Prompt to CAD");
     title->setToolTip(title->text());
     conversationTitle->setToolTip(conversationTitle->text());
     if (auto *subtitle = findChild<QLabel *>("conversationDocument"))

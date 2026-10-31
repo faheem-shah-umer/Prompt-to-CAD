@@ -71,3 +71,6 @@ QTreeWidget *workspaceModelTree(QWidget *parent = nullptr);
 
 class QLabel;
 QLabel *workspaceTitle(const QString &text, QWidget *parent = nullptr);
+
+class QPushButton;
+QPushButton *workspaceAccountButton(QWidget *parent = nullptr);

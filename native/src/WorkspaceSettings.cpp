@@ -161,7 +161,7 @@ void WorkspaceWindow::refreshConnectionControls() {
                 if(item.value("connection")!="chatgpt"||item.value("id")==connection.value("preferred")||item.value("id")==active.value("id"))continue;
                 ++count;auto *row=new QWidget;auto *line=new QHBoxLayout(row);line->setContentsMargins(0,4,0,4);auto *name=label(item.value("label").toString());line->addWidget(name,1);
                 auto *use=new QPushButton("Use");line->addWidget(use);connect(use,&QPushButton::clicked,this,[this,id]{call("provider.select",{{"account_id",id}},[this](auto){call("v2.state");});});
-                auto *remove=new QPushButton;remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));remove->setFixedSize(32,32);remove->setProperty("workspaceIconOnly",true);remove->setAccessibleName("Remove saved connection "+item.value("label").toString());remove->setToolTip("Remove saved connection");line->addWidget(remove);
+                auto *remove=new QPushButton;setWorkspaceIcon(remove, "trash");remove->setFixedSize(32,32);remove->setProperty("workspaceIconOnly",true);remove->setAccessibleName("Remove saved connection "+item.value("label").toString());remove->setToolTip("Remove saved connection");line->addWidget(remove);
                 connect(remove,&QPushButton::clicked,this,[this,id,label=item.value("label").toString()]{
                     if(busy)return;
                     if(QMessageBox::question(settingsDialog,"Remove saved connection","Remove “"+label+"” from this application? We will attempt to revoke its session. The registered app must be removed separately in ChatGPT Settings.")!=QMessageBox::Yes)return;

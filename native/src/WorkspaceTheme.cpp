@@ -51,7 +51,6 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel { background:transparent; }
         QLabel#muted, QLabel#settingsCaption { color:@secondary@; }
         QLabel#panelTitle { font-weight:600; padding:4px 0; }
-        QLabel#applicationBrand { font-weight:600; }
         QLabel#conversationDocument, QLabel#composerHint { color:@secondary@; font-size:12px; }
         QLabel#usageTotal { font-size:24px; font-weight:600; }
         QLabel#settingsCardTitle { font-size:17px; font-weight:600; }
@@ -84,6 +83,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         #documentHeader { background:@base@; border-bottom:1px solid @border@; }
         QWidget#commandManager { background:@base@; border-top:1px solid @border@; border-bottom:1px solid @border@; }
         #commandManager QToolBar { background:@base@; border:0; spacing:4px; }
+        QTabBar#commandGroupTabs::tab { padding:8px; min-height:20px; font-size:12px; }
         QWidget#viewportPane { background:@canvas@; }
         #navigation QPushButton { text-align:left; }
         QPushButton { padding:6px 10px; }
@@ -105,10 +105,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton#quietButton { color:@secondary@; }
         QPushButton#quietButton:disabled { color:@disabled@; }
         QPushButton#usageBadge { padding:4px 8px; font-size:12px; text-align:left; }
-        #rail QPushButton#accountBadge { color:@text@; background:@raised@; border-radius:16px; padding:0; font-weight:600; }
-        #rail QPushButton#accountBadge:hover:enabled { background:@hover@; }
-        #rail QPushButton#accountBadge:pressed:enabled { background:@pressed@; }
-        #rail QPushButton#accountBadge:focus[keyboardFocus="true"] { border-color:@focus@; }
+        #rail QPushButton#accountBadge, #rail QPushButton#accountBadge:hover, #rail QPushButton#accountBadge:pressed, #rail QPushButton#accountBadge:focus { background:transparent; border:0; padding:0; }
         QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@raised@; border:1px solid @border@; border-radius:8px; padding:8px; selection-background-color:@selected@; selection-color:@text@; }
         QTreeWidget:focus[keyboardFocus="true"], QListWidget:focus[keyboardFocus="true"], QPlainTextEdit:focus, QLineEdit:focus { border-color:@focus@; }
         QLineEdit { min-height:20px; padding:6px 8px; }
