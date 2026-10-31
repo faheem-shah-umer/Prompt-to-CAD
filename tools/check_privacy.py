@@ -3,6 +3,7 @@
 import argparse
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 try:
@@ -16,6 +17,26 @@ USER_PATH = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s\"<>]+)", re.I)
 PRIVATE_KEY = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")
 
 
+def application_icons(root):
+    root = root.resolve()
+    resource_file = root / "native/branding.qrc"
+    icon_directory = root / "assets/icons"
+    icons = set()
+    resources = ET.parse(resource_file).getroot()
+    for entry in resources.findall("./qresource[@prefix='/icons']/file"):
+        if not entry.text or not entry.text.strip():
+            continue
+        path = (resource_file.parent / entry.text.strip()).resolve()
+        if (
+            path.parent == icon_directory
+            and path.suffix == ".svg"
+            and not path.name.startswith(".")
+            and path.is_file()
+        ):
+            icons.add(path.relative_to(root).as_posix())
+    return icons
+
+
 def check(root, history=False):
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=root)
@@ -24,6 +45,11 @@ def check(root, history=False):
     owner = re.search(r"github\.com[:/]([^/]+)/", remote)
     owner = owner[1].lower() if owner else None
     findings = []
+    try:
+        icons = application_icons(root)
+    except (OSError, ET.ParseError):
+        icons = set()
+        findings.append(("native/branding.qrc", 0, "cannot read application icon declarations"))
     files = 0
     for raw in git("ls-files", "-z").split(b"\0"):
         if not raw:
@@ -33,7 +59,7 @@ def check(root, history=False):
         if not path.is_file():
             continue
         files += 1
-        if not is_public_source(relative):
+        if not is_public_source(relative) and relative not in icons:
             findings.append((relative, 0, "not application source, documentation or approved branding"))
         name = path.name.lower()
         if (
