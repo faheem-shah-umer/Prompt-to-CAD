@@ -1,7 +1,10 @@
 #include "WorkspaceControls.h"
+#include "WorkspaceTheme.h"
 #include <QAbstractButton>
 #include <QApplication>
 #include <QDragEnterEvent>
+#include <QGuiApplication>
+#include <QTimer>
 #include <QDropEvent>
 #include <QImage>
 #include <QMimeData>
@@ -14,6 +17,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPushButton>
 #include <QScreen>
 #include <QStyleOptionComboBox>
@@ -67,6 +71,63 @@ void ComposerEdit::keyPressEvent(QKeyEvent *event) {
   }
   QPlainTextEdit::keyPressEvent(event);
 }
+WorkspacePopover::WorkspacePopover(QWidget *trigger, const QString &name)
+    : QFrame(trigger->window(), Qt::Popup), anchor(trigger) {
+  setObjectName(name);
+  setAttribute(Qt::WA_DeleteOnClose);
+  setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(name == "modelPopover" ? "Available models"
+                     : name == "effortPopover" ? "Model and reasoning effort"
+                     : name == "usagePopover" ? "Reported usage" : "Account details");
+}
+void WorkspacePopover::showAnchored(QWidget *initialFocus, bool beside) {
+  if (!anchor) return;
+  ensurePolished();
+  auto *display = anchor->screen();
+  if (!display) display = QGuiApplication::primaryScreen();
+  const auto bounds = display->availableGeometry().adjusted(
+      WorkspaceMetrics::PopupGap, WorkspaceMetrics::PopupGap,
+      -WorkspaceMetrics::PopupGap, -WorkspaceMetrics::PopupGap);
+  setMinimumSize(qMin(minimumWidth(), bounds.width()),
+                 qMin(minimumHeight(), bounds.height()));
+  setMaximumSize(bounds.size());
+  adjustSize();
+  resize(qMin(width(), bounds.width()), qMin(height(), bounds.height()));
+  const QRect trigger(anchor->mapToGlobal(QPoint()), anchor->size());
+  int x = beside ? trigger.right() + WorkspaceMetrics::PopupGap : trigger.left();
+  int y = beside ? trigger.bottom() - height()
+                 : trigger.top() - height() - WorkspaceMetrics::PopupGap;
+  if (!beside && y < bounds.top() &&
+      trigger.bottom() + WorkspaceMetrics::PopupGap + height() <= bounds.bottom())
+    y = trigger.bottom() + WorkspaceMetrics::PopupGap;
+  x = qBound(bounds.left(), x, bounds.right() - width() + 1);
+  y = qBound(bounds.top(), y, bounds.bottom() - height() + 1);
+  move(x, y);
+  show();
+  if (initialFocus && initialFocus->isEnabled())
+    initialFocus->setFocus(Qt::PopupFocusReason);
+  else
+    setFocus(Qt::PopupFocusReason);
+}
+void WorkspacePopover::dismiss(bool restoreFocus) {
+  const QPointer<QWidget> trigger = anchor;
+  close();
+  if (restoreFocus && trigger)
+    QTimer::singleShot(0, trigger, [trigger] {
+      if (trigger && trigger->isVisible() && trigger->isEnabled() &&
+          trigger->window()->isActiveWindow() && !QApplication::activePopupWidget())
+        trigger->setFocus(Qt::PopupFocusReason);
+    });
+}
+void WorkspacePopover::keyPressEvent(QKeyEvent *event) {
+  if (event->key() == Qt::Key_Escape) {
+    event->accept();
+    dismiss();
+    return;
+  }
+  QFrame::keyPressEvent(event);
+}
+
 ModelPicker::ModelPicker(QWidget *parent) : QComboBox(parent) {
   setAccessibleName("Choose model");
   setToolTip("Choose model");
@@ -83,7 +144,7 @@ QSize ModelPicker::sizeHint() const {
   const auto label = currentText().isEmpty() ? placeholderText() : currentText();
   const auto effort = property("effortCaption").toString();
   const int extra = effort.isEmpty() ? 0 : fontMetrics().horizontalAdvance(effort) + 8;
-  return {qMin(280, fontMetrics().horizontalAdvance(label) + extra + 38), qMax(30, fontMetrics().height() + 12)};
+  return {qMin(240, fontMetrics().horizontalAdvance(label) + extra + 38), qMax(32, fontMetrics().height() + 12)};
 }
 QSize ModelPicker::minimumSizeHint() const { return {38, sizeHint().height()}; }
 void ModelPicker::paintEvent(QPaintEvent *) {
@@ -101,7 +162,7 @@ void ModelPicker::paintEvent(QPaintEvent *) {
   painter.setPen(palette().color(isEnabled() ? QPalette::Active : QPalette::Disabled, QPalette::ButtonText));
   painter.drawText(modelArea, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(label, Qt::ElideRight, modelArea.width()));
   if (suffixWidth) {
-    painter.setPen(palette().color(QPalette::PlaceholderText));
+    painter.setPen(palette().color(isEnabled() ? QPalette::Active : QPalette::Disabled, QPalette::PlaceholderText));
     painter.drawText(QRect(area.right() - suffixWidth + 1, area.top(), suffixWidth, area.height()),
                      Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(effort, Qt::ElideRight, suffixWidth));
   }
@@ -112,6 +173,7 @@ void ModelPicker::hidePopup() {
   QComboBox::hidePopup();
 }
 void ModelPicker::showPopup() {
+  if (!isEnabled()) return;
   if (property("combinedEffort").toBool()) {
     Q_EMIT configurationRequested();
     return;
@@ -119,11 +181,13 @@ void ModelPicker::showPopup() {
   showModelPopup();
 }
 void ModelPicker::showModelPopup() {
-  if (popup) {
+  if (!isEnabled()) return;
+  if (popup && popup->isVisible()) {
     popup->raise();
+    if (auto *search = popup->findChild<QLineEdit *>("modelSearch")) search->setFocus();
     return;
   }
-  auto *panel = new QFrame(this, Qt::Popup);
+  auto *panel = new WorkspacePopover(this, "modelPopover");
   popup = panel;
   panel->setObjectName("modelPopover");
   panel->setAttribute(Qt::WA_DeleteOnClose);
@@ -133,9 +197,13 @@ void ModelPicker::showModelPopup() {
   auto *search = new QLineEdit;
   search->setPlaceholderText("Search models");
   search->setObjectName("modelSearch");
+  search->setAccessibleName("Search available models");
+  search->installEventFilter(this);
   layout->addWidget(search);
   auto *list = new QListWidget;
   list->setObjectName("modelOptions");
+  list->setAccessibleName("Available models");
+  list->installEventFilter(this);
   for (int index = 0; index < count(); ++index) {
     auto *item = new QListWidgetItem(itemText(index), list);
     item->setData(Qt::UserRole, index);
@@ -146,6 +214,11 @@ void ModelPicker::showModelPopup() {
   list->setMinimumHeight(100);
   list->setMaximumHeight(260);
   layout->addWidget(list);
+  auto *empty = new QLabel(count() ? "No models match your search." : "No models available.");
+  empty->setObjectName("modelSearchEmpty");
+  empty->setWordWrap(true);
+  empty->setVisible(count() == 0);
+  layout->addWidget(empty);
   auto *status =
       new QLabel(count() ? "Model access is checked when a request runs."
                  : property("catalogState").toString().isEmpty()
@@ -155,12 +228,16 @@ void ModelPicker::showModelPopup() {
   status->setWordWrap(true);
   layout->addWidget(status);
   auto *refresh = new QPushButton("Refresh models");
+  refresh->setObjectName("refreshModelCatalogue");
+  refresh->setEnabled(property("refreshAvailable").toBool());
+  refresh->setToolTip(refresh->isEnabled() ? "Refresh the reported model catalogue"
+                      : "Connect a provider and wait for the current task or model discovery to finish.");
   layout->addWidget(refresh);
   connect(refresh, &QPushButton::clicked, panel, [this, panel] {
-    panel->close();
+    panel->dismiss();
     Q_EMIT refreshRequested();
   });
-  connect(search, &QLineEdit::textChanged, panel, [list](const QString &text) {
+  connect(search, &QLineEdit::textChanged, panel, [list, empty](const QString &text) {
     QListWidgetItem *first = nullptr;
     for (int i = 0; i < list->count(); ++i) {
       auto *item = list->item(i);
@@ -168,13 +245,13 @@ void ModelPicker::showModelPopup() {
       if (!item->isHidden() && !first)
         first = item;
     }
-    if (first)
-      list->setCurrentItem(first);
+    list->setCurrentItem(first);
+    empty->setVisible(!first);
   });
   auto choose = [this, panel](QListWidgetItem *item) {
     if (item && !item->isHidden()) {
       setCurrentIndex(item->data(Qt::UserRole).toInt());
-      panel->close();
+      panel->dismiss();
     }
   };
   connect(list, &QListWidget::itemClicked, panel, choose);
@@ -183,15 +260,44 @@ void ModelPicker::showModelPopup() {
           [choose, list] { choose(list->currentItem()); });
   panel->setFixedWidth(qBound(260, width() + 80, 380));
   panel->adjustSize();
-  auto position = mapToGlobal(QPoint(0, 0));
-  const auto screenRect = screen()->availableGeometry();
-  position.setX(qBound(screenRect.left(), position.x(),
-                       screenRect.right() - panel->width()));
-  position.setY(qMax(screenRect.top(), position.y() - panel->height() - 6));
-  panel->move(position);
-  panel->show();
-  search->setFocus();
+  panel->showAnchored(search);
 }
+void ModelPicker::wheelEvent(QWheelEvent *event) { event->ignore(); }
+void ModelPicker::keyPressEvent(QKeyEvent *event) {
+  if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+      event->key() == Qt::Key_Space || event->key() == Qt::Key_Down ||
+      event->key() == Qt::Key_Up || event->key() == Qt::Key_F4) {
+    if (!event->isAutoRepeat()) showPopup();
+    event->accept();
+    return;
+  }
+  // Choosing a model belongs to the explicit catalogue, not hidden combo-box type-ahead.
+  if (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab ||
+      event->key() == Qt::Key_Escape)
+    QComboBox::keyPressEvent(event);
+  else
+    event->ignore();
+}
+bool ModelPicker::eventFilter(QObject *object, QEvent *event) {
+  if (event->type() == QEvent::KeyPress && popup &&
+      object->objectName() == "modelSearch") {
+    const auto key = static_cast<QKeyEvent *>(event)->key();
+    if (key == Qt::Key_Down || key == Qt::Key_Up) {
+      auto *list = popup->findChild<QListWidget *>("modelOptions");
+      for (int i = key == Qt::Key_Up ? list->count() - 1 : 0;
+           i >= 0 && i < list->count(); i += key == Qt::Key_Up ? -1 : 1) {
+        if (!list->item(i)->isHidden()) {
+          list->setCurrentRow(i);
+          list->setFocus(Qt::TabFocusReason);
+          return true;
+        }
+      }
+      return true;
+    }
+  }
+  return QComboBox::eventFilter(object, event);
+}
+
 namespace {
 class Interaction : public QObject {
 public:
@@ -206,6 +312,14 @@ public:
           qobject_cast<QComboBox *>(widget))
         widget->setCursor(widget->isEnabled() ? Qt::PointingHandCursor
                                               : Qt::ArrowCursor);
+      if (auto *button = qobject_cast<QAbstractButton *>(widget)) {
+        button->setFocusPolicy(Qt::StrongFocus);
+        if (button->accessibleName().isEmpty() && !button->text().isEmpty()) {
+          auto name = button->text(); name.remove('&');
+          button->setAccessibleName(name);
+        }
+      }
+      if (qobject_cast<QMenu *>(widget)) widget->setMouseTracking(true);
       if (qobject_cast<QTabBar *>(widget) ||
           qobject_cast<QAbstractItemView *>(widget))
         widget->setMouseTracking(true);
@@ -227,7 +341,7 @@ public:
               qobject_cast<QAbstractItemView *>(widget->parentWidget());
           view && widget == view->viewport()) {
         auto index = view->indexAt(point);
-        widget->setCursor(index.isValid() && (index.flags() & Qt::ItemIsEnabled)
+        widget->setCursor(view->isEnabled() && index.isValid() && (index.flags() & Qt::ItemIsEnabled)
                               ? Qt::PointingHandCursor
                               : Qt::ArrowCursor);
       }
@@ -237,5 +351,9 @@ public:
 };
 } // namespace
 void installWorkspaceInteraction() {
+  // Frequent controls and keyboard actions must not wait for platform fade/slide effects.
+  for (auto effect : {Qt::UI_AnimateMenu, Qt::UI_FadeMenu, Qt::UI_AnimateCombo,
+                      Qt::UI_AnimateTooltip, Qt::UI_FadeTooltip})
+    QApplication::setEffectEnabled(effect, false);
   qApp->installEventFilter(new Interaction(qApp));
 }

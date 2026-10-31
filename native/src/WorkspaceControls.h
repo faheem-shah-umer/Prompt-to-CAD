@@ -1,9 +1,23 @@
 #pragma once
 #include <QComboBox>
+#include <QFrame>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QImage>
-class QFrame;
+class QKeyEvent;
+class QWheelEvent;
+
+class WorkspacePopover : public QFrame {
+  Q_OBJECT
+public:
+  WorkspacePopover(QWidget *anchor, const QString &name);
+  void showAnchored(QWidget *initialFocus = nullptr, bool beside = false);
+  void dismiss(bool restoreFocus = true);
+protected:
+  void keyPressEvent(QKeyEvent *) override;
+private:
+  QPointer<QWidget> anchor;
+};
 class QMimeData;
 class ComposerEdit : public QPlainTextEdit {
   Q_OBJECT
@@ -40,6 +54,9 @@ Q_SIGNALS:
 
 protected:
   void paintEvent(QPaintEvent *) override;
+  void keyPressEvent(QKeyEvent *) override;
+  bool eventFilter(QObject *, QEvent *) override;
+  void wheelEvent(QWheelEvent *) override;
 
 private:
   QPointer<QFrame> popup;

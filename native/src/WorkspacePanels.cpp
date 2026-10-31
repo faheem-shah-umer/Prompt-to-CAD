@@ -1,6 +1,9 @@
 #include "WorkspaceIcons.h"
+#include "WorkspaceControls.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
+#include <QEvent>
+#include <QGuiApplication>
 #include <QItemSelectionModel>
 #include <QDesktopServices>
 #include <QDialog>
@@ -28,26 +31,53 @@
 #include "CadView.h"
 #include <algorithm>
 namespace {
+class Notice : public QFrame {
+public:
+  explicit Notice(bool transient) : remaining(transient ? 4000 : -1) {
+    timer.setSingleShot(true);
+    connect(&timer, &QTimer::timeout, this, &QWidget::deleteLater);
+    connect(qApp, &QApplication::focusChanged, this, [this] { syncTimer(); });
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this] { syncTimer(); });
+  }
+protected:
+  bool event(QEvent *event) override {
+    const bool result = QFrame::event(event);
+    if (event->type() == QEvent::Enter || event->type() == QEvent::Leave ||
+        event->type() == QEvent::Show || event->type() == QEvent::Hide)
+      syncTimer();
+    return result;
+  }
+private:
+  void syncTimer() {
+    if (remaining < 0) return; // Errors remain until dismissed.
+    const auto *focus = QApplication::focusWidget();
+    const bool paused = !isVisible() || underMouse() ||
+        (focus && (focus == this || isAncestorOf(focus))) ||
+        qApp->applicationState() != Qt::ApplicationActive;
+    if (paused && timer.isActive()) {
+      remaining = qMax(1, timer.remainingTime());
+      timer.stop();
+    } else if (!paused && !timer.isActive()) {
+      timer.start(remaining);
+    }
+  }
+  QTimer timer;
+  int remaining;
+};
 QLabel *text(const QString &value) {
   auto *label = new QLabel(value);
   label->setWordWrap(true);
   label->setTextFormat(Qt::PlainText);
   return label;
 }
-QFrame *popover(WorkspaceWindow *window, QWidget *anchor, const QString &name) {
-  if (auto *existing = window->findChild<QFrame *>(name)) {
-    existing->close();
-    return nullptr;
-  }
-  auto *frame = new QFrame(window, Qt::Popup);
-  frame->setObjectName(name);
-  frame->setAttribute(Qt::WA_DeleteOnClose);
+WorkspacePopover *popover(WorkspaceWindow *window, QWidget *anchor, const QString &name) {
+  for (auto *existing : window->findChildren<WorkspacePopover *>(name))
+    if (existing->isVisible()) {
+      existing->dismiss();
+      return nullptr;
+    }
+  auto *frame = new WorkspacePopover(anchor, name);
   frame->setFixedWidth(330);
-  auto point = anchor->mapToGlobal(QPoint(anchor->width() + 8, 0));
-  auto bounds = window->screen()->availableGeometry();
-  point.setX(qMin(point.x(), bounds.right() - frame->width() - 12));
-  point.setY(qMax(bounds.top() + 12, point.y() - 200));
-  frame->move(point);
   return frame;
 }
 } // namespace
@@ -189,12 +219,7 @@ void WorkspaceWindow::showAccountDetails() {
       layout->addWidget(text(workspaceName));
   }
   panel->adjustSize();
-  auto bounds = screen()->availableGeometry();
-  panel->move(qBound(bounds.left() + 8, panel->x(),
-                     bounds.right() - panel->width() - 8),
-              qBound(bounds.top() + 8, panel->y(),
-                     bounds.bottom() - panel->height() - 8));
-  panel->show();
+  panel->showAnchored(nullptr, true);
 }
 void WorkspaceWindow::showUsageDetails() {
   auto *panel = popover(this, usageBadge, "usagePopover");
@@ -237,9 +262,7 @@ void WorkspaceWindow::showUsageDetails() {
       text("Cached input is included in input tokens. Token counts are "
            "separate from plan allowance and API cost."));
   panel->adjustSize();
-  auto bounds=screen()->availableGeometry();
-  panel->move(qBound(bounds.left()+8,panel->x(),bounds.right()-panel->width()-8),qBound(bounds.top()+8,panel->y(),bounds.bottom()-panel->height()-8));
-  panel->show();
+  panel->showAnchored();
 }
 void WorkspaceWindow::notify(const QString &message, const QString &severity) {
   auto *host = findChild<QFrame *>("notificationHost");
@@ -261,8 +284,10 @@ void WorkspaceWindow::notify(const QString &message, const QString &severity) {
     delete item->widget();
     delete item;
   }
-  auto *card = new QFrame;
+  auto *card = new Notice(severity != "error");
   card->setObjectName("notificationCard");
+  card->setAccessibleName(severity == "error" ? "Error" : severity == "warning" ? "Warning" : "Information");
+  card->setProperty("severity", severity);
   card->setProperty("message", message);
   auto *row = new QHBoxLayout(card);
   row->setContentsMargins(14, 12, 10, 12);
@@ -277,9 +302,10 @@ void WorkspaceWindow::notify(const QString &message, const QString &severity) {
   row->addWidget(icon, 0, Qt::AlignTop);
   row->addWidget(text(message), 1);
   auto *close = new QPushButton;
-  close->setFixedSize(26, 26);
+  close->setFixedSize(32, 32);
   setWorkspaceIcon(close, "cross");
   close->setAccessibleName("Dismiss notification");
+  close->setToolTip("Dismiss notification");
   row->addWidget(close, 0, Qt::AlignTop);
   connect(close, &QPushButton::clicked, card, &QWidget::deleteLater);
   if (severity == "error") {
@@ -288,15 +314,23 @@ void WorkspaceWindow::notify(const QString &message, const QString &severity) {
     connect(details, &QPushButton::clicked, this, [this, message] {
       QMessageBox::information(this, "Application notice", message);
     });
-  } else
-    QTimer::singleShot(5500, card, &QWidget::deleteLater);
+  }
   connect(card,&QObject::destroyed,host,[host] { QTimer::singleShot(0,host,[host] { host->adjustSize();if(host->layout()->count()==0)host->hide(); }); });
   layout->addWidget(card);
-  host->setFixedWidth(qMin(440, width() - 32));
-  host->adjustSize();
-  host->move(width() - host->width() - 16, menuBar()->height() + 62);
+  positionNotifications();
   host->show();
   host->raise();
+}
+void WorkspaceWindow::positionNotifications() {
+  auto *host = findChild<QFrame *>("notificationHost");
+  if (!host) return;
+  const QRect area = viewer->isVisible()
+      ? QRect(viewer->mapTo(this, QPoint()), viewer->size())
+      : QRect(centralWidget()->mapTo(this, QPoint()), centralWidget()->size());
+  const auto bounds = area.adjusted(16, 16, -16, -16);
+  host->setFixedWidth(qMax(1, qMin(440, bounds.width())));
+  host->adjustSize();
+  host->move(qMax(bounds.left(), bounds.right() - host->width() + 1), bounds.top());
 }
 void WorkspaceWindow::saveAs() {
   if (busy || focusOpenDialog())

@@ -1,6 +1,7 @@
 #include "CadView.h"
 #include "WorkspaceWindow.h"
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -65,7 +66,15 @@ void WorkspaceWindow::refreshConnectionControls() {
         if (auto *status = onboardingDialog->findChild<QLabel *>("onboardingStatus")) status->setText(signingIn ? "Finish authorization in your browser." : connection.value("error").toString());
         if (ready) onboardingDialog->accept();
     }
+    const bool canRefresh = ready && !busy && !loading && !modelsLoading && !imagePreflight;
+    if (auto *refresh = findChild<QAction *>("refreshModelsAction")) refresh->setEnabled(canRefresh);
     if (!settingsDialog) return;
+    if (auto *refresh = settingsDialog->findChild<QPushButton *>("refreshModelsButton")) {
+        refresh->setEnabled(canRefresh);
+        refresh->setText(modelsLoading ? "Loading models…" : "Refresh models");
+        refresh->setToolTip(!ready ? "Connect a provider to refresh models."
+                           : !canRefresh ? "Wait for the current operation to finish." : "Refresh the reported model catalogue");
+    }
     if (auto *create = settingsDialog->findChild<QPushButton *>("newChatGPTRegistration"))create->setEnabled(!busy&&!signingIn);
     if (auto *start = settingsDialog->findChild<QPushButton *>("connectChatGPT")) {
         start->setVisible(!ready || active.value("connection") != "chatgpt");
@@ -100,7 +109,7 @@ void WorkspaceWindow::refreshConnectionControls() {
                 if(item.value("connection")!="chatgpt"||item.value("id")==connection.value("preferred")||item.value("id")==active.value("id"))continue;
                 ++count;auto *row=new QWidget;auto *line=new QHBoxLayout(row);line->setContentsMargins(0,4,0,4);auto *name=label(item.value("label").toString());line->addWidget(name,1);
                 auto *use=new QPushButton("Use");line->addWidget(use);connect(use,&QPushButton::clicked,this,[this,id]{call("provider.select",{{"account_id",id}},[this](auto){call("v2.state");});});
-                auto *remove=new QPushButton;remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));remove->setFixedSize(30,30);remove->setAccessibleName("Remove saved connection "+item.value("label").toString());remove->setToolTip("Remove saved connection");line->addWidget(remove);
+                auto *remove=new QPushButton;remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));remove->setFixedSize(32,32);remove->setProperty("workspaceIconOnly",true);remove->setAccessibleName("Remove saved connection "+item.value("label").toString());remove->setToolTip("Remove saved connection");line->addWidget(remove);
                 connect(remove,&QPushButton::clicked,this,[this,id,label=item.value("label").toString()]{
                     if(busy)return;
                     if(QMessageBox::question(settingsDialog,"Remove saved connection","Remove “"+label+"” from this application? We will attempt to revoke its session. The registered app must be removed separately in ChatGPT Settings.")!=QMessageBox::Yes)return;
@@ -130,7 +139,8 @@ void WorkspaceWindow::account() {
     dialog->setObjectName("workspaceSettings");
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle("Settings · Prompt to CAD");
-    dialog->resize(820, qBound(500, dialog->screen()->availableGeometry().height() - 90, 680));
+    dialog->resize(qMin(960, dialog->screen()->availableGeometry().width() - 48),
+                   qBound(500, dialog->screen()->availableGeometry().height() - 90, 720));
     dialog->setMinimumSize(660, 500);
     auto *outer = new QVBoxLayout(dialog);
     outer->setContentsMargins(20, 20, 20, 16);
@@ -140,7 +150,7 @@ void WorkspaceWindow::account() {
     body->setSpacing(24);
     auto *sections = new QListWidget;
     sections->setObjectName("settingsNavigation");
-    sections->setFixedWidth(148);
+    sections->setFixedWidth(208);
     sections->addItems({"AI connection", "Appearance", "Projects", "CAD display", "Advanced"});
     body->addWidget(sections);
     auto *pages = new QStackedWidget;
@@ -233,7 +243,7 @@ void WorkspaceWindow::account() {
     usage->addLayout(usageActions);
     auto *modelRow = new QHBoxLayout;
     modelRow->addWidget(label("Choose a model in the conversation panel."), 1);
-    action("Refresh models", modelRow, [this] { discoverModels(true); });
+    action("Refresh models", modelRow, [this] { discoverModels(true); })->setObjectName("refreshModelsButton");
     usage->addLayout(modelRow);
     ai->addWidget(
         label("Tasks consume allowance or API credits. Long tasks can use more. A limit stops the request; "
@@ -251,9 +261,10 @@ void WorkspaceWindow::account() {
     theme->setCurrentIndex(prefs.value("v2/theme", "dark") == "light" ? 1 : 0);
     form->addRow("Color theme", theme);
     auto *textSize = new QComboBox;
-    textSize->addItem("Standard", 12);
-    textSize->addItem("Larger", 14);
-    textSize->setCurrentIndex(prefs.value("v2/textSize", 12).toInt() == 14 ? 1 : 0);
+    textSize->addItem("Compact", 12);
+    textSize->addItem("Standard", 14);
+    textSize->addItem("Larger", 16);
+    textSize->setCurrentIndex(qMax(0, textSize->findData(prefs.value("v2/textSize", 14).toInt())));
     form->addRow("Text size", textSize);
     auto *navVisible = new QCheckBox("Show projects and conversations");
     navVisible->setChecked(this->navigation->isVisible());

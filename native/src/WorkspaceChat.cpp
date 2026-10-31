@@ -54,6 +54,13 @@ void WorkspaceWindow::refreshEffortControl() {
     QString caption = "Unavailable";
     QString explanation = control.value("message").toString("Refresh models to load reasoning effort capabilities.");
     const bool connected = state.value("provider").toObject().value("state") == "ready";
+    const bool interactive = !busy && !loading && !imagePreflight && !modelsLoading;
+    models->setProperty("refreshAvailable", connected && interactive);
+    models->setEnabled(interactive);
+    if (!interactive) {
+        models->hidePopup();
+        if (effortPopover) effortPopover->close();
+    }
     const bool matches = !provider.isEmpty() && metadata.value("provider_id").toString() == provider &&
                          metadata.value("connection_id").toString() == active.value("id").toString();
     effortSelection.clear();
@@ -90,13 +97,20 @@ void WorkspaceWindow::refreshEffortControl() {
     models->setProperty("effortLabel", caption);
     models->setToolTip(models->currentText() + "\nReasoning effort: " + caption + "\n" + explanation);
     models->setAccessibleName("Model and reasoning effort: " + models->currentText() + " · " + caption);
+    const auto unavailable = modelsLoading ? QString("Loading model capabilities.")
+        : imagePreflight ? QString("Checking reference images before submission.")
+        : busy ? QString("Available after the current operation finishes.")
+        : loading ? QString("Loading the current project.") : QString();
+    models->setAccessibleDescription(unavailable.isEmpty() ? explanation : unavailable);
+    if (!unavailable.isEmpty()) models->setToolTip(models->toolTip() + "\n" + unavailable);
     models->updateGeometry(); models->update();
     if (effortPopover && (busy || effortPopover->property("context").toString() != modelConnectionContext() + "/" + model ||
                           effortPopover->property("control").toJsonObject() != control)) effortPopover->close();
 }
 
 void WorkspaceWindow::showEffortPopover() {
-    if (effortPopover) { effortPopover->raise(); return; }
+    if (!models->isEnabled()) return;
+    if (effortPopover && effortPopover->isVisible()) { effortPopover->raise(); return; }
     refreshEffortControl();
     const auto provider = state.value("runtime").toObject().value("agent").toObject().value("id").toString();
     const auto model = models->currentData().toString();
@@ -106,7 +120,7 @@ void WorkspaceWindow::showEffortPopover() {
     const auto defaultId = control.value("default_id").toString();
     const auto context = modelConnectionContext() + "/" + model;
     const bool supported = models->property("effortSupported").toBool();
-    auto *panel = new QFrame(this, Qt::Popup);
+    auto *panel = new WorkspacePopover(models, "effortPopover");
     effortPopover = panel; panel->setAttribute(Qt::WA_DeleteOnClose); panel->setObjectName("effortPopover");
     panel->setProperty("context", context); panel->setProperty("control", control);
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(16, 14, 16, 14); layout->setSpacing(9);
@@ -116,13 +130,17 @@ void WorkspaceWindow::showEffortPopover() {
     heading->addSpacing(28); heading->addWidget(caption, 1);
     auto *reset = new QToolButton; setWorkspaceIcon(reset, "undo"); reset->setObjectName("resetEffort");
     reset->setAccessibleName("Reset to provider default"); reset->setToolTip("Reset reasoning effort to the provider-reported default");
-    reset->setEnabled(supported && ids.contains(defaultId) && !busy); heading->addWidget(reset); layout->addLayout(heading);
-    auto *modelLink = new QToolButton; modelLink->setText((models->currentText().isEmpty() ? "Choose model" : models->currentText()) + " ›");
+    reset->setFixedSize(32, 32);
+    reset->setEnabled(supported && ids.contains(defaultId) && !busy && !imagePreflight && !modelsLoading); heading->addWidget(reset); layout->addLayout(heading);
+    auto *modelLink = new QToolButton;
+    const auto modelName = models->currentText().isEmpty() ? QString("Choose model") : models->currentText();
+    modelLink->setText(modelLink->fontMetrics().elidedText(modelName, Qt::ElideRight, 250) + " ›");
+    modelLink->setToolTip(modelName);
     modelLink->setToolButtonStyle(Qt::ToolButtonTextOnly); modelLink->setObjectName("effortModelLink");
-    modelLink->setAccessibleName("Choose model"); modelLink->setEnabled(!modelsLoading);
+    modelLink->setAccessibleName("Choose model: " + modelName); modelLink->setEnabled(!modelsLoading && !busy && !imagePreflight);
     layout->addWidget(modelLink, 0, Qt::AlignHCenter);
     connect(modelLink, &QToolButton::clicked, panel, [this, panel] {
-        panel->close(); QTimer::singleShot(0, models, [this] { static_cast<ModelPicker *>(models)->showModelPopup(); });
+        panel->dismiss(false); QTimer::singleShot(0, models, [this] { static_cast<ModelPicker *>(models)->showModelPopup(); });
     });
     auto *description = new QLabel; description->setObjectName("muted"); description->setWordWrap(true); description->setTextFormat(Qt::PlainText);
     QSlider *slider = nullptr;
@@ -160,18 +178,18 @@ void WorkspaceWindow::showEffortPopover() {
     });
     auto *refresh = new QToolButton; setWorkspaceIcon(refresh, "redo"); refresh->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     refresh->setText(modelsLoading ? "Loading models…" : "Refresh models"); refresh->setAccessibleName("Refresh models");
-    refresh->setEnabled(!busy && !modelConnectionContext().isEmpty()); layout->addWidget(refresh, 0, Qt::AlignRight);
-    connect(refresh, &QToolButton::clicked, panel, [this, panel] { panel->close(); discoverModels(true); });
+    refresh->setEnabled(models->property("refreshAvailable").toBool());
+    refresh->setToolTip(refresh->isEnabled() ? "Refresh the reported model catalogue"
+                        : "Connect a provider and wait for the current operation to finish."); layout->addWidget(refresh, 0, Qt::AlignRight);
+    connect(refresh, &QToolButton::clicked, panel, [this, panel] { panel->dismiss(); discoverModels(true); });
     showChoice(); panel->setFixedWidth(320); panel->adjustSize();
-    auto position = models->mapToGlobal(QPoint(0, 0)); const auto bounds = models->screen()->availableGeometry();
-    position.setX(qBound(bounds.left(), position.x(), bounds.right() - panel->width()));
-    position.setY(qMax(bounds.top(), position.y() - panel->height() - 6)); panel->move(position); panel->show();
-    if (slider) slider->setFocus(); else if (choices) choices->setFocus(); else modelLink->setFocus();
+    panel->showAnchored(slider ? static_cast<QWidget *>(slider)
+                              : choices ? static_cast<QWidget *>(choices) : modelLink);
 }
 
 void WorkspaceWindow::applyAppearance() {
     QSettings preferences;
-    applyWorkspaceTheme(preferences.value("v2/theme", "dark").toString(), preferences.value("v2/textSize", 12).toInt());
+    applyWorkspaceTheme(preferences.value("v2/theme", "dark").toString(), preferences.value("v2/textSize", 14).toInt());
     setStyleSheet({});
     viewer->setLightTheme(lightWorkspaceTheme());
     refreshWorkspaceIcons(this);

@@ -160,6 +160,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     projectSearch->addWidget(sort);
     nav->addLayout(projectSearch);
     projects = new QTreeWidget;
+    projects->setObjectName("projectTree");
     projects->setHeaderHidden(true);
     projects->setIndentation(14);
     nav->addWidget(projects, 1);
@@ -212,10 +213,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     setWorkspaceIcon(searchButton, "search");
     setWorkspaceIcon(undoButton, "undo");
     setWorkspaceIcon(redoButton, "redo");
-    for (int i = 0; i < documentHeader->count(); ++i)
-        if (auto *b = qobject_cast<QPushButton *>(documentHeader->itemAt(i)->widget()))
-            b->setMinimumWidth(34);
-    searchButton->setFixedWidth(34);
+    searchButton->setFixedSize(32, 32);
     auto *headerFrame = new QFrame;
     headerFrame->setObjectName("documentHeader");
     headerFrame->setLayout(documentHeader);
@@ -339,6 +337,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     clearModels->setObjectName("clearModelSelection");
     modelLayout->addLayout(selectionControls);
     modelTree = new QTreeWidget;
+    modelTree->setObjectName("modelTree");
     modelTree->setHeaderHidden(true);
     modelLayout->addWidget(modelTree);
     properties = new QTextBrowser;
@@ -451,7 +450,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     compose->addWidget(composer);
     auto *providerRow = new QHBoxLayout;
     auto *attach = new QToolButton;
-    attach->setObjectName("attachImages"); setWorkspaceIcon(attach, "paperclip"); attach->setFixedSize(28, 28);
+    attach->setObjectName("attachImages"); setWorkspaceIcon(attach, "paperclip"); attach->setFixedSize(32, 32);
     attach->setAccessibleName("Attach reference images"); attach->setToolTip("Attach reference images · paste or drop images into the composer");
     connect(attach, &QToolButton::clicked, this, [this] {
         if (imagePreflight || focusOpenDialog()) return;
@@ -468,7 +467,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     models->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     models->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     models->setMinimumWidth(0);
-    models->setMaximumWidth(280);
+    models->setMaximumWidth(240);
     models->setPlaceholderText("Choose model");
     providerRow->addWidget(models);
     connect(models, &QComboBox::currentIndexChanged, this, [this] { refreshEffortControl(); });
@@ -489,7 +488,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     });
     setWorkspaceIcon(sendButton, "arrow-up", true);
     sendButton->setObjectName("primaryButton");
-    sendButton->setFixedSize(30, 30);
+    sendButton->setFixedSize(36, 36);
     sendButton->setAccessibleName("Send request");
     sendButton->setToolTip("Send · Enter (Shift+Enter for a new line)");
     sendButton->setEnabled(false);
@@ -590,7 +589,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     toolsMenu->addAction("Settings…", this, &WorkspaceWindow::account);
     toolsMenu->addAction("Archive…", this, [this] { setProperty("librarySection",0); manageProjects(); });
     toolsMenu->addAction("Trash…", this, [this] { setProperty("librarySection",1); manageProjects(); });
-    toolsMenu->addAction("Refresh available models", this, [this] { discoverModels(true); });
+    toolsMenu->addAction("Refresh available models", this, [this] { discoverModels(true); })->setObjectName("refreshModelsAction");
     toolsMenu->addAction("Restart provider session for this conversation", this,
                          [this] { call("v2.conversation.restart_session"); });
     toolsMenu->addAction("CAD script…", this, [this] {
@@ -629,6 +628,17 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
                                  "connected allowance; long tasks can consume more usage. API keys are "
                                  "billed separately.");
     });
+    for (auto *menu : findChildren<QMenu *>()) {
+        menu->setToolTipsVisible(true);
+        for (auto *action : menu->actions()) {
+            if (action->isSeparator()) continue;
+            auto description = action->text();
+            description.remove('&');
+            if (!action->shortcut().isEmpty())
+                description += " · " + action->shortcut().toString(QKeySequence::NativeText);
+            action->setToolTip(description);
+        }
+    }
     auto *commandSearch = new QAction("Command search", this);
     commandSearch->setObjectName("commandSearch");
     commandSearch->setShortcut(QKeySequence("Ctrl+K"));
@@ -640,7 +650,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         for (auto *m : menuBar()->actions())
             if (m->menu())
                 for (auto *a : m->menu()->actions())
-                    if (!a->isSeparator()) {
+                    if (!a->isSeparator() && a->isEnabled()) {
                         names << a->text().remove('&');
                         choices << a;
                     }
@@ -889,6 +899,7 @@ void WorkspaceWindow::resizeEvent(QResizeEvent *e) {
         navigation->hide();
     if (width() < 1150)
         manager->hide();
+    positionNotifications();
 }
 QJsonObject WorkspaceWindow::base() const { return {{"base_revision_id", document.value("revision_id")}}; }
 void WorkspaceWindow::showError(const QString &message) {
@@ -1292,13 +1303,18 @@ void WorkspaceWindow::startAgentTask(QJsonObject params) {
     });
 }
 void WorkspaceWindow::discoverModels(bool refresh) {
-    if (modelsLoading || busy) return;
+    if (modelsLoading || busy || imagePreflight) return;
+    if (modelConnectionContext().isEmpty()) {
+        notify("Connect an agent provider before refreshing models.", "info");
+        return;
+    }
     automaticModelContext = modelConnectionContext();
     modelsLoading = true;
     refreshEffortControl();
     models->setProperty("catalogState","Loading models…");
     busy = true;
     updateSendControl();
+    refreshConnectionControls();
     rpc->call("provider.models", {{"refresh", refresh}}, [this](auto r, auto error) {
         modelsLoading = false;
         busy = false;

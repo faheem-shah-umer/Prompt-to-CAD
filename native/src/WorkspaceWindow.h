@@ -57,6 +57,7 @@ class WorkspaceWindow : public QMainWindow {
     void showUsageDetails();
     void saveAs();
     void notify(const QString &, const QString &severity = "error");
+    void positionNotifications();
     void batchConversations(const QJsonArray &, const QString &action);
     void discoverModels(bool refresh = false);
     void updateSendControl();
