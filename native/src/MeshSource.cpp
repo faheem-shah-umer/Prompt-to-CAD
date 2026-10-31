@@ -106,7 +106,7 @@ int MeshSource::rayHit(const gp_Pnt &origin, const gp_Vec &direction, double &di
     return result;
 }
 
-Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset) {
+Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset, const QJsonArray &overrideColor) {
     Handle(MeshSource) source = new MeshSource(asset);
     Handle(MeshVS_Mesh) mesh = new MeshVS_Mesh;
     mesh->SetDataSource(source);
@@ -118,13 +118,14 @@ Handle(MeshVS_Mesh) meshPresentation(const QJsonObject &asset) {
     mesh->GetDrawer()->SetInteger(MeshVS_DA_MaxFaceNodes, 3);
     mesh->AddBuilder(new MeshVS_MeshPrsBuilder(mesh), true);
     auto colors = asset.value("colors").toArray();
-    if (colors.size() == source->triangleCount()) {
+    if (overrideColor.size() == 3 || colors.size() == source->triangleCount()) {
         Handle(MeshVS_ElementalColorPrsBuilder) color = new MeshVS_ElementalColorPrsBuilder(mesh);
-        for (int i = 0; i < colors.size(); ++i) {
-            auto rgb = colors[i].toArray();
+        for (int i = 0; i < source->triangleCount(); ++i) {
+            auto rgb = overrideColor.size() == 3 ? overrideColor : colors[i].toArray();
+            const double scale = overrideColor.size() == 3 ? 1.0 : 255.0;
             if (rgb.size() == 3)
-                color->SetColor1(i + 1, Quantity_Color(rgb[0].toDouble() / 255., rgb[1].toDouble() / 255.,
-                                                       rgb[2].toDouble() / 255., Quantity_TOC_sRGB));
+                color->SetColor1(i + 1, Quantity_Color(rgb[0].toDouble() / scale, rgb[1].toDouble() / scale,
+                                                       rgb[2].toDouble() / scale, Quantity_TOC_sRGB));
         }
         mesh->AddBuilder(color, false);
     }

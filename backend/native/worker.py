@@ -37,6 +37,16 @@ def dispatch(method, params):
         return import_mesh(params["path"], folder, params["mm_per_unit"])
     if method == "from_recipe":
         return geometry.from_recipe(params["recipe"], folder)
+    if method == "capabilities":
+        from backend.v2.scripts import METHODS, CONSTRUCTORS
+        import cadquery as cq
+        receivers = {"Workplane": cq.Workplane, "Solid": cq.Solid, "Shape": cq.Shape,
+                     "Compound": cq.Compound, "Face": cq.Face, "Wire": cq.Wire, "Edge": cq.Edge}
+        return {"methods_by_receiver": {key: sorted(name for name in METHODS if callable(getattr(value, name, None))) for key, value in receivers.items()},
+                "constructors": {key: sorted(name for name in value[1] if callable(getattr(value[0], name, None))) for key, value in CONSTRUCTORS.items()},
+                "entry_points": ["cq.Workplane", "cq.Plane", "cq.Vector"],
+                "statements": ["assignment", "tuple_unpacking", "subscript_assignment", "if", "bounded_for"],
+                "instruction_budget": 30000, "collection_limit": 1000}
     if method == "inspect":
         return geometry.inspect(folder, params["snapshot"], params.get("instance_id"), params.get("limit", 128), params.get("offset", 0))
     if method == "measure":
@@ -45,8 +55,15 @@ def dispatch(method, params):
         from backend.v2.scripts import execute
         from backend.v2.process_limits import constrain_worker
         constrain_worker()
-        candidate = execute(folder, params["snapshot"], params["source"], params.get("parameters", {}), params.get("instance_id"))
+        candidate = execute(folder, params["snapshot"], params["source"], params.get("parameters", {}), params.get("instance_id"), params.get("source_instance_ids"))
         geometry.check_new_intersections(folder, params["snapshot"], candidate, {"type": "script"})
+        return candidate
+    if method == "restructure":
+        from backend.v2.component_edits import restructure
+        from backend.v2.process_limits import constrain_worker
+        constrain_worker()
+        candidate = restructure(folder, params["snapshot"], params["request"])
+        geometry.check_new_intersections(folder, params["snapshot"], candidate, {"type": "restructure"})
         return candidate
     if method == "apply_batch":
         return geometry.apply_face_batch(folder, params["snapshot"], params["commands"])
@@ -94,6 +111,9 @@ def dispatch(method, params):
                     else:
                         points, faces = geometry.world_shape(folder, part).tessellate(0.1)
                         mesh = trimesh.Trimesh(vertices=[p.toTuple() for p in points], faces=faces, process=False)
+                    if part.get("representation") != "mesh" or part.get("color_override") is not None:
+                        color = part.get("color_override", part["color"])
+                        mesh.visual.face_colors = [round(value * 255) for value in color] + [255]
                     if suffix == ".glb":
                         mesh.unmerge_vertices()
                     scene.add_geometry(mesh, node_name=part["instance_id"], geom_name=part["name"])
@@ -110,7 +130,9 @@ def dispatch(method, params):
                 geometry.export_step(folder, snapshot, temporary)
                 verification = geometry.verify_export(folder, snapshot, temporary)
             os.replace(temporary, destination)
-            return {"path": str(destination), "verification": verification}
+            return {"path": str(destination), "verification": verification,
+                    "appearance": "STL does not retain component colours." if suffix == ".stl" else "Component colours encoded in export.",
+                    "engineering_metadata": "Tolerances, dimensions and annotations remain in the project; STEP PMI and drawing export are not supported."}
         finally:
             Path(temporary).unlink(missing_ok=True)
     raise WorkspaceError("Unknown geometry method: " + method, "method_not_found")

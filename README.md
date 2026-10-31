@@ -10,6 +10,10 @@ Make source changes without automatically building, packaging or launching the a
 
 Connect **ChatGPT subscription — Codex** or **OpenAI API key — separately billed** in Settings. Both use the same App Server and scoped CAD tools. Billing never switches automatically.
 
+The composer's [Reasoning effort selector](docs/reasoning-effort.md) uses provider-reported options for the selected model and remembers each provider/model choice. Unsupported or unreported controls are identified explicitly; Claude integration remains deferred.
+
+The agentic-capabilities source update adds component split/merge/replacement transactions, broader controlled CAD scripting, editable project definitions, component colours, engineering annotations and model-gated reference images. See [capabilities and current limits](docs/agentic-cad.md). The local executable has been rebuilt with these UI changes. Tests, live inference and UI verification remain pending.
+
 | Path | Purpose |
 | --- | --- |
 | assets/ | Original purple pyramid logo for application source and docs |

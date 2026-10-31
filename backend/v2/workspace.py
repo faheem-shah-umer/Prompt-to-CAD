@@ -16,7 +16,8 @@ from backend.native.workspace import Workspace
 from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
-from .provider import CODEX_AGENT, CodexAppServer, discover_executable
+from .provider import CODEX_AGENT, CodexAppServer, CodexProviderOptions, discover_executable
+from .provider_options import ProviderOptions, capture_effort
 from .usage import allowance, merge_allowance, tokens
 
 INSTRUCTIONS = (
@@ -43,6 +44,9 @@ class WorkspaceV2(Workspace):
         }
         self.usage_account = None
         self.token_usage = {}
+        self.capability_cache = {}
+        self.provider_options: ProviderOptions = CodexProviderOptions()
+        self.image_bounds = {}
         self.connections = Connections(
             Path(identity_home) if identity_home else self.home / "identity", self.emit
         )
@@ -158,7 +162,7 @@ class WorkspaceV2(Workspace):
             and self.usage_account
         ):
             provider["usage"] = self.provider_usage
-        return {
+        result = {
             **(
                 self.projects.view(self.project_id)
                 if self.project_id
@@ -182,9 +186,85 @@ class WorkspaceV2(Workspace):
                 "executable": discover_executable(self.configuration.get("codex_path"))
                 or "",
                 "provider": "Codex App Server",
-                "agent": copy.deepcopy(CODEX_AGENT),
+                "agent": copy.deepcopy(self.provider_options.identity),
             },
         }
+        if self.project_id and result.get("conversation"):
+            from .attachments import public
+            base = self.projects.project_path(self.project_id)
+            for message in result["conversation"].get("messages", []):
+                if message.get("attachments"):
+                    message["attachments"] = [public(base, item) for item in message["attachments"]]
+        return result
+
+    def capability_key(self, account_id):
+        executable = discover_executable(self.configuration.get("codex_path"))
+        stamp = Path(executable).stat().st_mtime_ns if executable else 0
+        return self.provider_options.identity["id"], account_id, executable, stamp
+
+    def discover_models(self, refresh=False):
+        account_id, account = self.connections.credential()
+        key = self.capability_key(account_id)
+        cached = self.capability_cache.get(key)
+        if cached and not refresh and time.monotonic() - cached[0] < 600:
+            return copy.deepcopy(cached[1])
+        result = self.connections.models(refresh)
+        result["provider_id"] = self.provider_options.identity["id"]
+        result["connection_id"] = account_id
+        runtime, reported = None, {}
+        try:
+            runtime = CodexAppServer(self.home / "runtime" / account_id, self.configuration.get("codex_path") or None,
+                                     account.get("access_token", account.get("api_key")), account["mode"])
+            reported = {m.get("model", m.get("id")): m for m in runtime.model_catalogue()}
+        except WorkspaceError as error:
+            result["capability_diagnostic"] = str(error)
+        finally:
+            if runtime:
+                runtime.close()
+        for model in result["models"]:
+            model["provider_id"] = result["provider_id"]
+            model["connection_id"] = account_id
+            model["reasoning_effort"] = self.provider_options.reasoning_effort(reported.get(model["id"]))
+            provider_modes = model.get("inputModalities")
+            runtime_modes = reported.get(model["id"], {}).get("inputModalities")
+            declarations = [m for m in (provider_modes, runtime_modes) if isinstance(m, list)]
+            model["image_support"] = ("unsupported" if any("image" not in m for m in declarations)
+                                      else "supported" if declarations else "unknown")
+            model["capability_source"] = "provider/runtime metadata" if declarations else "not reported"
+            model["inputModalities"] = sorted(set.intersection(*(set(m) for m in declarations))) if declarations else None
+        self.capability_cache[key] = (time.monotonic(), copy.deepcopy(result))
+        if refresh:
+            self.image_bounds = {k: v for k, v in self.image_bounds.items() if k[0] != key}
+        return result
+
+    def image_support(self, model):
+        account_id, account = self.connections.credential()
+        entry = next((m for m in self.discover_models()["models"] if m["id"] == model), None)
+        if not entry or entry.get("image_support") != "supported":
+            raise WorkspaceError("Image input is " + ((entry or {}).get("image_support", "unknown")) +
+                " for this model. Refresh capabilities or choose a model that reports image support. Your draft was retained.", "image_capability_required")
+        key = self.capability_key(account_id), model
+        cached = self.image_bounds.get(key)
+        if cached and time.monotonic() - cached[0] < 600:
+            if not cached[1]:
+                raise WorkspaceError("The configured provider excludes image input for this model.", "image_unsupported")
+            return entry
+        runtime = CodexAppServer(self.home / "runtime" / account_id, self.configuration.get("codex_path") or None,
+                                 account.get("access_token", account.get("api_key")), account["mode"])
+        try:
+            bounds = runtime.input_bounds(model)
+        finally:
+            runtime.close()
+        supported = bounds is None or "image" in bounds
+        self.image_bounds[key] = time.monotonic(), supported
+        if not supported:
+            cached_models = self.capability_cache.get(self.capability_key(account_id))
+            if cached_models:
+                for item in cached_models[1]["models"]:
+                    if item["id"] == model:
+                        item.update(image_support="unsupported", capability_source="configured provider bounds")
+            raise WorkspaceError("The configured provider excludes image input for this model. Your draft was retained.", "image_unsupported")
+        return entry
 
     def dispatch(self, method, params):
         if method.startswith("v2.") and method != "v2.state":
@@ -204,6 +284,10 @@ class WorkspaceV2(Workspace):
                         "v2.undo",
                         "v2.redo",
                         "v2.restore",
+                        "v2.appearance",
+                        "v2.engineering",
+                        "v2.restructure",
+                        "v2.definition",
                     }
                     and self.document
                 ):
@@ -390,7 +474,15 @@ class WorkspaceV2(Workspace):
         if method == "provider.disconnect":
             return self.connections.disconnect(params.get("account_id"))
         if method == "provider.models":
-            return self.connections.models(bool(params.get("refresh")))
+            return self.discover_models(bool(params.get("refresh")))
+        if method == "provider.image_support":
+            return self.image_support(params["model"])
+        if method == "v2.attachment.add":
+            if not self.project_id:
+                raise WorkspaceError("Create or open a project before attaching images.", "project_required")
+            from .attachments import store, public
+            base = self.projects.project_path(self.project_id)
+            return {"attachment": public(base, store(base, params["path"]))}
         if method == "provider.usage":
             return self.read_usage()
         if method == "provider.configure":
@@ -498,7 +590,7 @@ class WorkspaceV2(Workspace):
                 )
             self.projects.adopt(self.project_id, document)
             return self.activate(self.project_id)
-        if method in ("v2.command", "v2.command_batch", "v2.script"):
+        if method in ("v2.command", "v2.command_batch", "v2.script", "v2.appearance", "v2.engineering", "v2.restructure", "v2.definition"):
             if not self.document:
                 raise WorkspaceError("Open or create a document first.", "no_document")
             snapshot = (
@@ -514,7 +606,12 @@ class WorkspaceV2(Workspace):
                 self.project_id,
                 uuid4().hex,
             )
-            if method == "v2.command_batch":
+            if method in ("v2.appearance", "v2.engineering", "v2.restructure", "v2.definition"):
+                name = {"v2.appearance": "cad_appearance", "v2.engineering": "cad_engineering",
+                        "v2.restructure": "cad_restructure", "v2.definition": "cad_files"}[method]
+                tools.call(name, {"candidate_id": tools.candidate_id,
+                    **{k: v for k, v in params.items() if k not in ("base_revision_id", "selection", "project_id", "document_id")}})
+            elif method == "v2.command_batch":
                 tools.call(
                     "cad_apply_batch",
                     {
@@ -532,9 +629,7 @@ class WorkspaceV2(Workspace):
                     "cad_script",
                     {
                         "candidate_id": tools.candidate_id,
-                        "source": params["source"],
-                        "parameters": params.get("parameters", {}),
-                        "instance_id": params.get("instance_id"),
+                        **{key: params[key] for key in ("source", "definition_id", "parameters", "instance_id", "source_instance_ids") if key in params},
                     },
                 )
             report = tools.call("cad_validate", {"candidate_id": tools.candidate_id})
@@ -542,7 +637,7 @@ class WorkspaceV2(Workspace):
             self.document.commit(
                 tools.candidate,
                 snapshot["revision_id"],
-                summary=params.get("command", {}).get("type", "CAD script"),
+                summary=params.get("command", {}).get("type", method.removeprefix("v2.").replace("_", " ")),
                 commands=tools.commands,
             )
             self.projects.touch(self.project_id)
@@ -592,8 +687,11 @@ class WorkspaceV2(Workspace):
                 "Restore or start a conversation before sending a request.",
                 "conversation_required",
             )
-        prompt = str(params.get("prompt", "")).strip()
-        if not 1 <= len(prompt) <= 16000:
+        raw_prompt = str(params.get("prompt", ""))
+        prompt = raw_prompt.strip()
+        if not prompt and params.get("attachments"):
+            prompt = "Inspect the attached references and clarify what should be created or changed before modifying geometry."
+        if not 1 <= len(prompt) <= 16000 or len(raw_prompt) > 16000:
             raise WorkspaceError("Describe the task in 1–16,000 characters.")
         model = str(params.get("model", "")).strip()
         if not model:
@@ -602,6 +700,9 @@ class WorkspaceV2(Workspace):
                 "model_required",
             )
         account_id, account = self.connections.credential()
+        provider_id = self.provider_options.identity["id"]
+        if params.get("provider_id", provider_id) != provider_id:
+            raise WorkspaceError("The selected provider changed. Review the model and submit again.", "provider_changed")
         state = self.projects.view(self.project_id)
         original = state["document"]
         if params.get("base_revision_id") != original.get("revision_id"):
@@ -609,10 +710,22 @@ class WorkspaceV2(Workspace):
                 "The document changed before task submission. Inspect and submit again.",
                 "revision_conflict",
             )
-        if params.get("attachments"):
-            raise WorkspaceError(
-                "This release accepts text requests and internal viewport observations only."
-            )
+        from .attachments import submission
+        attached = submission(self.projects.project_path(self.project_id), params.get("attachments", []))
+        if attached:
+            self.image_support(model)
+        cached = self.capability_cache.get(self.capability_key(account_id))
+        if params.get("reasoning_effort") is not None and (not cached or time.monotonic() - cached[0] >= 600):
+            self.discover_models()
+            cached = self.capability_cache.get(self.capability_key(account_id))
+        model_entry = next((m for m in (cached[1]["models"] if cached and time.monotonic() - cached[0] < 600 else []) if m["id"] == model), {})
+        effort = capture_effort(provider_id, model, model_entry.get("reasoning_effort") or
+                                self.provider_options.reasoning_effort(None), params.get("reasoning_effort"))
+        turn_options = self.provider_options.turn_options(effort)
+        supports_images = model_entry.get("image_support") == "supported"
+        bounds = self.image_bounds.get((self.capability_key(account_id), model))
+        if bounds and time.monotonic() - bounds[0] < 600 and not bounds[1]:
+            supports_images = False
         viewport = (
             self.projects.reference(self.project_id, params["viewport_path"])
             if params.get("viewport_path")
@@ -639,7 +752,9 @@ class WorkspaceV2(Workspace):
             "started_at": time.time(),
             "model": model,
             "provider_account": account_id,
-            "agent": copy.deepcopy(CODEX_AGENT),
+            "agent": copy.deepcopy(self.provider_options.identity),
+            "reasoning_effort": copy.deepcopy(effort),
+            "attachments": [copy.deepcopy(reference) for reference, _ in attached],
         }
         tools = TaskTools(
             self,
@@ -649,21 +764,26 @@ class WorkspaceV2(Workspace):
             self.project_id,
             task["task_id"],
         )
-        tools.viewport = viewport
+        tools.viewport = viewport if supports_images else None
+        tools.image_supported = supports_images
+        tools.references = {r["asset_id"]: r for message in state["conversation"]["messages"]
+                            for r in message.get("attachments", []) if r.get("asset_id")}
+        tools.references.update({r["asset_id"]: r for r, _ in attached})
         task["viewport"] = viewport
         task["submitted_selection"] = tools.selection
         conversation = state["conversation"]
         conversation["messages"].append(
             {
                 "role": "user",
-                "content": prompt,
+                "content": raw_prompt,
                 "selection": tools.selection,
                 "task_id": task["task_id"],
+                "attachments": copy.deepcopy(task["attachments"]),
             }
         )
         conversation["tasks"].append(task["task_id"])
         if conversation["title"] == "New conversation":
-            conversation["title"] = prompt[:60]
+            conversation["title"] = prompt[:60] if raw_prompt.strip() else "Image reference"
         self.projects.save_conversation(self.project_id, conversation)
         self.projects.task(self.project_id, task)
         self.active_task = task
@@ -745,7 +865,7 @@ class WorkspaceV2(Workspace):
             context = json.dumps(tools.context(), allow_nan=False)
             if not resuming:
                 history = "\n".join(
-                    m["role"] + ": " + m["content"]
+                    m["role"] + ": " + m["content"] + ("\nReference assets: " + json.dumps(m["attachments"], allow_nan=False) if m.get("attachments") else "")
                     for m in conversation["messages"][:-1][-20:]
                 )[-24000:]
                 context += (
@@ -764,8 +884,10 @@ class WorkspaceV2(Workspace):
                 model,
                 self.cancelled,
                 self.notify,
-                [viewport["path"]] if viewport else [],
+                [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
+                    and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
                 timeout=max(1, self.task_deadline - time.monotonic()),
+                turn_options=turn_options,
             )
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
@@ -801,6 +923,11 @@ class WorkspaceV2(Workspace):
                         if fingerprint(original).get(p["instance_id"])
                         != fingerprint(tools.candidate)[p["instance_id"]]
                     ],
+                    created_components=sorted(set(fingerprint(tools.candidate)) - set(fingerprint(original))),
+                    consumed_components=sorted(set(fingerprint(original)) - set(fingerprint(tools.candidate))),
+                    replaced_components=sorted(identity for identity in set(fingerprint(original)) & set(fingerprint(tools.candidate))
+                                               if fingerprint(original)[identity] != fingerprint(tools.candidate)[identity]),
+                    component_transactions=copy.deepcopy(tools.transactions),
                 )
             if not tools.commands:
                 message += (
@@ -811,10 +938,18 @@ class WorkspaceV2(Workspace):
                 message=message,
                 completed_at=time.time(),
             )
+            if attached:
+                task["image_access"] = "observed_success_for_this_request"
+                cached_models = self.capability_cache.get(self.capability_key(account_id))
+                if cached_models:
+                    for item in cached_models[1]["models"]:
+                        if item["id"] == model:
+                            item["image_access"] = "Observed successful image request; future access is not guaranteed."
             conversation["messages"].append(
                 {
                     "role": "assistant",
                     "agent": copy.deepcopy(task["agent"]),
+                    "reasoning_effort": copy.deepcopy(task["reasoning_effort"]),
                     "content": message,
                     "activity": task.get("activity", []),
                     "elapsed_seconds": max(
@@ -827,6 +962,10 @@ class WorkspaceV2(Workspace):
                             "result_revision_id",
                             "validation",
                             "affected_components",
+                            "created_components",
+                            "consumed_components",
+                            "replaced_components",
+                            "component_transactions",
                         )
                         if k in task
                     },

@@ -16,6 +16,46 @@ from .process_limits import ProcessTree
 CODEX_AGENT = {"id": "codex", "display_name": "Codex"}
 
 
+class CodexProviderOptions:
+    identity = CODEX_AGENT
+
+    def reasoning_effort(self, model):
+        control = {
+            "state": "unavailable", "options": [], "default_id": None,
+            "message": "Reasoning effort was not reported by the configured Codex runtime. Refresh models to retry.",
+        }
+        if not isinstance(model, dict) or not isinstance(model.get("supportedReasoningEfforts"), list):
+            return control
+        levels = model["supportedReasoningEfforts"]
+        if not levels:
+            return {**control, "state": "unsupported",
+                    "message": "This model reports no adjustable reasoning effort. Codex manages its configuration."}
+        options, seen = [], set()
+        for level in levels:
+            if not isinstance(level, dict):
+                return control
+            identity = level.get("reasoningEffort")
+            if not isinstance(identity, str) or not identity.strip():
+                return control
+            if identity in seen:
+                continue
+            seen.add(identity)
+            options.append({"id": identity, "label": identity.replace("_", " ").capitalize(),
+                            "description": str(level.get("description") or "")})
+        default = model.get("defaultReasoningEffort")
+        return {
+            "state": "supported", "options": options, "presentation": "steps",
+            "default_id": default if isinstance(default, str) and default in seen else None,
+            "message": "Options and descriptions are reported by Codex for this model. "
+                       "Effort settings are provider-specific and do not guarantee a fixed token or time budget.",
+        }
+
+    def turn_options(self, effort):
+        if effort["provider_id"] != self.identity["id"]:
+            raise WorkspaceError("Reasoning effort belongs to another provider.", "effort_invalid")
+        return {"effort": effort["option_id"]} if effort["option_id"] is not None else {}
+
+
 def discover_executable(configured=None):
     if configured:
         return str(configured) if Path(configured).is_file() else None
@@ -222,16 +262,43 @@ class CodexAppServer:
         self.thread_id = result["thread"]["id"]
         return self.thread_id
 
-    def run(self, text, model, cancelled, notify, images=(), timeout=600):
+    def model_catalogue(self):
+        models, cursor = [], None
+        while True:
+            params = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            response = self.request("model/list", params)
+            models.extend(response.get("data", []))
+            next_cursor = response.get("nextCursor")
+            if not next_cursor:
+                break
+            if next_cursor == cursor or len(models) > 1000:
+                raise WorkspaceError("The runtime model catalogue pagination is invalid.", "model_catalogue_failed")
+            cursor = next_cursor
+        return models
+
+    def input_bounds(self, model):
+        try:
+            response = self.request("modelProvider/capabilities/read", {"modelProvider": "promptcad", "model": model})
+            value = response.get("inputModalities")
+            return value if isinstance(value, list) else None
+        except WorkspaceError as error:
+            if error.code != "app_server_error":
+                raise
+            return None  # Older runtimes do not expose provider capability bounds.
+
+    def run(self, text, model, cancelled, notify, images=(), timeout=600, turn_options=None):
         if cancelled.is_set():
             raise WorkspaceError("Task cancelled before inference.", "cancelled")
         inputs = [{"type": "text", "text": text}]
         inputs += [
             {"type": "localImage", "path": str(Path(p).resolve())} for p in images
         ]
-        result = self.request(
-            "turn/start", {"threadId": self.thread_id, "input": inputs, "model": model}
-        )
+        params = {"threadId": self.thread_id, "input": inputs, "model": model}
+        if turn_options:
+            params.update(turn_options)
+        result = self.request("turn/start", params)
         self.turn_id = result["turn"]["id"]
         notify(
             {

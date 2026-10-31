@@ -257,6 +257,9 @@ def apply_command(folder, snapshot, command_data):
     if part is None:
         raise WorkspaceError("The command targets a missing component.", "stale_selection")
     if command.type == "parameters":
+        if part.get("editable_definition_kind") == "recipe" and any(command.instance_id in r["output_names"].values() for r in candidate.get("recipe_runs", [])):
+            from backend.v2.component_edits import change_recipe_parameters
+            return change_recipe_parameters(folder, candidate, command.instance_id, command.values)
         if any(command.instance_id in s.get("part_ids", []) for s in candidate.get("scripts", [])):
             from backend.v2.scripts import change_parameters
             return change_parameters(folder, candidate, command.instance_id, command.values)
@@ -414,6 +417,18 @@ def check_new_intersections(folder, before, after, command):
                p["asset_hash"] != previous[p["instance_id"]]["asset_hash"] or
                p["matrix"] != previous[p["instance_id"]]["matrix"]}
     cache = {}
+    transaction = after.get("_component_transaction", {})
+    def ancestors(part):
+        if part["instance_id"] in previous:
+            return {part["instance_id"]}
+        return {identity for identity, outputs in transaction.get("mapping", {}).items()
+                if part["instance_id"] in outputs and identity in previous}
+    def old_shape(identities):
+        result = None
+        for identity in identities:
+            old = shape(previous[identity])
+            result = old if result is None else result.fuse(old)
+        return result
     def shape(part):
         key = (part["instance_id"], part["asset_hash"], tuple(part["matrix"]))
         if key not in cache:
@@ -436,8 +451,8 @@ def check_new_intersections(folder, before, after, command):
             overlap = first.intersect(second).Volume()
             if overlap <= 1e-5:
                 continue
-            old_overlap = (shape(previous[a["instance_id"]]).intersect(shape(previous[b["instance_id"]])).Volume()
-                           if a["instance_id"] in previous and b["instance_id"] in previous else 0)
+            old_a, old_b = ancestors(a), ancestors(b)
+            old_overlap = old_shape(old_a).intersect(old_shape(old_b)).Volume() if old_a and old_b and not old_a.intersection(old_b) else 0
             if overlap > old_overlap + 1e-5:
                 raise WorkspaceError(f"The edit introduces an unexpected intersection between '{a['name']}' and '{b['name']}'.")
 
@@ -447,6 +462,8 @@ def measure_entities(folder, snapshot, first, second):
         part = next((p for p in snapshot["components"] if p["instance_id"] == reference["instance_id"]), None)
         if not part:
             raise WorkspaceError("Measurement component is missing.", "stale_selection")
+        if reference.get("asset_hash") and reference["asset_hash"] != part["asset_hash"]:
+            raise WorkspaceError("Measurement topology changed; inspect the current body.", "stale_selection")
         shape = load_shape(folder, part)
         kind = reference.get("kind", "body")
         if kind != "body":

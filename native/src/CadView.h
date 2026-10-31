@@ -7,6 +7,7 @@
 #include <QSet>
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_TextLabel.hxx>
 #include <V3d_View.hxx>
 #include <MeshVS_Mesh.hxx>
 #include <SelectMgr_EntityOwner.hxx>
@@ -57,11 +58,14 @@ private:
     void initialize();
     void updateSelection();
     void displayInstance(const QString& id);
+    void buildAnnotations();
     Handle(SelectMgr_EntityOwner) pickMeshFace(const QPoint &point);
     Handle(AIS_InteractiveContext) context;
     Handle(V3d_View) view;
     QMap<QString, Handle(AIS_Shape)> shapes;
     QMap<QString, Handle(MeshVS_Mesh)> meshes;
+    QMap<QString, Handle(AIS_TextLabel)> annotations;
+    QHash<QString, QString> annotationOwners;
     QJsonObject document;
     QHash<QString, QSet<QString>> hiddenByDocument;
     QJsonObject currentSelection;

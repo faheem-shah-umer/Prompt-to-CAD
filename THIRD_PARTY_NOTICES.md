@@ -13,3 +13,5 @@ Interface icons use the separately licensed Flaticon UIcons subset credited belo
 ## Interface icons
 
 Uicons by [Flaticon](https://www.flaticon.com/uicons), regular rounded subset from @flaticon/flaticon-uicons 3.3.1. The icon paths are separately licensed under the [Flaticon License](assets/icons/LICENSE); see [provenance](assets/icons/README.md). Attribution is available in Help → Credits.
+
+The paperclip and CAD command glyphs listed in assets/icons/README.md are original Prompt to CAD artwork, covered by the repository licence. Flaticon attribution continues to apply to its existing subset.

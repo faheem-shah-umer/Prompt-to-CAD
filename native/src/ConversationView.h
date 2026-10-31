@@ -1,5 +1,6 @@
 #pragma once
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QScrollArea>
 #include <QSet>
 #include <QHash>
@@ -12,9 +13,11 @@ class ConversationView : public QScrollArea {
     explicit ConversationView(QWidget *parent = nullptr);
     void setMessages(const QJsonArray &messages, const QString &conversation);
     void scrollToLatest();
+    void setDocumentContext(const QJsonObject &document);
     QString plainText() const;
   Q_SIGNALS:
     void anchorClicked(const QUrl &url);
+    void attachmentRequested(const QJsonObject &reference);
   protected:
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *) override;
@@ -28,4 +31,6 @@ class ConversationView : public QScrollArea {
     QSet<QString> expanded;
     QHash<QString, qint64> copiedUntil;
     QString cachedTheme, context;
+    QHash<QString, QString> componentNames;
+    QSet<QString> workingTasks;
 };

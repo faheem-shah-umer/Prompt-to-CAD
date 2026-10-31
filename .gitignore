@@ -26,6 +26,7 @@ tokens.json
 *.p12
 .promptcad/
 .codex/
+/.agents/skills/
 .claude/
 .aws/
 .azure/

@@ -1,4 +1,5 @@
 #include "CadView.h"
+#include "WorkspaceTheme.h"
 #include <QSet>
 #include "MeshSource.h"
 #include <QJsonDocument>
@@ -19,6 +20,9 @@
 #include <BRep_Builder.hxx>
 #include <BRepTools.hxx>
 #include <BRepGProp.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <TCollection_ExtendedString.hxx>
 #include <GProp_GProps.hxx>
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -97,7 +101,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
                 throw std::runtime_error("The geometry asset checksum does not match.");
             if(part.value("representation")=="mesh") {
                 file.seek(0);if(file.size()>100*1024*1024)throw std::runtime_error("Mesh asset exceeds the viewer size limit.");
-                auto asset=QJsonDocument::fromJson(file.readAll()).object();auto mesh=meshPresentation(asset);
+                auto asset=QJsonDocument::fromJson(file.readAll()).object();auto mesh=meshPresentation(asset, part.value("color_override").toArray());
                 auto pose=part.value("matrix").toArray();if(pose.size()!=12)throw std::runtime_error("Invalid mesh placement.");
                 gp_Trsf trsf;trsf.SetValues(pose[0].toDouble(),pose[1].toDouble(),pose[2].toDouble(),pose[3].toDouble(),pose[4].toDouble(),pose[5].toDouble(),pose[6].toDouble(),pose[7].toDouble(),pose[8].toDouble(),pose[9].toDouble(),pose[10].toDouble(),pose[11].toDouble());
                 mesh->SetLocalTransformation(trsf);nextMeshes.insert(id,mesh);continue;
@@ -129,6 +133,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         }
         meshPickOwners.clear();meshHover.Nullify();
         context->RemoveAll(false);
+        annotations.clear(); annotationOwners.clear();
         shapes = next;meshes=nextMeshes;
         auto& hidden = hiddenByDocument[document.value("document_id").toString()];
         QSet<QString> existing;
@@ -136,6 +141,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         for (auto it=meshes.cbegin();it!=meshes.cend();++it) existing.insert(it.key());
         hidden.intersect(existing);
         for (const auto& id : existing) if (!hidden.contains(id)) displayInstance(id);
+        buildAnnotations();
         setSelectionMode(mode);
         currentSelection = {};
         Q_EMIT selectionChanged({});
@@ -230,6 +236,12 @@ void CadView::setVisibleInstances(const QStringList& ids, bool visible) {
             if (shapes.contains(id)) context->Erase(shapes[id], false);
             else context->Erase(meshes[id], false);
         }
+        for (auto it=annotations.cbegin();it!=annotations.cend();++it)
+            if (annotationOwners.value(it.key()) == id) {
+                if (visible) context->Display(it.value(), false);
+                else context->Erase(it.value(), false);
+                context->Deactivate(it.value());
+            }
     }
     if (!meshHover.IsNull()) {
         if (!context->IsSelected(meshHover)) meshHover->Unhilight(context->MainPrsMgr(), 0);
@@ -456,6 +468,11 @@ void CadView::isolateInstances(const QStringList& ids) {
             found = true;
             hidden.remove(id);
             displayInstance(id);
+            for (auto it=annotations.cbegin();it!=annotations.cend();++it)
+                if (annotationOwners.value(it.key()) == id) {
+                    context->Display(it.value(), false);
+                    context->Deactivate(it.value());
+                }
         } else others << id;
     }
     if (found) setVisibleInstances(others, false);
@@ -467,8 +484,80 @@ void CadView::setShading(bool edges){if(context.IsNull())return;context->Default
 void CadView::setLightTheme(bool light) {
     lightTheme = light;
     if (view.IsNull()) return;
-    view->SetBgGradientColors(light ? Quantity_Color(0.95, 0.95, 0.96, Quantity_TOC_RGB) : Quantity_Color(0.14, 0.14, 0.16, Quantity_TOC_RGB),
-                              light ? Quantity_Color(0.85, 0.87, 0.90, Quantity_TOC_RGB) : Quantity_Color(0.09, 0.09, 0.11, Quantity_TOC_RGB), Aspect_GFM_VER, false);
+    for (const auto& label : annotations) {
+        label->SetColor(light ? Quantity_NOC_GRAY20 : Quantity_NOC_GRAY90);
+        context->Redisplay(label, false);
+    }
+    const auto colors = workspaceColors(light);
+    const Quantity_Color selectionColor(colors.selection.redF(), colors.selection.greenF(), colors.selection.blueF(), Quantity_TOC_sRGB);
+    for (auto type : {Prs3d_TypeOfHighlight_Dynamic, Prs3d_TypeOfHighlight_LocalDynamic,
+                      Prs3d_TypeOfHighlight_Selected, Prs3d_TypeOfHighlight_LocalSelected})
+        context->HighlightStyle(type)->SetColor(selectionColor);
+    context->HilightSelected(false);
+    const auto background = colors.canvas;
+    const Quantity_Color color(background.redF(), background.greenF(), background.blueF(), Quantity_TOC_sRGB);
+    view->SetBackgroundColor(color);
+    view->SetBgGradientColors(color, color, Aspect_GFM_VER, false);
     view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, light ? Quantity_NOC_GRAY40 : Quantity_NOC_GRAY80, 0.08, V3d_ZBUFFER);
     view->Redraw();
+}
+
+void CadView::buildAnnotations() {
+    for (const auto& value : document.value("engineering").toArray()) {
+        const auto record = value.toObject();
+        if (record.value("status").toString() != "current") continue;
+        const auto owner = record.value("instance_id").toString();
+        QJsonObject part;
+        for (const auto& entry : document.value("components").toArray())
+            if (entry.toObject().value("instance_id").toString() == owner) { part = entry.toObject(); break; }
+        if (part.isEmpty()) continue;
+        const auto anchor = record.value("anchor").toObject();
+        const auto kind = anchor.value("kind").toString("body");
+        gp_Pnt point;
+        const auto position = anchor.value("position").toArray();
+        if (kind != "body" && anchor.value("asset_hash") != part.value("asset_hash")) continue;
+        if (position.size() == 3) point.SetCoord(position[0].toDouble(), position[1].toDouble(), position[2].toDouble());
+        else if (kind != "body" && shapes.contains(owner)) {
+            TopTools_IndexedMapOfShape map;
+            TopExp::MapShapes(shapes[owner]->Shape(), topologyKind(kind), map);
+            const int index = anchor.value("index").toInt();
+            if (index < 1 || index > map.Extent()) continue;
+            Bnd_Box box; BRepBndLib::Add(map(index), box);
+            if (box.IsVoid()) continue;
+            double x1,y1,z1,x2,y2,z2; box.Get(x1,y1,z1,x2,y2,z2);
+            point.SetCoord((x1+x2)/2, (y1+y2)/2, (z1+z2)/2);
+        } else {
+            const auto bounds = part.value("metrics").toObject().value("bounds_mm").toArray();
+            if (bounds.size() != 2) continue;
+            auto low = bounds[0].toArray(), high = bounds[1].toArray();
+            point.SetCoord((low[0].toDouble()+high[0].toDouble())/2, (low[1].toDouble()+high[1].toDouble())/2,
+                           (low[2].toDouble()+high[2].toDouble())/2);
+        }
+        const auto pose = part.value("matrix").toArray();
+        if (pose.size() != 12) continue;
+        gp_Trsf transform;
+        transform.SetValues(pose[0].toDouble(),pose[1].toDouble(),pose[2].toDouble(),pose[3].toDouble(),
+                            pose[4].toDouble(),pose[5].toDouble(),pose[6].toDouble(),pose[7].toDouble(),
+                            pose[8].toDouble(),pose[9].toDouble(),pose[10].toDouble(),pose[11].toDouble());
+        point.Transform(transform);
+        QString text = record.value("text").toString();
+        if (record.value("kind") == "dimension") {
+            text += (text.isEmpty() ? "" : ": ") + QString::number(record.value("nominal").toDouble(), 'g', 8);
+            const auto tolerance = record.value("tolerance").toObject();
+            if (tolerance.value("mode") == "plus_minus")
+                text += " +" + QString::number(tolerance.value("plus").toDouble()) + " / −" + QString::number(tolerance.value("minus").toDouble());
+            else if (tolerance.value("mode") == "limits")
+                text += " [" + QString::number(tolerance.value("lower").toDouble()) + ", " + QString::number(tolerance.value("upper").toDouble()) + "]";
+            if (record.value("units").toString("mm") != "unitless") text += " " + record.value("units").toString("mm");
+            if (record.value("verification") == "declared_unverified") text += " (declared)";
+        }
+        if (text.isEmpty()) continue;
+        Handle(AIS_TextLabel) label = new AIS_TextLabel;
+        label->SetText(TCollection_ExtendedString(text.left(160).toUtf8().constData(), true));
+        label->SetPosition(point); label->SetHeight(13);
+        label->SetColor(lightTheme ? Quantity_NOC_GRAY20 : Quantity_NOC_GRAY90);
+        const auto identity = record.value("id").toString();
+        annotations[identity] = label; annotationOwners[identity] = owner;
+        if (isInstanceVisible(owner)) { context->Display(label, false); context->Deactivate(label); }
+    }
 }

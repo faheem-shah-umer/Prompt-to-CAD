@@ -7,6 +7,8 @@
 #include <QFrame>
 #include <QLabel>
 #include <QJsonObject>
+#include <QImageReader>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QTextBrowser>
@@ -40,7 +42,7 @@ class MessageText : public QTextBrowser {
         document()->setDefaultFont(qApp->font());
         document()->setDefaultStyleSheet("p {margin-top:0; margin-bottom:12px; line-height:150%;} "
                                         "li {margin-bottom:7px;} pre,code {font-family:Consolas;} "
-                                        "a {color:" + QString(lightWorkspaceTheme() ? "#216650" : "#abd9c6") + ";}");
+                                        "a {color:" + workspaceColors().link.name() + ";}");
         auto safe = text;
         safe.replace("![", "\\![");
         auto features = QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub);
@@ -99,17 +101,35 @@ QString ConversationView::plainText() const {
         result << value.toObject().value("content").toString();
     return result.join('\n');
 }
+void ConversationView::setDocumentContext(const QJsonObject &document) {
+    QHash<QString, QString> names;
+    for (const auto &value : document.value("components").toArray()) {
+        const auto part = value.toObject();
+        names[part.value("instance_id").toString()] = part.value("name").toString("Component");
+    }
+    if (componentNames != names) { componentNames = names; cachedTheme.clear(); }
+}
 void ConversationView::setMessages(const QJsonArray &messages, const QString &conversation) {
     if (context != conversation) {
         context = conversation;
         following = true;
         expanded.clear();
+        workingTasks.clear();
         copiedUntil.clear();
         cachedTheme.clear();
     }
     const auto theme = qApp->property("workspaceTheme").toString();
     if (entries == messages && cachedTheme == theme)
         return;
+    QSet<QString> nextWorking;
+    for (const auto &value : messages) {
+        const auto message = value.toObject();
+        if (message.value("working").toBool()) nextWorking.insert(message.value("task_id").toString());
+    }
+    for (const auto &id : nextWorking)
+        if (!id.isEmpty() && !workingTasks.contains(id)) expanded.insert(id);
+    for (const auto &id : workingTasks) if (!nextWorking.contains(id)) expanded.remove(id);
+    workingTasks = nextWorking;
     entries = messages;
     cachedTheme = theme;
     rebuild();
@@ -133,8 +153,8 @@ void ConversationView::keyPressEvent(QKeyEvent *event) {
 void ConversationView::resizeEvent(QResizeEvent *event) {
     QScrollArea::resizeEvent(event);
     latest->move(width()/2-16,height()-44);
-    for (auto *bubble : widget() ? widget()->findChildren<QFrame *>("messageBubble") : QList<QFrame *>{})
-        bubble->setMaximumWidth(bubble->property("user").toBool() ? int(viewport()->width() * 0.87)
+    for (auto *turn : widget() ? widget()->findChildren<QWidget *>("messageTurn") : QList<QWidget *>{})
+        turn->setMaximumWidth(turn->property("user").toBool() ? int(viewport()->width() * 0.94)
                                                                                : viewport()->width() - 12);
 }
 void ConversationView::rebuild() {
@@ -166,11 +186,19 @@ void ConversationView::rebuild() {
         horizontal->setContentsMargins(0, 0, 0, 0);
         if (user)
             horizontal->addStretch(1);
+        auto *turn = new QWidget;
+        turn->setObjectName("messageTurn");
+        turn->setProperty("user", user);
+        turn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        turn->setMaximumWidth(user ? int(viewport()->width() * 0.94) : viewport()->width() - 12);
+        auto *turnLayout = new QVBoxLayout(turn);
+        turnLayout->setContentsMargins(0, 0, 0, 0);
+        turnLayout->setSpacing(4);
         auto *bubble = new QFrame;
         bubble->setObjectName("messageBubble");
         bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
         bubble->setProperty("user", user);
-        bubble->setMaximumWidth(user ? int(viewport()->width() * 0.87) : viewport()->width() - 12);
+        turnLayout->addWidget(bubble);
         auto *body = new QVBoxLayout(bubble);
         body->setContentsMargins(user ? 14 : 0, user ? 12 : 0, user ? 14 : 0, user ? 12 : 0);
         body->setSpacing(10);
@@ -179,9 +207,11 @@ void ConversationView::rebuild() {
         const auto reportedName = agent.value("display_name").toString().trimmed();
         const auto assistantName = !message.contains("agent") ? QString("Codex")
                                     : reportedName.isEmpty() ? QString("Assistant") : reportedName;
-        auto *author = new QLabel(user ? "You" : assistantName);
-        author->setObjectName("messageAuthor");
-        body->addWidget(author);
+        if (!user) {
+            auto *author = new QLabel(assistantName);
+            author->setObjectName("messageAuthor");
+            body->addWidget(author);
+        }
         const auto events = message.value("activity").toArray();
         if (message.value("working").toBool() || !events.isEmpty() || message.contains("elapsed_seconds")) {
             const auto key = message.value("task_id").toString(QString::number(index));
@@ -192,6 +222,8 @@ void ConversationView::rebuild() {
                                 : message.contains("elapsed_seconds")
                                       ? "Worked for " + duration(message.value("elapsed_seconds").toDouble())
                                       : "View activity");
+            toggle->setAccessibleName(message.value("working").toBool() ? "Current task activity" : "Completed task activity");
+            toggle->setToolTip("Expand or collapse observable tool activity");
             toggle->setCheckable(true);
             toggle->setChecked(expanded.contains(key));
             toggle->setArrowType(toggle->isChecked() ? Qt::DownArrow : Qt::RightArrow);
@@ -229,6 +261,22 @@ void ConversationView::rebuild() {
             connect(reply, &QTextBrowser::anchorClicked, this, &ConversationView::anchorClicked);
             body->addWidget(reply);
         }
+        for (const auto& value : message.value("attachments").toArray()) {
+            const auto reference = value.toObject();
+            if (!reference.value("available").toBool() || reference.value("local_path").toString().isEmpty()) {
+                auto *missing = new QLabel("⚠ " + reference.value("name").toString() + " · image unavailable");
+                missing->setTextFormat(Qt::PlainText); missing->setWordWrap(true); body->addWidget(missing); continue;
+            }
+            auto *image = new QToolButton;
+            image->setObjectName("referenceImage"); image->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            QImageReader reader(reference.value("local_path").toString()); reader.setScaledSize(reader.size().scaled(160, 100, Qt::KeepAspectRatio));
+            const auto preview = reader.read();
+            if (preview.isNull()) { image->setText("Image unavailable"); image->setEnabled(false); }
+            else { image->setIcon(QPixmap::fromImage(preview)); image->setIconSize(preview.size()); image->setText(reference.value("name").toString().left(30)); }
+            image->setToolTip("Attach this preserved image to a new request"); image->setAccessibleName("Reuse reference " + reference.value("name").toString());
+            connect(image, &QToolButton::clicked, this, [this, reference] { Q_EMIT attachmentRequested(reference); });
+            body->addWidget(image, 0, Qt::AlignLeft);
+        }
         const auto change = message.value("change").toObject();
         if (!change.isEmpty()) {
             auto *card = new QFrame;
@@ -238,14 +286,44 @@ void ConversationView::rebuild() {
             links->setWordWrap(true);
             links->setTextFormat(Qt::RichText);
             const auto revision = change.value("result_revision_id").toString();
-            QString parts;
-            for (auto component : change.value("affected_components").toArray()) {
-                const auto id = component.toString().toHtmlEscaped();
-                parts += "<a href='component:" + id + "'>" + id + "</a>  ";
+            auto names = [this](const QJsonArray &components, bool link) {
+                QStringList labels;
+                for (const auto &value : components) {
+                    const auto id = value.toString();
+                    const auto name = componentNames.value(id);
+                    if (name.isEmpty()) continue;
+                    labels << (link ? "<a href='component:" + QString::fromLatin1(QUrl::toPercentEncoding(id)) +
+                        "'>" + name.toHtmlEscaped() + "</a>" : name.toHtmlEscaped());
+                }
+                return labels.join(", ");
+            };
+            QString changes = "<b>Design updated</b>";
+            const auto affected = change.value("affected_components").toArray();
+            if (!affected.isEmpty()) changes += "<p>" + names(affected, true) + "</p>";
+            for (const auto &field : {qMakePair("created_components", "Created"),
+                                     qMakePair("replaced_components", "Updated"),
+                                     qMakePair("consumed_components", "Removed")}) {
+                const auto items = change.value(field.first).toArray();
+                if (!items.isEmpty()) changes += "<p>" + QString(field.second) + " · " +
+                    QString::number(items.size()) + " component(s)" +
+                    (names(items, false).isEmpty() ? QString() : " · " + names(items, false)) + "</p>";
             }
-            links->setText("<b>Design updated</b><p>" + parts + "</p><p>Geometry and task scope verified.</p>"
-                           "<a href='revision:" + revision.toHtmlEscaped() + "'>Restore revision " +
-                           revision.left(8).toHtmlEscaped() + "</a>");
+            const auto validation = change.value("validation").toObject();
+            const auto geometry = validation.value("geometry").toObject();
+            const auto scope = validation.value("scope").toObject();
+            const auto engineering = validation.value("engineering").toObject();
+            if (geometry.contains("passed")) changes += "<p>Geometry · " +
+                QString(geometry.value("passed").toBool() ? "passed" : "check failed") + "</p>";
+            if (scope.contains("passed")) changes += "<p>Task scope · " +
+                QString(scope.value("passed").toBool() ? "passed" : "check failed") + "</p>";
+            if (scope.contains("unrelated_components_checked")) changes += "<p>" +
+                QString::number(scope.value("unrelated_components_checked").toInt()) + " unrelated component(s) checked</p>";
+            if (engineering.contains("records")) changes += "<p>" +
+                QString::number(engineering.value("records").toInt()) + " engineering record(s) checked</p>";
+            if (validation.isEmpty()) changes += "<p>Validation details were not retained for this older turn.</p>";
+            if (!revision.isEmpty()) changes += "<p><a href='revision:" +
+                QString::fromLatin1(QUrl::toPercentEncoding(revision)) + "'>Restore this revision</a></p>";
+            links->setText(changes);
             connect(links, &QLabel::linkActivated, this, [this](const QString &url) { Q_EMIT anchorClicked(QUrl(url)); });
             cardLayout->addWidget(links);
             body->addWidget(card);
@@ -276,9 +354,9 @@ void ConversationView::rebuild() {
                         }
                 });
             });
-            body->addWidget(copy, 0, user ? Qt::AlignRight : Qt::AlignLeft);
+            turnLayout->addWidget(copy, 0, user ? Qt::AlignRight : Qt::AlignLeft);
         }
-        horizontal->addWidget(bubble, user ? 0 : 1);
+        horizontal->addWidget(turn, user ? 0 : 1);
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);
