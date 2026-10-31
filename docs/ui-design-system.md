@@ -68,3 +68,7 @@ The requested native launch inspection confirmed an empty workspace and the upda
 No application tests were run. Dark/light interaction matrices, laptop/narrow layouts, Windows scaling, screen-reader paths, loaded-model properties, provider flows and task execution remain unverified at runtime. A requested independent source review could not complete because the reviewer agent reached its usage limit; it is not counted as a passed review. Build diagnostics include optional Vulkan headers absent and existing deprecated-action/shadow warnings.
 
 API references consulted: [Qt events](https://doc.qt.io/qt-6/qevent.html), [Qt style hints](https://doc.qt.io/qt-6/qstyle.html), [OCCT 7.8.1 interaction/highlight API](https://github.com/Open-Cascade-SAS/OCCT/blob/V7_8_1/src/AIS/AIS_InteractiveContext.hxx).
+
+## Gallery alignment follow-up
+
+The linked static gallery is the approved visual target. The subsequent native pass consolidates application menus/title into one header, uses a single command row, refines manager visibility/summary, separates button roles, and aligns settings organization more closely. See [screen-by-screen alignment and remaining differences](ui-gallery-alignment.md). The gallery remains static reference material; neither it nor this source report proves unoperated states.

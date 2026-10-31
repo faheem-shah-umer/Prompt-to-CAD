@@ -51,12 +51,20 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel { background:transparent; }
         QLabel#muted, QLabel#settingsCaption { color:@secondary@; }
         QLabel#panelTitle { font-weight:600; padding:4px 0; }
+        QLabel#applicationBrand { font-weight:600; }
+        QLabel#conversationDocument, QLabel#composerHint { color:@secondary@; font-size:12px; }
+        QLabel#usageTotal { font-size:24px; font-weight:600; }
+        QLabel#settingsCardTitle { font-size:17px; font-weight:600; }
+        QLabel#settingsAccountName { font-weight:600; }
         QLabel#managerSummary { color:@secondary@; padding:12px 4px; border-top:1px solid @border@; font-size:12px; }
         QTextBrowser#selectionProperties { background:transparent; border:0; }
-        QTabBar#documentTabs::tab { min-height:24px; padding:6px 12px; }
+        QTabBar#documentTabs::tab { min-height:24px; padding:8px 16px; border:0; border-top-left-radius:8px; border-top-right-radius:8px; }
+        QTabBar#documentTabs::tab:selected { background:@raised@; border:0; }
         QLabel#pageTitle { font-size:24px; font-weight:600; }
         QLabel#sectionTitle { font-size:17px; font-weight:600; }
-        QMenuBar, QToolBar, QStatusBar { background:@base@; border:0; padding:4px; }
+        QMenuBar, QToolBar, QStatusBar { background:@base@; border:0; padding:0; }
+        QStatusBar { min-height:28px; border-top:1px solid @border@; font-size:12px; }
+        QStatusBar QLabel { font-size:12px; color:@secondary@; padding:0 8px; }
         QMenuBar::item { padding:6px 8px; border-radius:4px; }
         QMenuBar::item:selected { background:@hover@; }
         QMenuBar::item:pressed { background:@pressed@; }
@@ -70,21 +78,24 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         #rail QPushButton { border:2px solid transparent; background:transparent; padding:6px 0; }
         #rail QPushButton:hover:enabled { background:@hover@; }
         #rail QPushButton:pressed:enabled { background:@pressed@; }
-        #rail QPushButton:focus { border-color:@focus@; }
+        #rail QPushButton:focus[keyboardFocus="true"] { border-color:@focus@; }
         #conversationPane { background:@base@; border-left:1px solid @border@; }
         #cadManager { background:@base@; border-right:1px solid @border@; }
         #documentHeader { background:@base@; border-bottom:1px solid @border@; }
-        QTabWidget#commandManager, #commandManager QToolBar { background:@base@; }
-        #commandManager::pane { border-bottom:1px solid @border@; }
+        QWidget#commandManager { background:@base@; border-top:1px solid @border@; border-bottom:1px solid @border@; }
+        #commandManager QToolBar { background:@base@; border:0; spacing:4px; }
+        QWidget#viewportPane { background:@canvas@; }
         #navigation QPushButton { text-align:left; }
         QPushButton { padding:6px 10px; }
         QToolButton { padding:4px; }
-        QPushButton, QToolButton { background:transparent; border:2px solid transparent; border-radius:@controlRadius@px; }
+        QPushButton { background:@raised@; border:1px solid @border@; border-radius:@controlRadius@px; min-height:20px; }
+        QToolButton { background:transparent; border:1px solid transparent; border-radius:@controlRadius@px; }
+        QPushButton[workspaceIconOnly="true"], QPushButton[controlRole="quiet"], QPushButton#quietButton, QPushButton#usageBadge, QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { background:transparent; border-color:transparent; }
         QPushButton[workspaceIconOnly="true"], QToolButton[workspaceIconOnly="true"] { padding:4px; }
         QPushButton:hover:enabled, QToolButton:hover:enabled { background:@hover@; }
         QPushButton:pressed:enabled, QToolButton:pressed:enabled { background:@pressed@; }
         QPushButton:checked, QToolButton:checked { background:@selected@; }
-        QPushButton:focus, QToolButton:focus { border-color:@focus@; }
+        QPushButton:focus[keyboardFocus="true"], QToolButton:focus[keyboardFocus="true"] { border-color:@focus@; }
         QPushButton:disabled, QToolButton:disabled { color:@disabled@; background:transparent; border-color:transparent; }
         QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect { color:@onAction@; background:@action@; font-weight:600; }
         QPushButton#primaryButton:hover:enabled, QPushButton#connectChatGPT:hover:enabled, QPushButton#onboardingConnect:hover:enabled { background:@actionHover@; }
@@ -97,12 +108,15 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         #rail QPushButton#accountBadge { color:@text@; background:@raised@; border-radius:16px; padding:0; font-weight:600; }
         #rail QPushButton#accountBadge:hover:enabled { background:@hover@; }
         #rail QPushButton#accountBadge:pressed:enabled { background:@pressed@; }
-        #rail QPushButton#accountBadge:focus { border-color:@focus@; }
-        QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@raised@; border:2px solid @border@; border-radius:8px; padding:6px; selection-background-color:@selected@; selection-color:@text@; }
-        QTreeWidget:focus, QListWidget:focus, QPlainTextEdit:focus, QLineEdit:focus { border-color:@focus@; }
+        #rail QPushButton#accountBadge:focus[keyboardFocus="true"] { border-color:@focus@; }
+        QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@raised@; border:1px solid @border@; border-radius:8px; padding:8px; selection-background-color:@selected@; selection-color:@text@; }
+        QTreeWidget:focus[keyboardFocus="true"], QListWidget:focus[keyboardFocus="true"], QPlainTextEdit:focus, QLineEdit:focus { border-color:@focus@; }
+        QLineEdit { min-height:20px; padding:6px 8px; }
         QTreeWidget:disabled, QListWidget:disabled, QPlainTextEdit:disabled, QLineEdit:disabled { color:@disabled@; }
         QTreeWidget#modelTree, QTreeWidget#projectTree { background:transparent; border:2px solid transparent; }
-        QTreeWidget#modelTree:focus, QTreeWidget#projectTree:focus { border-color:@focus@; }
+        QTreeWidget#modelTree:focus[keyboardFocus="true"], QTreeWidget#projectTree:focus[keyboardFocus="true"] { border-color:@focus@; }
+        QTreeWidget#modelTree { padding:8px 0; border-radius:0; border-top:1px solid @border@; }
+        QTreeWidget#projectTree { padding:0; }
         QScrollArea#conversationHistory, #chatContents { background:transparent; border:0; }
         QFrame#messageBubble { background:transparent; border:0; }
         QFrame#messageBubble[user="true"] { background:@selected@; border:0; border-radius:16px; }
@@ -139,12 +153,20 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel#modelSearchEmpty { color:@secondary@; padding:8px; }
         QFrame#composerFrame { background:@raised@; border:1px solid @border@; border-radius:12px; }
         QFrame#settingsCard { background:transparent; border:0; border-top:1px solid @border@; border-radius:0; }
+        QFrame#sectionRule { color:@border@; background:@border@; border:0; min-height:1px; max-height:1px; }
+        QLabel#connectionError { color:@danger@; }
+        QToolButton#apiAccessDisclosure { border-top:1px solid @border@; border-radius:0; text-align:left; padding:16px 0; font-weight:600; }
+        QPushButton#disconnectAccount { background:transparent; border-color:transparent; color:@link@; }
         QFrame#composerFrame QPlainTextEdit { background:transparent; border:2px solid transparent; padding:4px; }
-        QFrame#composerFrame QPlainTextEdit:focus { border-color:@focus@; }
+        QFrame#composerFrame QPlainTextEdit:focus { border-color:transparent; }
+        QPushButton#selectionChip { background:@selected@; border:1px solid transparent; padding:4px 8px; text-align:left; }
         QFrame#composerFrame QComboBox { background:transparent; padding:4px; }
         QFrame#composerFrame QPushButton#primaryButton { border-radius:8px; padding:4px; }
+        QWidget#settingsSidebar { background:@navigation@; border-right:1px solid @border@; }
+        QFrame#settingsHeader { border-bottom:1px solid @border@; }
+        QFrame#settingsActions { border-top:1px solid @border@; }
         QListWidget#settingsNavigation { background:transparent; border:2px solid transparent; padding:0; }
-        QListWidget#settingsNavigation:focus { border-color:@focus@; }
+        QListWidget#settingsNavigation:focus[keyboardFocus="true"] { border-color:@focus@; }
         QListWidget#settingsNavigation::item { padding:10px 12px; margin:2px 0; border-radius:8px; }
         QListWidget#settingsNavigation::item:selected { background:@selected@; color:@text@; }
         QListWidget#settingsNavigation::item:hover { background:@hover@; }
@@ -152,17 +174,24 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QTreeWidget::item:selected { background:@selected@; color:@text@; }
         QTreeWidget::item:hover { background:@hover@; }
         QTreeWidget#modelTree::item:selected { border-left-color:@selection@; }
-        QComboBox, QDoubleSpinBox { background:@raised@; border:2px solid @border@; border-radius:8px; padding:4px 6px; }
-        QComboBox:focus, QDoubleSpinBox:focus { border-color:@focus@; }
+        QComboBox, QDoubleSpinBox { background:@raised@; border:1px solid @border@; border-radius:8px; padding:6px 8px; }
+        QComboBox#modelPicker { background:transparent; border:1px solid transparent; padding:4px 0; }
+        QComboBox#modelPicker::drop-down { width:0; }
+        #viewportPane QComboBox { background:transparent; border-color:transparent; }
+        QComboBox:focus[keyboardFocus="true"], QDoubleSpinBox:focus { border-color:@focus@; }
         QComboBox:hover:enabled, QDoubleSpinBox:hover:enabled { background:@hover@; }
         QComboBox:disabled, QDoubleSpinBox:disabled { color:@disabled@; background:@base@; }
         QComboBox::drop-down { border:0; width:20px; }
+        QComboBox::down-arrow { image:url(:/icons/@chevron@.svg); width:12px; height:12px; }
+        QComboBox#modelPicker::down-arrow { image:none; }
+        QToolButton::menu-indicator { image:url(:/icons/@chevron@.svg); width:10px; height:10px; }
         QComboBox QAbstractItemView { background:@overlay@; color:@text@; selection-background-color:@selected@; }
         QTabWidget::pane { border:0; border-top:1px solid @border@; }
         QTabBar::tab { background:transparent; padding:8px 10px; color:@secondary@; border-bottom:2px solid transparent; }
         QTabBar::tab:hover:enabled { background:@hover@; }
         QTabBar::tab:selected { color:@text@; border-bottom-color:@focus@; }
         QTabBar::tab:disabled { color:@disabled@; }
+        #managerTabs QTabBar::tab { padding:10px 4px; font-size:12px; }
         QHeaderView::section { background:@base@; border:0; padding:6px; }
         QSplitter::handle { background:@base@; }
         QSplitter::handle:hover { background:@border@; }
@@ -174,7 +203,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
     )");
     for (const auto &entry : {
              qMakePair("@base@", c.base), qMakePair("@navigation@", c.navigation),
-             qMakePair("@raised@", c.raised), qMakePair("@overlay@", c.overlay),
+             qMakePair("@raised@", c.raised), qMakePair("@overlay@", c.overlay), qMakePair("@canvas@", c.canvas),
              qMakePair("@text@", c.text), qMakePair("@secondary@", c.secondary),
              qMakePair("@disabled@", c.disabled), qMakePair("@border@", c.border),
              qMakePair("@hover@", c.hover), qMakePair("@pressed@", c.pressed),
@@ -184,6 +213,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
              qMakePair("@onAction@", c.onAction), qMakePair("@selection@", c.selection),
              qMakePair("@danger@", c.danger), qMakePair("@warning@", c.warning)})
         css.replace(entry.first, entry.second.name());
+    css.replace("@chevron@", lightWorkspaceTheme() ? "chevron-light" : "chevron-dark");
     css.replace("@size@", QString::number(qMax(12, textSize)));
     css.replace("@controlRadius@", QString::number(WorkspaceMetrics::ControlRadius));
     css.replace("@popupRadius@", QString::number(WorkspaceMetrics::PopupRadius));

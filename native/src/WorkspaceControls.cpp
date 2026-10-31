@@ -1,5 +1,6 @@
 #include "WorkspaceControls.h"
 #include "WorkspaceTheme.h"
+#include "WorkspaceIcons.h"
 #include <QAbstractButton>
 #include <QApplication>
 #include <QDragEnterEvent>
@@ -10,6 +11,7 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QFrame>
+#include <QFocusEvent>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLabel>
@@ -23,8 +25,10 @@
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QPainter>
+#include <QPolygon>
 #include <QStyleOptionComboBox>
 #include <QStylePainter>
+#include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -156,7 +160,11 @@ void ModelPicker::paintEvent(QPaintEvent *) {
   option.currentText.clear();
   QStylePainter painter(this);
   painter.drawComplexControl(QStyle::CC_ComboBox, option);
-  const auto area = style()->subControlRect(QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxEditField, this);
+  auto area = rect().adjusted(8, 0, -26, 0);
+  const auto chevronColor = isEnabled() ? workspaceColors().secondary : workspaceColors().disabled;
+  painter.setPen(QPen(chevronColor, 1.5));
+  const int right = width() - 10, middle = height() / 2;
+  painter.drawPolyline(QPolygon{QPoint(right - 8, middle - 2), QPoint(right - 4, middle + 2), QPoint(right, middle - 2)});
   const auto label = currentText().isEmpty() ? placeholderText() : currentText();
   const auto effort = property("effortCaption").toString();
   const auto suffixWidth = effort.isEmpty() ? 0 : qMin(fontMetrics().horizontalAdvance(effort), area.width() / 2);
@@ -305,10 +313,29 @@ namespace {
 class Interaction : public QObject {
 public:
   using QObject::QObject;
+  void focusState(QWidget *widget, bool visible) {
+    if (!widget || widget->property("keyboardFocus").toBool() == visible) return;
+    widget->setProperty("keyboardFocus", visible);
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+    widget->update();
+  }
   bool eventFilter(QObject *object, QEvent *event) override {
     auto *widget = qobject_cast<QWidget *>(object);
     if (!widget)
       return false;
+    if (event->type() == QEvent::KeyPress) {
+      keyboardNavigation = true;
+      focusState(QApplication::focusWidget(), true);
+    } else if (event->type() == QEvent::MouseButtonPress) {
+      keyboardNavigation = false;
+      focusState(QApplication::focusWidget(), false);
+      focusState(widget, false);
+    } else if (event->type() == QEvent::FocusIn) {
+      const auto reason = static_cast<QFocusEvent *>(event)->reason();
+      focusState(widget, keyboardNavigation || reason == Qt::TabFocusReason ||
+                 reason == Qt::BacktabFocusReason || reason == Qt::ShortcutFocusReason);
+    }
     if (event->type() == QEvent::Polish ||
         event->type() == QEvent::EnabledChange) {
       if (qobject_cast<QAbstractButton *>(widget) ||
@@ -351,6 +378,8 @@ public:
     }
     return false;
   }
+private:
+  bool keyboardNavigation = false;
 };
 } // namespace
 void installWorkspaceInteraction() {
@@ -408,9 +437,30 @@ QSplitter *workspaceSplitter(Qt::Orientation orientation, QWidget *parent) {
 }
 
 namespace {
+class VisibilityDelegate : public QStyledItemDelegate {
+public:
+  using QStyledItemDelegate::QStyledItemDelegate;
+  void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+    if (index.column() != 1 || !index.data(Qt::CheckStateRole).isValid()) {
+      QStyledItemDelegate::paint(painter, option, index);
+      return;
+    }
+    auto cell = option;
+    initStyleOption(&cell, index);
+    cell.features &= ~QStyleOptionViewItem::HasCheckIndicator;
+    cell.text.clear();
+    const auto *style = cell.widget ? cell.widget->style() : QApplication::style();
+    style->drawControl(QStyle::CE_ItemViewItem, &cell, painter, cell.widget);
+    const bool visible = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+    const auto icon = workspaceIcon(visible ? "eye" : "eye-off");
+    icon.paint(painter, QRect(option.rect.center() - QPoint(8, 8), QSize(16, 16)));
+  }
+};
 class ModelTree : public QTreeWidget {
 public:
-  using QTreeWidget::QTreeWidget;
+  explicit ModelTree(QWidget *parent) : QTreeWidget(parent) {
+    setItemDelegateForColumn(1, new VisibilityDelegate(this));
+  }
 protected:
   void mousePressEvent(QMouseEvent *event) override {
     auto *item = itemAt(event->position().toPoint());
@@ -437,7 +487,7 @@ protected:
     QPainter painter(this);
     painter.setFont(font());
     painter.setPen(palette().color(QPalette::WindowText));
-    painter.drawText(contentsRect(), Qt::AlignLeft | Qt::AlignVCenter,
+    painter.drawText(contentsRect(), alignment(),
                      fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
   }
 };

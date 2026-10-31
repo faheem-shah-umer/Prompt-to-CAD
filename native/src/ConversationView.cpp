@@ -126,6 +126,8 @@ void ConversationView::setMessages(const QJsonArray &messages, const QString &co
         const auto message = value.toObject();
         if (message.value("working").toBool()) nextWorking.insert(message.value("task_id").toString());
     }
+    for (const auto &id : nextWorking)
+        if (!id.isEmpty() && !workingTasks.contains(id)) expanded.insert(id);
     for (const auto &id : workingTasks) if (!nextWorking.contains(id)) expanded.remove(id);
     workingTasks = nextWorking;
     entries = messages;
@@ -151,8 +153,8 @@ void ConversationView::keyPressEvent(QKeyEvent *event) {
 void ConversationView::resizeEvent(QResizeEvent *event) {
     QScrollArea::resizeEvent(event);
     latest->move(width()/2-16,height()-44);
-    for (auto *bubble : widget() ? widget()->findChildren<QFrame *>("messageBubble") : QList<QFrame *>{})
-        bubble->setMaximumWidth(bubble->property("user").toBool() ? int(viewport()->width() * 0.87)
+    for (auto *turn : widget() ? widget()->findChildren<QWidget *>("messageTurn") : QList<QWidget *>{})
+        turn->setMaximumWidth(turn->property("user").toBool() ? int(viewport()->width() * 0.94)
                                                                                : viewport()->width() - 12);
 }
 void ConversationView::rebuild() {
@@ -184,11 +186,19 @@ void ConversationView::rebuild() {
         horizontal->setContentsMargins(0, 0, 0, 0);
         if (user)
             horizontal->addStretch(1);
+        auto *turn = new QWidget;
+        turn->setObjectName("messageTurn");
+        turn->setProperty("user", user);
+        turn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        turn->setMaximumWidth(user ? int(viewport()->width() * 0.94) : viewport()->width() - 12);
+        auto *turnLayout = new QVBoxLayout(turn);
+        turnLayout->setContentsMargins(0, 0, 0, 0);
+        turnLayout->setSpacing(4);
         auto *bubble = new QFrame;
         bubble->setObjectName("messageBubble");
         bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
         bubble->setProperty("user", user);
-        bubble->setMaximumWidth(user ? int(viewport()->width() * 0.87) : viewport()->width() - 12);
+        turnLayout->addWidget(bubble);
         auto *body = new QVBoxLayout(bubble);
         body->setContentsMargins(user ? 14 : 0, user ? 12 : 0, user ? 14 : 0, user ? 12 : 0);
         body->setSpacing(10);
@@ -344,9 +354,9 @@ void ConversationView::rebuild() {
                         }
                 });
             });
-            body->addWidget(copy, 0, user ? Qt::AlignRight : Qt::AlignLeft);
+            turnLayout->addWidget(copy, 0, user ? Qt::AlignRight : Qt::AlignLeft);
         }
-        horizontal->addWidget(bubble, user ? 0 : 1);
+        horizontal->addWidget(turn, user ? 0 : 1);
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);

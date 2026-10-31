@@ -3,6 +3,12 @@
         <file alias="app-icon.png">../assets/app-icon.png</file>
     </qresource>
     <qresource prefix="/icons">
+        <file alias="chevron-dark.svg">../assets/icons/chevron-dark.svg</file>
+        <file alias="chevron-light.svg">../assets/icons/chevron-light.svg</file>
+        <file alias="eye.svg">../assets/icons/eye.svg</file>
+        <file alias="eye-off.svg">../assets/icons/eye-off.svg</file>
+        <file alias="archive.svg">../assets/icons/archive.svg</file>
+        <file alias="trash.svg">../assets/icons/trash.svg</file>
         <file alias="thickness.svg">../assets/icons/thickness.svg</file>
         <file alias="holes.svg">../assets/icons/holes.svg</file>
         <file alias="fillet.svg">../assets/icons/fillet.svg</file>

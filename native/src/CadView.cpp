@@ -489,13 +489,14 @@ void CadView::setLightTheme(bool light) {
         context->Redisplay(label, false);
     }
     const auto colors = workspaceColors(light);
-    const Quantity_Color selectionColor(colors.selection.redF(), colors.selection.greenF(), colors.selection.blueF(), Quantity_TOC_RGB);
+    const Quantity_Color selectionColor(colors.selection.redF(), colors.selection.greenF(), colors.selection.blueF(), Quantity_TOC_sRGB);
     for (auto type : {Prs3d_TypeOfHighlight_Dynamic, Prs3d_TypeOfHighlight_LocalDynamic,
                       Prs3d_TypeOfHighlight_Selected, Prs3d_TypeOfHighlight_LocalSelected})
         context->HighlightStyle(type)->SetColor(selectionColor);
     context->HilightSelected(false);
     const auto background = colors.canvas;
-    const Quantity_Color color(background.redF(), background.greenF(), background.blueF(), Quantity_TOC_RGB);
+    const Quantity_Color color(background.redF(), background.greenF(), background.blueF(), Quantity_TOC_sRGB);
+    view->SetBackgroundColor(color);
     view->SetBgGradientColors(color, color, Aspect_GFM_VER, false);
     view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, light ? Quantity_NOC_GRAY40 : Quantity_NOC_GRAY80, 0.08, V3d_ZBUFFER);
     view->Redraw();

@@ -9,3 +9,5 @@ Attribution is visible in Help → Credits and THIRD_PARTY_NOTICES.md. No icon s
 `paperclip.svg` is an original application icon, licensed with the application source rather than the Flaticon assets.
 
 The CAD glyphs chamfer, fillet, fit, holes, palette, parameters and thickness are original application artwork (20 px viewBox, 1.5 px strokes), licensed with the application source. They do not use Flaticon paths.
+
+The eye, eye-off, archive, trash and theme-specific chevron glyphs are original application artwork. The two chevron variants resolve the existing semantic secondary-text colours for Qt stylesheet image rendering.

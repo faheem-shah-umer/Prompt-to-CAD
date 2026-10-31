@@ -252,7 +252,8 @@ void WorkspaceWindow::updateUsage() {
     auto agentName = agent.value("display_name").toString().trimmed();
     if (agentName.isEmpty()) agentName = !runtime.contains("agent") && runtime.value("provider") == "Codex App Server"
                                            ? "Codex" : "Assistant";
-    agentButton->setText(agentName);
+    agentButton->setText({});
+    agentButton->setToolTip(agentName + " · connection settings");
     agentButton->setAccessibleName(agentName + " connection settings");
     const auto usage = provider.value("usage").toObject();
     const auto tokens = state.value("conversation").toObject().value("token_usage").toObject();

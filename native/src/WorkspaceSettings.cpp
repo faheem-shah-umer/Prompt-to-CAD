@@ -27,6 +27,7 @@
 #include <QJsonDocument>
 #include <QStyle>
 #include "WorkspaceIcons.h"
+#include "WorkspaceTheme.h"
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -49,9 +50,9 @@ QVBoxLayout *card(QVBoxLayout *parent, const QString &title) {
     auto *frame = new QFrame;
     frame->setObjectName("settingsCard");
     auto *layout = new QVBoxLayout(frame);
-    layout->setContentsMargins(18, 16, 18, 16);
-    layout->setSpacing(12);
-    layout->addWidget(label(title, "sectionTitle"));
+    layout->setContentsMargins(0, 24, 0, 24);
+    layout->setSpacing(16);
+    layout->addWidget(label(title, "settingsCardTitle"));
     parent->addWidget(frame);
     return layout;
 }
@@ -86,18 +87,30 @@ void WorkspaceWindow::refreshConnectionControls() {
     }
     if (auto *info = settingsDialog->findChild<QLabel *>("connectionInfo")) {
         QString text = signingIn ? "Waiting for browser authorization"
-                       : ready   ? "Connected"
-                                 : "Not connected";
-        info->setProperty("connected", ready);
+                       : ready   ? "✓  Connected"
+                       : connection.value("error").toString().isEmpty() ? "Not connected" : "Reconnect needed";
+        const auto tint = ready ? workspaceColors().success : connection.value("error").toString().isEmpty()
+            ? workspaceColors().secondary : workspaceColors().danger;
+        info->setStyleSheet("color:" + tint.name());
         info->setText(text);
     }
+    if (auto *error = settingsDialog->findChild<QLabel *>("connectionError")) {
+        const auto message = connection.value("error").toString();
+        error->setText(message.isEmpty() ? QString() : "⚠  Your saved connection needs attention. " + message);
+        error->setVisible(!message.isEmpty());
+    }
+    if (auto *guidance = settingsDialog->findChild<QLabel *>("connectionGuidance"))
+        guidance->setVisible(!ready && connection.value("error").toString().isEmpty());
     auto setDetail = [this](const QString &name, const QString &value) {
         if (auto *item = settingsDialog->findChild<QLabel *>(name)) item->setText(value);
     };
     setDetail("connectionAccount", active.value("name").toString(active.isEmpty() ? "No account connected" : "Connected account"));
     setDetail("connectionEmail", active.value("email").toString("Not reported"));
-    setDetail("connectionWorkspace", active.value("workspace").toString("Not reported by provider"));
+    const auto workspaceName = active.value("workspace").toString();
+    setDetail("connectionWorkspace", workspaceName.isEmpty() || workspaceName.startsWith("Workspace name not reported")
+        ? "Not reported by provider" : workspaceName);
     setDetail("connectionBilling", connection.value("billing").toString("No billing connection"));
+    if (auto *identity = settingsDialog->findChild<QWidget *>("connectionIdentity")) identity->setVisible(ready);
     if (auto *summary = settingsDialog->findChild<QLabel *>("catalogueSummary")) {
         const auto failure = models->property("effortCatalogueFailure").toString();
         summary->setText(modelsLoading ? "Loading model catalogue…"
@@ -110,8 +123,14 @@ void WorkspaceWindow::refreshConnectionControls() {
         while (rows->rowCount()) rows->removeRow(0);
         const auto tokens = state.value("conversation").toObject().value("token_usage").toObject();
         bool reported = false;
-        for (const auto &field : {qMakePair("totalTokens", "Conversation tokens"),
-                                 qMakePair("inputTokens", "Input"), qMakePair("cachedInputTokens", "Cached input"),
+        if (auto *total = settingsDialog->findChild<QLabel *>("usageTotal")) {
+            total->setText(tokens.contains("totalTokens") ? QLocale().toString(tokens.value("totalTokens").toInteger()) : QString());
+            total->setVisible(tokens.contains("totalTokens"));
+        }
+        if (auto *caption = settingsDialog->findChild<QLabel *>("usageTotalCaption"))
+            caption->setText(tokens.contains("totalTokens") ? "Reported conversation tokens"
+                : ready ? "Usage appears when the provider reports it." : "Provider usage is unavailable while disconnected.");
+        for (const auto &field : {qMakePair("inputTokens", "Input"), qMakePair("cachedInputTokens", "Cached input"),
                                  qMakePair("outputTokens", "Output")})
             if (tokens.contains(field.first)) {
                 auto *count = label(QLocale().toString(tokens.value(field.first).toInteger()), "usageValue");
@@ -124,7 +143,7 @@ void WorkspaceWindow::refreshConnectionControls() {
                          label(QString::number(qRound(window.value("remaining_percent").toDouble())) + "% remaining"));
             reported = true;
         }
-        if (!reported) rows->addRow(label("Usage will appear when the provider reports it."));
+        usage->setVisible(reported);
     }
     if (auto *cancel = settingsDialog->findChild<QPushButton *>("cancelSignIn"))
         cancel->setVisible(signingIn);
@@ -172,38 +191,49 @@ void WorkspaceWindow::account() {
     dialog->setObjectName("workspaceSettings");
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle("Settings · Prompt to CAD");
-    dialog->resize(qMin(960, dialog->screen()->availableGeometry().width() - 48),
-                   qBound(500, dialog->screen()->availableGeometry().height() - 90, 720));
+    dialog->resize(qMin(1280, dialog->screen()->availableGeometry().width() - 64),
+                   qBound(500, dialog->screen()->availableGeometry().height() - 80, 880));
     dialog->setMinimumSize(660, 500);
     auto *outer = new QVBoxLayout(dialog);
-    outer->setContentsMargins(20, 20, 20, 16);
-    outer->setSpacing(18);
-    outer->addWidget(label("Settings", "pageTitle"));
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    auto *header = new QFrame;
+    header->setObjectName("settingsHeader");
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(24, 14, 24, 14);
+    headerLayout->addWidget(label("Settings", "sectionTitle"));
+    outer->addWidget(header);
     auto *body = new QHBoxLayout;
-    body->setSpacing(24);
+    body->setSpacing(0);
     auto *sections = new QListWidget;
     sections->setObjectName("settingsNavigation");
-    sections->setFixedWidth(208);
     sections->addItems({"AI connection", "Appearance", "Projects", "CAD display", "Advanced"});
-    auto *settingsNav = new QVBoxLayout;
+    auto *sidebar = new QWidget;
+    sidebar->setObjectName("settingsSidebar");
+    sidebar->setFixedWidth(224);
+    auto *settingsNav = new QVBoxLayout(sidebar);
+    settingsNav->setContentsMargins(16, 20, 16, 24);
+    settingsNav->setSpacing(12);
     settingsNav->addWidget(sections, 1);
     auto *brand = new QLabel; brand->setPixmap(QPixmap(":/brand/app-icon.png").scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     brand->setAccessibleName("Prompt to CAD logo"); settingsNav->addWidget(brand);
-    settingsNav->addWidget(label("Prompt to CAD · " + QCoreApplication::applicationVersion()));
-    body->addLayout(settingsNav);
+    settingsNav->addWidget(label("Prompt to CAD", "settingsAccountName"));
+    settingsNav->addWidget(label("Version " + QCoreApplication::applicationVersion()));
+    body->addWidget(sidebar);
     auto *pages = new QStackedWidget;
     body->addWidget(pages, 1);
     outer->addLayout(body, 1);
     auto page = [&](const QString &title, const QString &description) {
         auto *scroll = new QScrollArea;
+        scroll->setObjectName("settingsPage");
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setWidgetResizable(true);
-        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         auto *contents = new QWidget;
         auto *layout = new QVBoxLayout(contents);
-        layout->setContentsMargins(0, 0, 10, 8);
-        layout->setSpacing(16);
-        layout->addWidget(label(title, "sectionTitle"));
+        layout->setContentsMargins(48, 32, 48, 24);
+        layout->setSpacing(12);
+        layout->addWidget(label(title, "pageTitle"));
         layout->addWidget(label(description));
         scroll->setWidget(contents);
         pages->addWidget(scroll);
@@ -216,19 +246,55 @@ void WorkspaceWindow::account() {
     mode->addItem("ChatGPT plan · Codex", "chatgpt");
     mode->addItem("OpenAI API key · separate billing", "api");
     mode->hide();
-    auto *accountCard = card(ai, "Codex");
+    auto *connectionSection = new QFrame;
+    auto *accountCard = new QVBoxLayout(connectionSection);
+    accountCard->setContentsMargins(0, 32, 0, 24);
+    accountCard->setSpacing(20);
+    ai->addWidget(connectionSection);
+    auto *connectionHeader = new QHBoxLayout;
+    connectionHeader->addWidget(label("Codex", "settingsCardTitle"), 1);
     auto *info = label({}, "connectionInfo");
     info->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    accountCard->addWidget(info);
-    auto *details = new QFormLayout;
-    details->setRowWrapPolicy(QFormLayout::WrapLongRows); details->setSpacing(16);
-    for (const auto &entry : {qMakePair("Account", "connectionAccount"), qMakePair("Email", "connectionEmail"),
-                              qMakePair("Workspace", "connectionWorkspace"), qMakePair("Billing", "connectionBilling")}) {
+    connectionHeader->addWidget(info);
+    accountCard->addLayout(connectionHeader);
+    accountCard->addWidget(label("Uses the installed Codex App Server runtime."));
+    auto *rule = new QFrame;
+    rule->setObjectName("sectionRule");
+    rule->setFrameShape(QFrame::HLine);
+    accountCard->addWidget(rule);
+    auto *connectionError = label({}, "connectionError");
+    connectionError->hide();
+    accountCard->addWidget(connectionError);
+    auto *guidance = label("Connect Codex to use the CAD agent. Authorize your eligible ChatGPT account in your browser. You can inspect local CAD without connecting.", "connectionGuidance");
+    guidance->hide();
+    accountCard->addWidget(guidance);
+    auto *identityRows = new QWidget;
+    identityRows->setObjectName("connectionIdentity");
+    auto *details = new QFormLayout(identityRows);
+    details->setContentsMargins(0, 0, 0, 0);
+    details->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    details->setVerticalSpacing(24);
+    details->setHorizontalSpacing(24);
+    auto *identity = new QWidget;
+    auto *identityLayout = new QVBoxLayout(identity);
+    identityLayout->setContentsMargins(0, 0, 0, 0);
+    identityLayout->setSpacing(4);
+    auto *accountName = label({}, "connectionAccount");
+    accountName->setStyleSheet("font-weight:600");
+    accountName->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    identityLayout->addWidget(accountName);
+    auto *email = label({}, "connectionEmail");
+    email->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    identityLayout->addWidget(email);
+    auto *accountLabel = label("Account");
+    accountLabel->setMinimumWidth(144);
+    details->addRow(accountLabel, identity);
+    for (const auto &entry : {qMakePair("Workspace", "connectionWorkspace"), qMakePair("Billing", "connectionBilling")}) {
         auto *value = label({}, entry.second); value->setTextFormat(Qt::PlainText);
         value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
         details->addRow(entry.first, value);
     }
-    accountCard->addLayout(details);
+    accountCard->addWidget(identityRows);
     auto *plan = new QWidget;
     auto *planLayout = new QVBoxLayout(plan);
     planLayout->setContentsMargins(0, 0, 0, 0);
@@ -238,12 +304,15 @@ void WorkspaceWindow::account() {
         call("provider.cancel_login", {}, [this](auto) { call("v2.state"); });
     });
     cancelSignIn->setObjectName("cancelSignIn");
-    action("Connect a new account", connectRow, [this] {
+    action("Connect a different account", connectRow, [this] {
         if(QMessageBox::question(settingsDialog,"Connect a new account","Create a new Prompt to CAD registration? Your current connection remains active until authorization succeeds. Old registered apps can be removed in ChatGPT Settings.") == QMessageBox::Yes)beginSignIn({},true);
     })->setObjectName("newChatGPTRegistration");
     connectRow->addStretch();
     planLayout->addLayout(connectRow);
-    accountCard->addWidget(plan);
+    auto *accountActions = new QHBoxLayout;
+    accountActions->addWidget(plan, 1);
+    accountActions->addStretch();
+    accountCard->addLayout(accountActions);
     auto *api = new QWidget;
     auto *apiLayout = new QVBoxLayout(api);
     apiLayout->setContentsMargins(0, 0, 0, 0);
@@ -265,9 +334,9 @@ void WorkspaceWindow::account() {
     auto *apiDisclosure = new QToolButton;
     apiDisclosure->setText("API access · separately billed"); apiDisclosure->setCheckable(true);
     apiDisclosure->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); apiDisclosure->setArrowType(Qt::RightArrow);
-    ai->addWidget(apiDisclosure);
+    apiDisclosure->setObjectName("apiAccessDisclosure");
     auto *apiSection = new QFrame; apiSection->setObjectName("settingsCard");
-    auto *apiSectionLayout = new QVBoxLayout(apiSection); apiSectionLayout->addWidget(api); ai->addWidget(apiSection);
+    auto *apiSectionLayout = new QVBoxLayout(apiSection); apiSectionLayout->addWidget(api);
     connect(apiDisclosure, &QToolButton::toggled, dialog, [mode, apiDisclosure](bool open) {
         apiDisclosure->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); mode->setCurrentIndex(open ? 1 : 0);
     });
@@ -281,34 +350,37 @@ void WorkspaceWindow::account() {
     plan->setVisible(mode->currentIndex() == 0);
     api->setVisible(mode->currentIndex() == 1);
     apiSection->setVisible(mode->currentIndex() == 1); apiDisclosure->setChecked(mode->currentIndex() == 1);
-    auto *accountActions = new QHBoxLayout;
     action("Disconnect", accountActions, [this] {
         call("provider.disconnect", {}, [this](auto r) {
             const auto message = r.value("message").toString();
             call("v2.state", {}, [this, message](auto) { activity->setText(message); });
         });
     })->setObjectName("disconnectAccount");
-    accountActions->addStretch();
-    accountCard->addLayout(accountActions);
     auto *usage = card(ai, "Usage & models");
+    auto *usageHeader = new QHBoxLayout;
+    usageHeader->addWidget(label({}, "usageTotal"));
+    usageHeader->addWidget(label({}, "usageTotalCaption"), 1);
+    usage->addLayout(usageHeader);
     auto *reportedRows = new QWidget; reportedRows->setObjectName("reportedUsageRows");
     auto *reportedLayout = new QFormLayout(reportedRows); reportedLayout->setContentsMargins(0, 0, 0, 0);
     reportedLayout->setRowWrapPolicy(QFormLayout::WrapLongRows); usage->addWidget(reportedRows);
     usage->addWidget(label("Reported tokens are separate from provider allowance and API cost."));
-    auto *usageActions = new QHBoxLayout;
-    action("Manage provider usage ↗", usageActions, [this] {
+    action("Manage provider usage ↗", usageHeader, [this] {
         QDesktopServices::openUrl(QUrl(state.value("provider").toObject().value("active").toObject().value("connection") != "api" ? "https://chatgpt.com/settings/usage"
                                                                  : "https://platform.openai.com/usage"));
     });
-    usageActions->addStretch();
-    usage->addLayout(usageActions);
     auto *modelRow = new QHBoxLayout;
-    modelRow->addWidget(label({}, "catalogueSummary"), 1);
+    auto *modelDescription = new QVBoxLayout;
+    modelDescription->addWidget(label("Model catalogue", "settingsAccountName"));
+    modelDescription->addWidget(label({}, "catalogueSummary"));
+    modelRow->addLayout(modelDescription, 1);
     action("Refresh models", modelRow, [this] { discoverModels(true); })->setObjectName("refreshModelsButton");
     usage->addLayout(modelRow);
     ai->addWidget(
         label("Tasks consume allowance or API credits. Long tasks can use more. A limit stops the request; "
               "billing never switches automatically. Connection actions take effect immediately."));
+    ai->addWidget(apiDisclosure);
+    ai->addWidget(apiSection);
     ai->addStretch();
     QSettings prefs;
     auto *appearance = page("Appearance", "Choose a comfortable workspace for inspecting your models.");
@@ -404,6 +476,7 @@ void WorkspaceWindow::account() {
     sections->setCurrentRow(0);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons->setObjectName("settingsActions");
+    buttons->setContentsMargins(24, 12, 24, 16);
     buttons->button(QDialogButtonBox::Save)->setObjectName("primaryButton");
     outer->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);

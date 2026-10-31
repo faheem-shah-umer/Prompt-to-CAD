@@ -19,6 +19,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHeaderView>
 #include <QFrame>
 #include <QInputDialog>
 #include <QJsonDocument>
@@ -39,6 +40,7 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStackedWidget>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
@@ -75,6 +77,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     resize(1560, 940);
     setMinimumSize(880, 600);
     rpc = new RpcClient(this);
+    auto *applicationMenus = new QMenuBar;
     auto *central = new QWidget;
     auto *root = new QHBoxLayout(central);
     root->setContentsMargins(0, 0, 0, 0);
@@ -117,14 +120,20 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     nav->setContentsMargins(12, 14, 12, 12);
     auto *heading = new QLabel("Projects");
     heading->setObjectName("panelTitle");
-    nav->addWidget(heading);
-    setWorkspaceIcon(button("New project", nav, [this] { newProject(); }), "add");
-    setWorkspaceIcon(button("Open project…", nav, [this] { openNativeProject(); }), "folder-open");
+    auto *projectHeading = new QHBoxLayout;
+    projectHeading->addWidget(heading, 1);
+    auto *newProjectButton = button("", projectHeading, [this] { newProject(); });
+    setWorkspaceIcon(newProjectButton, "add");
+    newProjectButton->setFixedSize(32, 32);
+    newProjectButton->setAccessibleName("New project");
+    newProjectButton->setToolTip("New project · Ctrl+N");
+    nav->addLayout(projectHeading);
     auto *newChat = button("New conversation", nav, [this] { newConversation(); });
     newChat->setObjectName("newConversationButton");
     setWorkspaceIcon(newChat, "comment-alt");
     search = new QLineEdit;
-    search->setPlaceholderText("Search projects and conversations");
+    search->setPlaceholderText("Search projects");
+    search->setAccessibleName("Search projects and conversations");
     search->addAction(workspaceIcon("search"), QLineEdit::LeadingPosition);
     auto *projectSearch = new QHBoxLayout;
     projectSearch->setSpacing(5);
@@ -167,7 +176,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     projects->setHeaderHidden(true);
     projects->setIndentation(14);
     nav->addWidget(projects, 1);
-    auto *usage = new QLabel("Local workspace · files stay on this PC");
+    auto *archive = button("Archive", nav, [this] { setProperty("librarySection", 0); manageProjects(); });
+    setWorkspaceIcon(archive, "archive");
+    archive->setProperty("controlRole", "quiet");
+    auto *trash = button("Trash", nav, [this] { setProperty("librarySection", 1); manageProjects(); });
+    setWorkspaceIcon(trash, "trash");
+    trash->setProperty("controlRole", "quiet");
+    auto *usage = new QLabel("Local projects");
+    usage->setToolTip("Project files stay on this PC. Open an existing folder with File → Open native project.");
     usage->setWordWrap(true);
     usage->setObjectName("muted");
     nav->addWidget(usage);
@@ -184,6 +200,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     documentHeader->setContentsMargins(12, 4, 12, 4);
     title = workspaceTitle("Create a project to begin");
     title->setStyleSheet("font-weight:600");
+    title->setAlignment(Qt::AlignCenter);
     title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     saved = new QLabel("Saved locally");
     saved->setObjectName("muted");
@@ -221,7 +238,13 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     headerFrame->setObjectName("documentHeader");
     headerFrame->setLayout(documentHeader);
     headerFrame->setMinimumHeight(44);
-    work->addWidget(headerFrame);
+    auto *brandTitle = new QLabel("Prompt to CAD");
+    brandTitle->setObjectName("applicationBrand");
+    brandTitle->setMinimumWidth(144);
+    applicationMenus->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    documentHeader->insertWidget(0, brandTitle);
+    documentHeader->insertWidget(1, applicationMenus);
+    setMenuWidget(headerFrame);
     documentTabs = new QTabBar;
     documentTabs->setObjectName("documentTabs");
     documentTabs->setAccessibleName("CAD documents");
@@ -230,13 +253,35 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     documentTabs->setExpanding(false);
     documentTabs->setDrawBase(false);
     work->addWidget(documentTabs);
-    auto *commandGroups = new QTabWidget;
+    auto *commandGroups = new QWidget;
     commandGroups->setObjectName("commandManager");
-    auto commandPage = [commandGroups](const QString &label) {
+    auto *commandRow = new QHBoxLayout(commandGroups);
+    commandRow->setContentsMargins(12, 0, 4, 0);
+    commandRow->setSpacing(8);
+    auto *commandSelector = new QToolButton;
+    commandSelector->setText("Modify");
+    setWorkspaceIcon(commandSelector, "cube");
+    commandSelector->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    commandSelector->setPopupMode(QToolButton::InstantPopup);
+    commandSelector->setAccessibleName("Modelling command group");
+    commandSelector->setToolTip("Choose Modify, Assembly, Inspect or View commands");
+    auto *commandMenu = new QMenu(commandSelector);
+    commandSelector->setMenu(commandMenu);
+    commandRow->addWidget(commandSelector);
+    auto *commandPages = new QStackedWidget;
+    commandPages->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    commandPages->setMinimumWidth(0);
+    commandRow->addWidget(commandPages, 1);
+    auto commandPage = [commandPages, commandSelector, commandMenu](const QString &label) {
         auto *toolbar = new QToolBar;
         toolbar->setMovable(false);
         toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        commandGroups->addTab(toolbar, label);
+        const int index = commandPages->addWidget(toolbar);
+        auto *choice = commandMenu->addAction(label);
+        QObject::connect(choice, &QAction::triggered, commandPages, [commandPages, commandSelector, label, index] {
+            commandPages->setCurrentIndex(index);
+            commandSelector->setText(label);
+        });
         return toolbar;
     };
     auto *commands = commandPage("Modify");
@@ -314,7 +359,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     });
     auto *viewCommands = commandPage("View");
     viewCommands->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    commandGroups->setMaximumHeight(86);
+    commandGroups->setFixedHeight(44);
     work->addWidget(commandGroups);
     auto *inner = workspaceSplitter(Qt::Horizontal);
     modelSplit = inner;
@@ -322,8 +367,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     manager = new QWidget;
     manager->setObjectName("cadManager");
     auto *management = new QVBoxLayout(manager);
-    management->setContentsMargins(9, 10, 9, 8);
+    management->setContentsMargins(12, 8, 12, 8);
     managerTabs = new QTabWidget;
+    managerTabs->setObjectName("managerTabs");
+    managerTabs->setDocumentMode(true);
     auto *modelPane = new QWidget;
     auto *modelLayout = new QVBoxLayout(modelPane);
     modelLayout->setContentsMargins(0, 8, 0, 0);
@@ -337,13 +384,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *showModels = button("Show all", visibilityControls, [this] { viewer->showAll(); });
     auto *hideModels = button("Hide all", visibilityControls, [this] { viewer->hideAll(); });
     showModels->setObjectName("showAllModels");
+    setWorkspaceIcon(showModels, "eye");
     hideModels->setObjectName("hideAllModels");
     showModels->setToolTip("Show every component, including filtered models");
     hideModels->setToolTip("Hide every component, including filtered models");
     modelLayout->addLayout(visibilityControls);
     auto *selectionControls = new QHBoxLayout;
     selectionControls->setSpacing(5);
-    auto *selectModels = button("Select all visible", selectionControls, [this] {
+    auto *selectModels = button("Select visible", selectionControls, [this] {
         const auto ids = viewer->visibleInstances();
         if (ids.size() > 256) {
             notify("There are more than 256 visible components. Hide some before selecting all.", "info");
@@ -353,18 +401,33 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         viewer->selectInstances(ids);
     });
     selectModels->setObjectName("selectAllModels");
+    selectModels->setAccessibleName("Select all visible components");
+    setWorkspaceIcon(selectModels, "fit");
     selectModels->setToolTip("Select all visible components for the next task, including filtered models");
-    auto *clearModels = button("Clear selection", selectionControls, [this] { viewer->removeSelectedEntity(-1); });
+    auto *clearModels = button("Clear", selectionControls, [this] { viewer->removeSelectedEntity(-1); });
     clearModels->setObjectName("clearModelSelection");
+    clearModels->setAccessibleName("Clear geometry selection");
     modelLayout->addLayout(selectionControls);
     modelTree = workspaceModelTree();
     modelTree->setObjectName("modelTree");
     modelTree->setHeaderLabels({"Component", "Show"});
     modelTree->setColumnCount(2);
+    modelTree->setHeaderHidden(true);
+    modelTree->header()->setStretchLastSection(false);
+    modelTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    modelTree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    modelTree->setColumnWidth(1, 32);
+    modelTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     modelTree->setIndentation(14);
     modelLayout->addWidget(modelTree, 1);
     modelSummary = new QLabel("Select geometry to inspect dimensions.");
     modelSummary->setObjectName("managerSummary"); modelSummary->setWordWrap(true);
+    modelSummary->setTextFormat(Qt::RichText);
+    modelSummary->setOpenExternalLinks(false);
+    connect(modelSummary, &QLabel::linkActivated, this, [this](const QString &link) {
+        if (link == "properties") managerTabs->setCurrentWidget(properties);
+        else if (link == "colour") chooseComponentColour();
+    });
     modelLayout->addWidget(modelSummary);
     properties = new QTextBrowser;
     properties->setObjectName("selectionProperties");
@@ -393,6 +456,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     management->addWidget(operationPane);
     inner->addWidget(manager);
     auto *viewportPane = new QWidget;
+    viewportPane->setObjectName("viewportPane");
     auto *vp = new QVBoxLayout(viewportPane);
     vp->setContentsMargins(0, 0, 0, 0);
     vp->setSpacing(0);
@@ -419,7 +483,6 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *fit = button("", views, [this] { viewer->fitAll(); });
     setWorkspaceIcon(fit, "fit"); fit->setFixedSize(32, 32);
     fit->setAccessibleName("Fit model"); fit->setToolTip("Fit model");
-    views->addStretch();
     vp->addLayout(views);
     emptyPage = new QWidget;
     auto *emptyLayout = new QVBoxLayout(emptyPage);
@@ -434,12 +497,17 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
                                  "CAD agent. Describe a part and its dimensions to get started.");
     emptyNote->setWordWrap(true);
     emptyLayout->addWidget(emptyNote);
-    button("New project", emptyLayout, [this] { newProject(); });
-    button("Import supported model", emptyLayout, [this] { openFile(); });
-    button("Describe a design", emptyLayout, [this] {
+    auto *emptyActions = new QHBoxLayout;
+    auto *createProject = button("New project", emptyActions, [this] { newProject(); });
+    createProject->setObjectName("primaryButton");
+    setWorkspaceIcon(createProject, "add", true);
+    button("Import model", emptyActions, [this] { openFile(); });
+    button("Describe a design", emptyActions, [this] {
         setPanelVisible("conversation", true);
         composer->setFocus();
     });
+    emptyActions->addStretch();
+    emptyLayout->addLayout(emptyActions);
     emptyLayout->addStretch();
     emptyPage->hide();
     vp->addWidget(emptyPage, 1);
@@ -453,15 +521,24 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     conversationPane = new QWidget;
     conversationPane->setObjectName("conversationPane");
     auto *conversation = new QVBoxLayout(conversationPane);
-    conversation->setContentsMargins(18, 16, 18, 12);
+    conversation->setContentsMargins(20, 16, 20, 12);
     conversation->setSpacing(12);
     auto *conversationHeader = new QHBoxLayout;
     conversationTitle = new QLabel("Design conversation");
     conversationTitle->setWordWrap(true);
     conversationTitle->setStyleSheet("font-size:14px;font-weight:600");
-    conversationHeader->addWidget(conversationTitle, 1);
-    agentButton = button("Assistant", conversationHeader, [this] { account(); });
+    auto *conversationHeading = new QVBoxLayout;
+    conversationHeading->setSpacing(4);
+    conversationHeading->addWidget(conversationTitle);
+    auto *conversationDocument = new QLabel;
+    conversationDocument->setObjectName("conversationDocument");
+    conversationDocument->setWordWrap(true);
+    conversationHeading->addWidget(conversationDocument);
+    conversationHeader->addLayout(conversationHeading, 1);
+    agentButton = button("", conversationHeader, [this] { account(); });
     agentButton->setObjectName("quietButton");
+    setWorkspaceIcon(agentButton, "menu-dots");
+    agentButton->setFixedSize(32, 32);
     agentButton->setToolTip("Account and agent settings");
     conversation->addLayout(conversationHeader);
     chat = new ConversationView;
@@ -470,10 +547,12 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *composerFrame = new QFrame;
     composerFrame->setObjectName("composerFrame");
     auto *compose = new QVBoxLayout(composerFrame);
-    compose->setContentsMargins(10, 8, 10, 8);
+    compose->setContentsMargins(12, 10, 12, 10);
     compose->setSpacing(7);
     selectionChip = new QPushButton;
     selectionChip->setObjectName("selectionChip");
+    selectionChip->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    setWorkspaceIcon(selectionChip, "fit");
     selectionChip->hide();
     selectionChip->setToolTip("Remove selection context from the next task");
     compose->addWidget(selectionChip);
@@ -539,6 +618,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     compose->addLayout(providerRow);
     conversation->addWidget(composerFrame);
     auto *usageRow = new QHBoxLayout;
+    auto *composerHint = new QLabel("Enter to send · Shift+Enter for new line");
+    composerHint->setObjectName("composerHint");
+    composerHint->setWordWrap(true);
+    usageRow->addWidget(composerHint, 1);
     usageBadge = new QPushButton;
     usageBadge->setObjectName("usageBadge");
     usageRow->addWidget(usageBadge);
@@ -566,7 +649,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     navigation->setMinimumWidth(200);
     manager->setMinimumWidth(216);
     conversationPane->setMinimumWidth(320);
-    auto *file = menuBar()->addMenu("&File");
+    auto *file = applicationMenus->addMenu("&File");
     file->addAction("New project…", this, &WorkspaceWindow::newProject, QKeySequence::New);
     file->addAction("New conversation", this, &WorkspaceWindow::newConversation, QKeySequence("Ctrl+Shift+N"));
     file->addAction("Import model…", this, [this] { openFile(); }, QKeySequence::Open);
@@ -589,7 +672,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     });
     file->addSeparator();
     file->addAction("Exit", this, &QWidget::close);
-    auto *edit = menuBar()->addMenu("&Edit");
+    auto *edit = applicationMenus->addMenu("&Edit");
     undoAction =
         edit->addAction("Undo revision", this, [this] { call("v2.undo", base()); }, QKeySequence::Undo);
     redoAction =
@@ -598,7 +681,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             [this] { findChild<QPushButton *>("undoToolbar")->setEnabled(undoAction->isEnabled()); });
     connect(redoAction, &QAction::changed, this,
             [this] { findChild<QPushButton *>("redoToolbar")->setEnabled(redoAction->isEnabled()); });
-    auto *viewMenu = menuBar()->addMenu("&View");
+    auto *viewMenu = applicationMenus->addMenu("&View");
     for (auto pair : QList<QPair<QString, QWidget *>>{{"Projects and conversations", navigation},
                                                       {"CAD manager", manager},
                                                       {"Agent panel", conversationPane}}) {
@@ -634,7 +717,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         if (QStringList{"Fit model", "Hide selected", "Isolate selected", "Show all", "Show solid edges"}
                 .contains(action->text()))
             { viewCommands->addAction(action); action->setProperty("requiresGeometry", true); }
-    auto *toolsMenu = menuBar()->addMenu("&Tools");
+    auto *toolsMenu = applicationMenus->addMenu("&Tools");
     toolsMenu->addAction("Settings…", this, &WorkspaceWindow::account);
     toolsMenu->addAction("Archive…", this, [this] { setProperty("librarySection",0); manageProjects(); });
     toolsMenu->addAction("Trash…", this, [this] { setProperty("librarySection",1); manageProjects(); });
@@ -660,7 +743,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             call("v2.script", p);
         }
     });
-    auto *help = menuBar()->addMenu("&Help");
+    auto *help = applicationMenus->addMenu("&Help");
     help->addAction("Credits", this, [this] {
         if (focusOpenDialog()) return;
         QMessageBox::about(this, "Credits", "<b>Prompt to CAD</b><p>Uicons by <a href='https://www.flaticon.com/uicons'>Flaticon</a>.</p><p>See THIRD_PARTY_NOTICES.md for dependency licenses.</p>");
@@ -692,11 +775,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     commandSearch->setObjectName("commandSearch");
     commandSearch->setShortcut(QKeySequence("Ctrl+K"));
     addAction(commandSearch);
-    connect(commandSearch, &QAction::triggered, this, [this] {
+    connect(commandSearch, &QAction::triggered, this, [this, applicationMenus] {
         if (focusOpenDialog()) return;
         QStringList names;
         QList<QAction *> choices;
-        for (auto *m : menuBar()->actions())
+        for (auto *m : applicationMenus->actions())
             if (m->menu())
                 for (auto *a : m->menu()->actions())
                     if (!a->isSeparator() && a->isEnabled()) {
@@ -1154,6 +1237,8 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     title->setText(project.value("name").toString("Create a project to begin"));
     title->setToolTip(title->text());
     conversationTitle->setToolTip(conversationTitle->text());
+    if (auto *subtitle = findChild<QLabel *>("conversationDocument"))
+        subtitle->setText(document.value("name").toString());
     setWindowTitle(project.isEmpty() ? "Prompt to CAD"
                                      : project.value("name").toString() + " · Prompt to CAD");
     saved->setText(document.value("components").toArray().isEmpty()
@@ -1207,8 +1292,8 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
             : part.value("parameters").toObject().isEmpty()
             ? "Engineering solid · original feature history unavailable" : "Editable named parameters"));
     }
-    modelTree->setColumnWidth(0, qMax(120, managerWidth - 84));
-    modelTree->setColumnWidth(1, 52);
+    modelTree->setColumnWidth(1, 32);
+
     modelTree->verticalScrollBar()->setValue(treeScroll);
     filterModels();
     if (!changed && !selected.isEmpty()) select(selected);

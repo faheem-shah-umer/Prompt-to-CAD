@@ -77,9 +77,42 @@ void WorkspaceWindow::showSelectionProperties() {
     output += engineeringHtml(ids);
     output += "<p><a href='diagnostic:selection'>Technical diagnostics</a></p>";
     properties->setHtml(output);
-    if (modelSummary) modelSummary->setText(ids.size() == 1 ? componentName(ids.first()) + "\n" +
-        entities.first().toObject().value("kind").toString() + " · mm\nDimensions and colour in Properties"
-        : QString::number(ids.size()) + " components selected\n" + QString::number(entities.size()) + " entities · mm");
+    if (modelSummary) {
+        const auto colors = workspaceColors();
+        bool wholeComponents = !entities.isEmpty();
+        for (const auto &entity : entities)
+            wholeComponents = wholeComponents && entity.toObject().value("kind") == "body";
+        QString summary = "<p style='color:" + colors.text.name() + "'><b>" +
+            (ids.size() == 1 ? componentName(ids.first()).toHtmlEscaped()
+                            : QString::number(ids.size()) + " selected components") + "</b></p>";
+        if (ids.size() == 1) {
+            for (const auto &value : document.value("components").toArray()) {
+                const auto part = value.toObject();
+                if (part.value("instance_id").toString() != ids.first()) continue;
+                summary += "<table width='100%' cellspacing='6'>";
+                const auto bounds = part.value("metrics").toObject().value("bounds_mm").toArray();
+                if (bounds.size() == 2 && bounds[0].toArray().size() == 3 && bounds[1].toArray().size() == 3) {
+                    QStringList dimensions;
+                    for (int axis = 0; axis < 3; ++axis)
+                        dimensions << number(bounds[1].toArray()[axis].toDouble() - bounds[0].toArray()[axis].toDouble());
+                    summary += row("Bounds", dimensions.join(" × ") + " mm");
+                }
+                auto color = part.value("color_override").toArray();
+                if (color.isEmpty() && part.value("representation") != "mesh") color = part.value("color").toArray();
+                if (color.size() == 3) {
+                    const auto tint = QColor::fromRgbF(qBound(0.0, color[0].toDouble(), 1.0),
+                        qBound(0.0, color[1].toDouble(), 1.0), qBound(0.0, color[2].toDouble(), 1.0));
+                    summary += "<tr><td>Colour</td><td align='right'>" +
+                        QString(wholeComponents ? "<a href='colour'" : "<span") + " style='color:" +
+                        tint.name() + "'>●" + (wholeComponents ? "</a>" : "</span>") + "</td></tr>";
+                } else summary += row("Colour", "Source colours");
+                summary += "</table>";
+            }
+        } else summary += "<p>" + QString::number(entities.size()) + " selected entities · mm</p>";
+        if (!wholeComponents) summary += "<p>Select a whole component to edit colour.</p>";
+        summary += "<p><a href='properties' style='color:" + colors.link.name() + "'>Component properties →</a></p>";
+        modelSummary->setText(summary);
+    }
 }
 void WorkspaceWindow::showDiagnostic(const QString &headingText, const QJsonObject &diagnostic) {
     if (focusOpenDialog()) return;
