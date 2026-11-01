@@ -16,6 +16,8 @@ Public media under `site/assets/` is newly captured from the real app using `too
 
 Portable packaging copies a reviewed file inventory and runtime dependency closure. It never copies `.venv`, the SDK environment, a user's project folders or credentials. It refuses to overwrite an existing staging directory. Dependency license texts may contain their upstream authors' attribution; that required legal text is not the owner's private account data. The exact dependency-owned `certifi/cacert.pem` is a public CA bundle, not an account key.
 
+Some upstream Windows wheels contain GitHub's public build-account paths. When the audit itself runs under that standard account, it accepts those strings only in dependency files whose SHA-256 still matches the wheel's retained `RECORD`. Modified files, application/generated files, private owner paths and checkout paths remain blocked. These public dependency build labels are distinct from the owner's personal development paths.
+
 ## Audit commands and limits
 
 ```powershell

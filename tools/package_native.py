@@ -264,7 +264,7 @@ def finish_bundle(bundle, packages, native, smoke_test=False):
         from tools.smoke_package import check_package
         check_package(bundle)
     from tools.audit_package import audit
-    audit(bundle)
+    manifest['privacy_audit'] = audit(bundle)
     files = distribution_files(bundle)
     manifest["files"] = {path.relative_to(bundle).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in files if path.name != "runtime-manifest.json"}
