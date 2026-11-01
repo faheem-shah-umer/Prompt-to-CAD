@@ -128,7 +128,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
             base = Path(temporary)
             projects = Projects(base / "before")
-            project = projects.create("Portable bracket")
+            project = projects.create("Relocated bracket")
             shutil.move(str(projects.folder), str(base / "after"))
             reopened = Projects(base / "after").view(project["project_id"])
             self.assertTrue(
@@ -233,37 +233,6 @@ class StorageTests(unittest.TestCase):
             projects.purge(pid)
             self.assertFalse(base.exists())
             self.assertEqual(projects.reconcile()["projects"], [])
-
-
-class PackagingPrivacyTests(unittest.TestCase):
-    def test_portable_inventory_excludes_local_projects_chats_and_credentials(self):
-        from tools.package_native import distribution_files
-
-        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
-            root = Path(temporary)
-            for name in (
-                "bin/PromptToCAD.exe",
-                "app/backend/v2/service.py",
-                "source/backend/v2/service.py",
-                "docs/setup.md",
-                "Projects/Private part/conversations/chat.json",
-                ".promptcad/identity/credentials.dpapi",
-                "app/tmp/native-viewport.png",
-                "source/backend/private-model.cad.json",
-            ):
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("synthetic fixture")
-            actual = {p.relative_to(root).as_posix() for p in distribution_files(root)}
-            self.assertEqual(
-                actual,
-                {
-                    "bin/PromptToCAD.exe",
-                    "app/backend/v2/service.py",
-                    "source/backend/v2/service.py",
-                    "docs/setup.md",
-                },
-            )
 
 
 class UsageTests(unittest.TestCase):

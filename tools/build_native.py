@@ -48,6 +48,9 @@ def msvc_environment(setup):
 
 def build_environment(qt_prefix, occt_prefix, toolchain_env=None, *, compiler=True):
     env = os.environ.copy()
+    local_toolchain = ROOT / '.local/toolchain/environment.json'
+    if compiler and toolchain_env is None and local_toolchain.is_file():
+        toolchain_env = local_toolchain
     if toolchain_env:
         values = json.loads(Path(toolchain_env).read_text(encoding="utf-8"))
         for name in ("PATH", "INCLUDE", "LIB", "LIBPATH"):

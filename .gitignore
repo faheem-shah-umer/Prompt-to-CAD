@@ -7,9 +7,9 @@ venv/
 .coverage
 htmlcov/
 /.build-tools/
+/.local/
 /build/
 /.sdk/
-/release-staging/
 /site-preview/
 /.native-build/
 /.native-runtime/

@@ -38,7 +38,7 @@ def main():
     report = {"commits": len(commits), "unique_blobs": blobs, "existing_non_neutral_author_records": identities,
         "content_findings": findings, "history_rewritten": False,
         "publication_approval": "pending; retain existing metadata only with owner approval"}
-    output = ROOT / "artifacts/release-checks"
+    output = ROOT / "artifacts/privacy-checks"
     output.mkdir(parents=True, exist_ok=True)
     (output / "history-audit.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report))

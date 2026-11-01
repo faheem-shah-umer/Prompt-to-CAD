@@ -1233,8 +1233,8 @@ void WorkspaceWindow::openFile(const QString &supplied) {
         showState(r, true);
         if (smoke)
             QTimer::singleShot(1200, this, &WorkspaceWindow::smokeCheck);
-        if (!qApp->property("distributionCaptureDir").toString().isEmpty())
-            QTimer::singleShot(600, this, &WorkspaceWindow::captureDistributionCheck);
+        if (!qApp->property("demoCaptureDir").toString().isEmpty())
+            QTimer::singleShot(600, this, &WorkspaceWindow::captureDemo);
     });
 }
 void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
@@ -1634,10 +1634,10 @@ void WorkspaceWindow::applyOperation() {
         p["commands"]=commands;call("v2.command_batch",p);
     } else {p["command"] = command;call("v2.command", p);}
 }
-void WorkspaceWindow::captureDistributionCheck() {
-    const auto output = qApp->property("distributionCaptureDir").toString();
+void WorkspaceWindow::captureDemo() {
+    const auto output = qApp->property("demoCaptureDir").toString();
     if (viewerFailed || viewer->bodyCount() != 3 || !viewer->smokeSelectFace()) {
-        qWarning("Distribution check failed: geometry import or native selection.");
+        qWarning("Demo capture failed: geometry import or native selection.");
         QApplication::exit(2);
         return;
     }
@@ -1663,7 +1663,7 @@ void WorkspaceWindow::captureDistributionCheck() {
         painter.end();
         const auto name = demo ? "workspace-" + qApp->property("workspaceTheme").toString() + ".png" : QString("workspace.png");
         if (!capture.save(output + "/" + name)) { QApplication::exit(2); return; }
-        QFile report(output + "/distribution-smoke.json");
+        QFile report(output + "/demo-capture.json");
         if (!report.open(QIODevice::WriteOnly)) { QApplication::exit(2); return; }
         report.write(QJsonDocument(QJsonObject{{"passed", true}, {"solids", 3}, {"native_selection", true},
             {"isolated_storage", true}, {"live_inference", false}, {"synthetic_demo", demo}}).toJson());

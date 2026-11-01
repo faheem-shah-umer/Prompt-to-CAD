@@ -28,4 +28,4 @@ The website maps the native app's existing semantic palette to a presentation su
 
 `.github/workflows/pages.yml` is a manual deployment workflow. It validates local links, prepares the static artifact and targets the `github-pages` environment. Configure that environment with required reviewers before first deployment. No website secret variables are needed; deployment uses GitHub's standard short-lived workflow permissions.
 
-Expected project URL after an approved successful deployment: the repository owner's GitHub Pages domain with `/Prompt-to-CAD/`. This is an expected location, not a claim that the site is deployed. The current owner instruction is to leave publication pending. The release CTA therefore points to Releases and clearly labels the portable candidate unpublished, rather than promising a nonexistent download.
+The site is a source-project overview with setup, architecture and license links. It offers no binary download or contribution program. Hosting remains manual; repository visibility is unchanged.

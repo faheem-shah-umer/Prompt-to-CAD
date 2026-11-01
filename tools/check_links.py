@@ -25,7 +25,7 @@ class Links(HTMLParser):
 
 
 def check(external=False):
-    paths = [ROOT / "README.md", ROOT / "CONTRIBUTING.md", *sorted((ROOT / "docs").glob("*.md")), ROOT / "site/index.html"]
+    paths = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md")), ROOT / "site/index.html"]
     errors, urls = [], set()
     count = 0
     for path in paths:

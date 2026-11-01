@@ -37,52 +37,44 @@ int main(int argc, char **argv) {
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption({"workspace", "Application source/runtime directory.", "directory"});
-    parser.addOption({"python", "Bundled Python interpreter.", "executable"});
+    parser.addOption({"python", "Python interpreter for the source workspace.", "executable"});
     parser.addOption({"open", "STEP, editable recipe or native project to open.", "path"});
     parser.addOption({"smoke-test", "Verify real viewer import/selection, write a screenshot, and exit."});
-    parser.addOption({"portable-smoke", "Isolated offline distribution check; no account access or inference."});
     parser.addOption({"demo-capture", "Capture a labelled synthetic demo in an isolated session.", "directory"});
     parser.addOption({"smoke-size", "Window size for UI validation (width x height).", "size"});
     parser.process(app);
-    const bool distributionCheck = parser.isSet("portable-smoke") || parser.isSet("demo-capture");
-    if (distributionCheck) {
-        const auto output = parser.isSet("demo-capture") ? parser.value("demo-capture") : qEnvironmentVariable("CAD_CHECK_OUTPUT");
+    const bool demoCapture = parser.isSet("demo-capture");
+    if (demoCapture) {
+        const auto output = parser.value("demo-capture");
         if (output.isEmpty() || !parser.isSet("open")) return 2;
         const auto isolated = QDir(output).absoluteFilePath("session-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
         qputenv("PROMPTCAD_HOME", (isolated + "/state").toUtf8());
         qputenv("PROMPTCAD_PROJECTS_DIR", (isolated + "/projects").toUtf8());
         qputenv("PROMPTCAD_IDENTITY_HOME", (isolated + "/identity").toUtf8());
         qputenv("CAD_UI_LOG", (isolated + "/ui.log").toUtf8());
-        app.setProperty("distributionCaptureDir", QDir(output).absolutePath());
+        app.setProperty("demoCaptureDir", QDir(output).absolutePath());
         app.setProperty("publicDemoCapture", parser.isSet("demo-capture"));
     }
-    if (parser.isSet("smoke-test") || distributionCheck) {
+    if (parser.isSet("smoke-test") || demoCapture) {
         QCoreApplication::setApplicationName("PromptToCADV2Validation");
         auto settingsPath =
-            qEnvironmentVariable("PROMPTCAD_HOME", QDir::tempPath() + "/promptcad-ui-" +
+            qEnvironmentVariable("PROMPTCAD_HOME", QDir::currentPath() + "/tmp/ui-" +
                                                        QUuid::createUuid().toString(QUuid::WithoutBraces));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsPath + "/ui-settings");
         QSettings settings;
         settings.clear();
-        if (distributionCheck) settings.setValue("v2/onboardingDone", true);
+        if (demoCapture) settings.setValue("v2/onboardingDone", true);
     }
     auto workspace = parser.value("workspace");
-    if (workspace.isEmpty()) {
-        auto packaged = QDir(QCoreApplication::applicationDirPath()).filePath("../app");
-        workspace =
-            QFileInfo::exists(packaged + "/backend/v2/service.py") ? packaged : QDir::currentPath();
-    }
+    if (workspace.isEmpty()) workspace = QDir::currentPath();
     workspace = QDir(workspace).absolutePath();
     const auto shaders = QDir(QCoreApplication::applicationDirPath()).filePath("resources/Shaders");
     if (QFileInfo::exists(shaders)) qputenv("CSF_ShadersDirectory", shaders.toUtf8());
     auto python = parser.value("python");
-    if (python.isEmpty()) {
-        auto bundled = QDir(QCoreApplication::applicationDirPath()).filePath("../python/python.exe");
-        python = QFileInfo::exists(bundled) ? bundled : QDir(workspace).filePath(".venv/Scripts/python.exe");
-    }
+    if (python.isEmpty()) python = QDir(workspace).filePath(".venv/Scripts/python.exe");
     app.setStyle("Fusion");
-    if ((parser.isSet("smoke-test") || distributionCheck) && qEnvironmentVariableIsSet("CAD_UI_THEME"))
+    if ((parser.isSet("smoke-test") || demoCapture) && qEnvironmentVariableIsSet("CAD_UI_THEME"))
         QSettings().setValue("v2/theme", qEnvironmentVariable("CAD_UI_THEME"));
     applyWorkspaceTheme(QSettings().value("v2/theme", "dark").toString(),
                         QSettings().value("v2/textSize", 14).toInt());

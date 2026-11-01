@@ -4,7 +4,7 @@ Dim files, shell, root, runtime, executable, quote, python
 Set files = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = files.GetParentFolderName(WScript.ScriptFullName)
-runtime = files.BuildPath(files.GetParentFolderName(root), files.GetFileName(root) & "-build\bin")
+runtime = files.BuildPath(root, ".local\desktop-build\bin")
 executable = files.BuildPath(runtime, "PromptToCAD.exe")
 quote = Chr(34)
 

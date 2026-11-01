@@ -3,7 +3,6 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { resolve, join, extname } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -25,7 +24,9 @@ const server = createServer((request, response) => {
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const url = `http://127.0.0.1:${server.address().port}/Prompt-to-CAD/`;
-const profile = mkdtempSync(join(tmpdir(), 'PromptCAD website check '));
+const temporary = join(root, 'tmp');
+mkdirSync(temporary, { recursive: true });
+const profile = mkdtempSync(join(temporary, 'website-browser-'));
 const child = spawn(browser, ['--headless=new', '--no-first-run', '--no-default-browser-check',
   '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
 const delay = ms => new Promise(done => setTimeout(done, ms));

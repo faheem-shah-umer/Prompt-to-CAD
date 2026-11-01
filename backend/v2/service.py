@@ -12,12 +12,7 @@ from .workspace import WorkspaceV2
 
 
 def application_folder():
-    folder = Path(__file__).resolve().parents[2]
-    if (folder.parent / "bin/PromptToCAD.exe").is_file() and (
-        folder.parent / "python/python.exe"
-    ).is_file():
-        return folder.parent
-    return folder
+    return Path(__file__).resolve().parents[2]
 
 
 def main():

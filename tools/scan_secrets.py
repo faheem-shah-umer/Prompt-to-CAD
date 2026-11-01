@@ -30,7 +30,7 @@ def main():
         cache.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(io.BytesIO(archive)) as package:
             executable.write_bytes(package.read("gitleaks.exe"))
-    output = ROOT / "artifacts/release-checks"
+    output = ROOT / "artifacts/privacy-checks"
     output.mkdir(parents=True, exist_ok=True)
     (ROOT / 'tmp').mkdir(exist_ok=True)
     snapshot = Path(tempfile.mkdtemp(prefix='public-source-', dir=ROOT / 'tmp'))
