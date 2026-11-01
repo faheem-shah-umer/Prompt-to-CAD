@@ -52,6 +52,8 @@ def main():
         findings = (json.loads(report.read_text()) or []) if report.is_file() else []
         scans.append({'scope': scope, 'exit_code': result.returncode, 'findings': len(findings),
             'rule_ids': sorted({item.get('RuleID', 'unknown') for item in findings})})
+    assert snapshot.resolve().is_relative_to((ROOT / 'tmp').resolve())
+    shutil.rmtree(snapshot)
     summary = {'scanner': 'gitleaks', 'version': VERSION, 'scans': scans,
         'findings': sum(item['findings'] for item in scans)}
     (output / "secret-scan-summary.json").write_text(json.dumps(summary, indent=2))
