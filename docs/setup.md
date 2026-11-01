@@ -1,6 +1,6 @@
 # Windows x64 contributor setup
 
-This guide describes the supported source path. A local integration build has been exercised; a fresh Windows runner is still required before claiming clean-machine reproducibility. See [release validation](release-validation.md).
+This guide describes the supported source path. A fresh Windows runner has passed setup, compilation, backend validation, packaging and extracted-ZIP smoke checks at commit `0cc68cc`. See [release validation](release-validation.md) for the exact run and remaining publication gates.
 
 ## Prerequisites and versions
 
@@ -43,6 +43,8 @@ Existing SDKs can be used through `CAD_SDK_PREFIX` (the directory containing `bi
 ```
 
 All tooling defaults to `build/`. To use another location, pass the same `--build-dir` to build, launch, UI checks, demo capture and packaging. `tools.run_native` supplies SDK DLL/plugin paths and the source workspace explicitly. Running the executable without that wrapper requires the same runtime environment. The native executable no longer embeds a developer checkout path.
+
+Launching an existing build does not require compiler discovery. `Prompt to CAD.vbs` preserves an existing sibling desktop runtime first, then falls back to the documented source build. The portable ZIP uses its own `Start-PromptToCAD.cmd` and bundled runtime.
 
 The app's design and CAD behavior remain the same. Changes made for distribution concern discovery, isolation, resources, notices, original icons and build/package paths.
 

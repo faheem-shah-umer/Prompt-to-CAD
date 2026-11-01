@@ -50,3 +50,11 @@ The output path must not already exist. Candidate manifests keep `publication_re
 | Remaining release gates | Fresh Windows CI run, exact corresponding-source/third-party redistribution clearance, historical-content decision and owner publication approval. |
 
 Raw local reports and browser captures stay in ignored `artifacts/`; they are not release assets or public documentation. The final archive must additionally pass `tools.verify_archive` and retain its checksum and manifest. Nothing in this local evidence claims that GitHub Pages or a GitHub Release has been published.
+
+## Verified private Windows CI — 1 November 2026
+
+[Windows portable review run](https://github.com/faheem-shah-umer/Prompt-to-CAD/actions/runs/41332239485), commit `0cc68cc`, passed on a fresh `windows-2022` runner with Python 3.11.9. It completed the checksum-pinned SDK bootstrap, native Release build, source privacy/link checks, 81 backend tests, portable assembly, relocated native/Python smoke checks, final ZIP checksum/inventory verification and an extracted-ZIP smoke check. The ZIP and checksum were retained as a private CI artifact. Repository privacy and history secret scanning also passed.
+
+The subsequent launcher correction preserves existing desktop shortcuts and removes compiler discovery from source-build launching; focused launcher/privacy regressions and the real Windows Script Host launcher check passed locally. No installed executable or user data was replaced.
+
+Clean-Windows validation is therefore complete for the recorded artifact. Remaining public-publication gates are exact corresponding-source and complete third-party redistribution clearance, historical metadata/media review, and owner approval. Repository visibility stays private; Pages and GitHub Releases remain unpublished.

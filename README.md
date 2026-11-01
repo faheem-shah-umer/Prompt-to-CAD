@@ -8,7 +8,7 @@ Prompt to CAD brings a native Qt/OpenCascade viewport, local project history and
 
 [Windows portable / Releases](https://github.com/faheem-shah-umer/Prompt-to-CAD/releases) · [Build from source](docs/setup.md) · [Contribute](CONTRIBUTING.md) · [Privacy](docs/privacy.md) · [Project website source](site/index.html)
 
-> **Release status:** the 0.5.0 Windows x64 portable ZIP is being prepared for review. Publication is pending clean Windows validation, final dependency-source review and owner approval. No installer is provided. A published portable ZIP will be attached to GitHub Releases; do not treat source archives as runnable builds.
+> **Release status:** the 0.5.0 Windows x64 portable ZIP has passed clean Windows CI and is available as a private review artifact. Public publication remains pending final dependency-source review, historical-data review and owner approval. No installer is provided. A published portable ZIP will be attached to GitHub Releases; do not treat source archives as runnable builds.
 
 ![The real Prompt to CAD desktop workspace showing a synthetic three-component mounting fixture, a component tree and an explicitly labelled synthetic conversation.](site/assets/workspace-dark.png)
 
@@ -64,7 +64,7 @@ py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m tools.run_native
 ```
 
-The executable is `build/bin/PromptToCAD.exe`. Build, launch, UI validation and packaging share `--build-dir`; explicit Qt/OCCT prefixes and an x64 developer prompt are also supported. See [the complete setup guide](docs/setup.md) for exact versions, prerequisites, validation, packaging and troubleshooting. A fresh-runner workflow is prepared; its first successful clean run is still required before release publication.
+The executable is `build/bin/PromptToCAD.exe`. Build, launch, UI validation and packaging share `--build-dir`; explicit Qt/OCCT prefixes and an x64 developer prompt are also supported. Launching a built application does not initialize compiler tools. The existing desktop shortcut keeps using its working sibling runtime when available. See [the complete setup guide](docs/setup.md) and [verified CI results](docs/release-validation.md).
 
 ### Focused checks
 

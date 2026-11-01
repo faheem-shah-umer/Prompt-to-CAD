@@ -46,14 +46,14 @@ def msvc_environment(setup):
     return result.stdout
 
 
-def build_environment(qt_prefix, occt_prefix, toolchain_env=None):
+def build_environment(qt_prefix, occt_prefix, toolchain_env=None, *, compiler=True):
     env = os.environ.copy()
     if toolchain_env:
         values = json.loads(Path(toolchain_env).read_text(encoding="utf-8"))
         for name in ("PATH", "INCLUDE", "LIB", "LIBPATH"):
             if name in values:
                 env[name] = values[name] + (os.pathsep + env.get(name, "") if name == "PATH" else "")
-    if os.name == "nt" and not shutil.which("cl", path=env.get("PATH")):
+    if compiler and os.name == "nt" and not shutil.which("cl", path=env.get("PATH")):
         vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
         if not vswhere.is_file():
             raise RuntimeError("Install Visual Studio 2022 Build Tools: Desktop development with C++ and a Windows SDK, or use its x64 developer prompt.")
