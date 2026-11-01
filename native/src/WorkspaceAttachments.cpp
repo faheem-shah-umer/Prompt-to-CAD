@@ -1,4 +1,5 @@
 #include "WorkspaceWindow.h"
+#include "LoadingIndicator.h"
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QComboBox>
@@ -130,6 +131,7 @@ void WorkspaceWindow::renderAttachmentDraft() {
 }
 
 void WorkspaceWindow::prepareImageSubmission(QJsonObject params) {
+    chatLoading->begin("Preparing reference images…");
     imagePreflight = true; busy = true; composer->setEnabled(false); models->setEnabled(false);
     renderAttachmentDraft(); updateSendControl(); refreshConnectionControls();
     const auto inputs = draftAttachments;
@@ -140,6 +142,7 @@ void WorkspaceWindow::prepareImageSubmission(QJsonObject params) {
 }
 
 void WorkspaceWindow::finishImagePreflight() {
+    chatLoading->finish();
     imagePreflight = false; busy = false; composer->setEnabled(true); models->setEnabled(true);
     renderAttachmentDraft(); updateSendControl(); refreshConnectionControls();
 }

@@ -38,3 +38,29 @@ Connected launches now schedule one coalesced model-discovery attempt after init
 The composer renders model and effort in one compact trigger. Its popover offers provider-reported discrete slider stops, current-level text/description, provider-default reset and a model link to the existing searchable picker. Other provider presentations/unknown defaults use a discrete list. Preferences, task snapshots, unsupported/unavailable states, keyboard access and both themes remain supported in source; behaviour validation is pending.
 
 All 21 Release build steps completed successfully with existing warnings. The existing shortcut now uses the new executable: 906,752 bytes; SHA-256 `f7e40f252b60fad868ae96765dc693177a4d364b1472ac8639da70d8bbb63df1`. Deployed bytes match the linked file. No tests, UI verification, live model requests or account authorization were run. Projects and credentials were preserved. Temporary compiler/SDK/build files were removed after deployment.
+
+## Expanded Working panel flicker fix — 2026-11-01
+
+Live assistant updates now retain the existing conversation widgets. Elapsed time, activity, phase and streamed reply text update in place, and unchanged labels/Markdown are left alone. Empty live replies retain hidden text/copy controls so the first streamed text does not require replacing the history; Copy reads the current reply. Structural or theme changes still rebuild the conversation. Replacement contents are parented to the scroll viewport, and `setWidget` disposes of the previous contents directly instead of detaching them with `takeWidget`, avoiding a transient top-level native widget.
+
+The explicitly requested Release build completed all 21 compile/link steps with existing compiler/SDK warnings. The launcher's actual target is the sibling `../Prompt-to-CAD-build/bin/PromptToCAD.exe`, which now contains this fix: 1,046,016 bytes; SHA-256 `139bc83b66659da5040879f360331167ab34c908d3cc83ac773f9aa7069cc654`. The launcher and shortcut were retained. The existing sibling toolchain and build directory were reused; no SDK downloads or installer were needed.
+
+`git diff --check` passed. No automated/UI tests, live inference or account authorization were run; visible flicker during an actual streamed task remains to be confirmed. Project and account data were not edited.
+
+## Delayed background-loading indicators — 2026-11-01
+
+Added a small native spinner with an operation label for background workspace requests, model discovery and reference-image preparation. Requests completing before the 200 ms delay show no indicator. Conversation loading uses a badge inside the chat viewport; project/document and other workspace operations use the status bar. Completion/failure cancels the delay and hides the indicator immediately. Agent generation continues to use the existing Working activity UI.
+
+The spinner uses the existing startup animation's 1,050 ms linear cycle and theme colors. Frames invalidate only the icon rectangle without rebuilding the conversation or changing layout. Hidden indicators stop their animation timers. Windows' client-area animation preference selects a static ring, with the loading label still visible, when animations are disabled. The implementation follows the local animate and animation-performance skills, adapted to native Qt painting.
+
+The Release build compiled and linked successfully using the existing sibling toolchain and build directory. The launcher's target `../Prompt-to-CAD-build/bin/PromptToCAD.exe` is updated: 1,055,744 bytes; SHA-256 `a650553262dd6758600d8f6f69ad61b87d3df536551a059fc0a6d01a31ab2ca7`. Existing SDK/Qt deprecation and shadowing warnings remain. No new SDKs, installer or launcher changes were needed.
+
+`git diff --check` passed. No automated/UI tests, live inference or account authorization were run. Delayed appearance, cancellation/error cleanup, dark/light appearance, reduced-motion behavior and perceived smoothness remain to be checked in the running app. Project and account data were not edited.
+
+## Accidental desktop windows during chat rendering — 2026-11-01
+
+The earlier flicker update retained widgets during streaming, but did not fix controls being shown before they had a parent. Expanded activity labels used `setVisible(true)` while unparented; reply/copy initialization also did this. Qt treats an unparented widget as an independent window, then hides/reparents it when the layout adopts it. This explains the brief app-icon/title-bar windows in the supplied screenshots; they are not the loading indicator. See the [Qt 6.9 ownership and visibility contract](https://doc.qt.io/archives/qt-6.9/qwidget.html#QWidget).
+
+Every chat row, turn, bubble and control now receives its intended parent in its constructor, before any visibility changes. `MessageText` requires a parent. The same early-visibility defect was corrected for the model-picker empty label and the Settings API section. Loading indicators remain embedded children with no independent window flags.
+
+The changed sources compiled and the Release executable linked successfully, with existing warnings. The existing launcher's target `../Prompt-to-CAD-build/bin/PromptToCAD.exe` is updated: 1,056,256 bytes; SHA-256 `c76ffad7036bd9317278ca68644d70c5487b37252ffa9e529f3d4b998d7f0ac6`. `git diff --check` passed. No automated/UI tests, live inference or account authorization were run; visible confirmation in the running app remains pending. Project and account data were not edited.

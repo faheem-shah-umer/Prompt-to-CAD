@@ -10,6 +10,7 @@ class QDialog;
 #include "RpcClient.h"
 class CadView;
 class ConversationView;
+class LoadingIndicator;
 class QSplitter;
 class QTreeWidget;
 class QTabBar;
@@ -121,6 +122,7 @@ class WorkspaceWindow : public QMainWindow {
     QTabBar *documentTabs;
     QTabWidget *managerTabs;
     ConversationView *chat;
+    LoadingIndicator *workspaceLoading, *chatLoading;
     QTextBrowser *properties;
     QPlainTextEdit *composer;
     QPushButton *sendButton, *selectionChip, *accountBadge, *agentButton;

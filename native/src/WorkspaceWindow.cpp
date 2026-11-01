@@ -2,6 +2,7 @@
 #include "WorkspaceControls.h"
 #include "CadView.h"
 #include "ConversationView.h"
+#include "LoadingIndicator.h"
 #include "WorkspaceIcons.h"
 #include "WorkspaceTheme.h"
 #include <QAction>
@@ -68,6 +69,19 @@ QPushButton *button(const QString &text, QBoxLayout *layout, std::function<void(
     return b;
 }
 QString html(const QString &value) { return value.toHtmlEscaped().replace("\n", "<br>"); }
+QString loadingMessage(const QString &method) {
+    static const QHash<QString, QString> messages{
+        {"v2.project.open", "Loading project…"}, {"v2.open_native", "Opening project…"},
+        {"v2.project.create", "Creating project…"}, {"v2.project.save", "Saving project…"},
+        {"v2.project.save_as", "Copying project…"}, {"v2.projects.refresh", "Refreshing projects…"},
+        {"v2.conversation.open", "Loading conversation…"}, {"v2.conversation.new", "Opening conversation…"},
+        {"v2.conversation.restart_session", "Restarting conversation session…"},
+        {"v2.document.open", "Loading document…"}, {"v2.import", "Importing model…"},
+        {"v2.export", "Exporting model…"},
+        {"v2.state", "Loading workspace…"}, {"v2.inspect", "Inspecting model…"},
+        {"v2.measure", "Measuring model…"}};
+    return messages.value(method, "Updating workspace…");
+}
 } // namespace
 
 WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, const QString &openPath,
@@ -541,6 +555,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     chat = new ConversationView;
     chat->setObjectName("conversationHistory");
     conversation->addWidget(chat, 1);
+    chatLoading = new LoadingIndicator(chat->viewport(), true);
     auto *composerFrame = new QFrame;
     composerFrame->setObjectName("composerFrame");
     auto *compose = new QVBoxLayout(composerFrame);
@@ -793,6 +808,9 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     });
     activity = new QLabel("Starting local CAD service…");
     statusBar()->addWidget(activity, 1);
+    workspaceLoading = new LoadingIndicator(statusBar());
+    statusBar()->addPermanentWidget(workspaceLoading);
+    workspaceLoading->hide();
     auto *units = new QLabel("mm  ·  Local workspace");
     statusBar()->addPermanentWidget(units);
 
@@ -986,6 +1004,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             activity->setText(event.value("message").toString());
     });
     connect(rpc, &RpcClient::stopped, this, [this](const QString &error) {
+        workspaceLoading->finish();
+        chatLoading->finish();
         Q_EMIT workspaceReady();
         showError(error);
     });
@@ -1060,7 +1080,11 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     refreshConnectionControls();
     undoAction->setEnabled(false);
     redoAction->setEnabled(false);
-    rpc->call(method, params, [this, done, method, params](const QJsonObject &result, const QString &failure) {
+    auto *indicator = method == "v2.task" ? nullptr
+        : method.startsWith("v2.conversation.") ? chatLoading : workspaceLoading;
+    if (indicator) indicator->begin(loadingMessage(method));
+    rpc->call(method, params, [this, done, method, params, indicator](const QJsonObject &result, const QString &failure) {
+        if (indicator) indicator->finish();
         busy = false;
         taskRunning = false;
         updateSendControl();
@@ -1113,6 +1137,7 @@ void WorkspaceWindow::newConversation() {
 }
 void WorkspaceWindow::openConversation(const QString &projectId, const QString &conversationId) {
     if (busy || projectId.isEmpty() || conversationId.isEmpty()) return;
+    setPanelVisible("conversation", true);
     call("v2.conversation.open", {{"project_id", projectId}, {"conversation_id", conversationId}},
          [this](auto) { revealConversation(); Q_EMIT conversationOpened(); });
 }
@@ -1415,12 +1440,14 @@ void WorkspaceWindow::discoverModels(bool refresh) {
     }
     automaticModelContext = modelConnectionContext();
     modelsLoading = true;
+    workspaceLoading->begin("Loading models…");
     refreshEffortControl();
     models->setProperty("catalogState","Loading models…");
     busy = true;
     updateSendControl();
     refreshConnectionControls();
     rpc->call("provider.models", {{"refresh", refresh}}, [this](auto r, auto error) {
+        workspaceLoading->finish();
         modelsLoading = false;
         busy = false;
         updateSendControl();

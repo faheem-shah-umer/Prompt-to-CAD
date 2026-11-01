@@ -225,7 +225,7 @@ void ModelPicker::showModelPopup() {
   list->setMinimumHeight(100);
   list->setMaximumHeight(260);
   layout->addWidget(list);
-  auto *empty = new QLabel(count() ? "No models match your search." : "No models available.");
+  auto *empty = new QLabel(count() ? "No models match your search." : "No models available.", panel);
   empty->setObjectName("modelSearchEmpty");
   empty->setWordWrap(true);
   empty->setVisible(count() == 0);

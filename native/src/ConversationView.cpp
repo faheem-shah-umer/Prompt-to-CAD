@@ -28,9 +28,17 @@ QString duration(double seconds) {
     return total >= 60 ? QString("%1m %2s").arg(total / 60).arg(total % 60)
                        : QString("%1s").arg(total);
 }
+QString activityText(const QJsonArray &events) {
+    QStringList log;
+    for (const auto &event : events) {
+        const auto text = event.toObject().value("message").toString();
+        if (!text.isEmpty()) log << text;
+    }
+    return log.join("\n\n");
+}
 class MessageText : public QTextBrowser {
   public:
-    explicit MessageText(const QString &text) {
+    MessageText(const QString &text, QWidget *parent) : QTextBrowser(parent) {
         setObjectName("messageText");
         setOpenLinks(false);
         setOpenExternalLinks(false);
@@ -43,6 +51,11 @@ class MessageText : public QTextBrowser {
         document()->setDefaultStyleSheet("p {margin-top:0; margin-bottom:12px; line-height:150%;} "
                                         "li {margin-bottom:7px;} pre,code {font-family:Consolas;} "
                                         "a {color:" + workspaceColors().link.name() + ";}");
+        setMessage(text);
+    }
+    void setMessage(const QString &text) {
+        if (source == text) return;
+        source = text;
         auto safe = text;
         safe.replace("![", "\\![");
         auto features = QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub);
@@ -56,15 +69,21 @@ class MessageText : public QTextBrowser {
             format.setBottomMargin(block.textList() ? 5 : 12);
             cursor.setBlockFormat(format);
         }
+        updateHeight();
     }
   protected:
     void resizeEvent(QResizeEvent *event) override {
         QTextBrowser::resizeEvent(event);
+        updateHeight();
+    }
+  private:
+    void updateHeight() {
         document()->setTextWidth(viewport()->width());
         const int height = int(std::ceil(document()->size().height())) + 4;
         if (this->height() != height)
             setFixedHeight(height);
     }
+    QString source;
 };
 } // namespace
 
@@ -130,9 +149,49 @@ void ConversationView::setMessages(const QJsonArray &messages, const QString &co
         if (!id.isEmpty() && !workingTasks.contains(id)) expanded.insert(id);
     for (const auto &id : workingTasks) if (!nextWorking.contains(id)) expanded.remove(id);
     workingTasks = nextWorking;
+    const bool updated = cachedTheme == theme && updateWorkingMessages(messages);
     entries = messages;
     cachedTheme = theme;
-    rebuild();
+    if (!updated) rebuild();
+}
+bool ConversationView::updateWorkingMessages(const QJsonArray &messages) {
+    if (!widget() || messages.size() != entries.size()) return false;
+    // Only live fields may change without rebuilding a turn's structure.
+    for (int i = 0; i < messages.size(); ++i) {
+        auto before = entries[i].toObject();
+        auto after = messages[i].toObject();
+        if (before == after) continue;
+        if (before.value("role") != "assistant" ||
+            !before.value("working").toBool() || !after.value("working").toBool() ||
+            !messageTurns.contains(i)) return false;
+        for (const auto &field : {"content", "activity", "phase", "elapsed_seconds"}) {
+            before.remove(field);
+            after.remove(field);
+        }
+        if (before != after) return false;
+    }
+    for (int i = 0; i < messages.size(); ++i) {
+        const auto message = messages[i].toObject();
+        if (!message.value("working").toBool() || entries[i] == messages[i]) continue;
+        auto *turn = messageTurns.value(i);
+        auto *toggle = turn->findChild<QToolButton *>("workDisclosure");
+        const auto caption = "Working · " + duration(message.value("elapsed_seconds").toDouble());
+        if (toggle->text() != caption) toggle->setText(caption);
+        auto *activity = turn->findChild<QLabel *>("activitySummary");
+        const auto log = activityText(message.value("activity").toArray());
+        if (activity->text() != log) activity->setText(log);
+        auto *phase = turn->findChild<QLabel *>("livePhase");
+        const auto phaseText = message.value("phase").toString();
+        if (phase->text() != phaseText) phase->setText(phaseText);
+        auto *reply = static_cast<MessageText *>(turn->findChild<QTextBrowser *>("messageText"));
+        const auto text = message.value("content").toString();
+        reply->setMessage(text);
+        reply->setVisible(!text.isEmpty());
+        auto *copy = turn->findChild<QToolButton *>("messageCopy");
+        copy->setProperty("messageText", text);
+        copy->setVisible(!text.isEmpty());
+    }
+    return true;
 }
 void ConversationView::wheelEvent(QWheelEvent *event) {
     ++scrollGeneration;
@@ -162,7 +221,8 @@ void ConversationView::rebuild() {
     const bool follow = following;
     const auto generation=scrollGeneration;
     restoring = true;
-    auto *content = new QWidget;
+    messageTurns.clear();
+    auto *content = new QWidget(viewport());
     content->setObjectName("chatContents");
     auto *stack = new QVBoxLayout(content);
     stack->setContentsMargins(0, 8, 0, 14);
@@ -171,22 +231,26 @@ void ConversationView::rebuild() {
 
     if (messages.isEmpty()) {
         auto *welcome = new QLabel("<h3>What would you like to build?</h3><p>Describe a part, include dimensions, "
-                                   "or select geometry to focus a change.</p>");
+                                   "or select geometry to focus a change.</p>", content);
         welcome->setWordWrap(true);
         stack->addWidget(welcome);
     }
-    int index = 0;
+    int index = -1;
     for (auto value : messages) {
+        ++index;
         const auto message = value.toObject();
         if (message.value("role") != "user" && message.value("role") != "assistant") continue;
         const bool user = message.value("role") == "user";
-        auto *row = new QWidget;
+        // Visibility may be set while building a turn. Keep the full parent chain
+        // attached so no chat control can briefly appear as a desktop window.
+        auto *row = new QWidget(content);
         row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
         auto *horizontal = new QHBoxLayout(row);
         horizontal->setContentsMargins(0, 0, 0, 0);
         if (user)
             horizontal->addStretch(1);
-        auto *turn = new QWidget;
+        auto *turn = new QWidget(row);
+        messageTurns.insert(index, turn);
         turn->setObjectName("messageTurn");
         turn->setProperty("user", user);
         turn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
@@ -194,7 +258,7 @@ void ConversationView::rebuild() {
         auto *turnLayout = new QVBoxLayout(turn);
         turnLayout->setContentsMargins(0, 0, 0, 0);
         turnLayout->setSpacing(4);
-        auto *bubble = new QFrame;
+        auto *bubble = new QFrame(turn);
         bubble->setObjectName("messageBubble");
         bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
         bubble->setProperty("user", user);
@@ -208,14 +272,14 @@ void ConversationView::rebuild() {
         const auto assistantName = !message.contains("agent") ? QString("Codex")
                                     : reportedName.isEmpty() ? QString("Assistant") : reportedName;
         if (!user) {
-            auto *author = new QLabel(assistantName);
+            auto *author = new QLabel(assistantName, bubble);
             author->setObjectName("messageAuthor");
             body->addWidget(author);
         }
         const auto events = message.value("activity").toArray();
         if (message.value("working").toBool() || !events.isEmpty() || message.contains("elapsed_seconds")) {
             const auto key = message.value("task_id").toString(QString::number(index));
-            auto *toggle = new QToolButton;
+            auto *toggle = new QToolButton(bubble);
             toggle->setObjectName("workDisclosure");
             toggle->setText(message.value("working").toBool()
                                 ? "Working · " + duration(message.value("elapsed_seconds").toDouble())
@@ -228,17 +292,11 @@ void ConversationView::rebuild() {
             toggle->setChecked(expanded.contains(key));
             toggle->setArrowType(toggle->isChecked() ? Qt::DownArrow : Qt::RightArrow);
             toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            auto *activity = new QLabel;
+            auto *activity = new QLabel(bubble);
             activity->setObjectName("activitySummary");
             activity->setWordWrap(true);
             activity->setTextFormat(Qt::PlainText);
-            QStringList log;
-            for (auto event : events) {
-                const auto text = event.toObject().value("message").toString();
-                if (!text.isEmpty())
-                    log << text;
-            }
-            activity->setText(log.join("\n\n"));
+            activity->setText(activityText(events));
             activity->setVisible(toggle->isChecked());
             connect(toggle, &QToolButton::toggled, this, [this, key, activity, toggle](bool open) {
                 if (open) expanded.insert(key); else expanded.remove(key);
@@ -248,7 +306,7 @@ void ConversationView::rebuild() {
             body->addWidget(toggle, 0, Qt::AlignLeft);
             body->addWidget(activity);
             if (message.value("working").toBool()) {
-                auto *phase = new QLabel(message.value("phase").toString());
+                auto *phase = new QLabel(message.value("phase").toString(), bubble);
                 phase->setObjectName("livePhase");
                 phase->setTextFormat(Qt::PlainText);
                 phase->setWordWrap(true);
@@ -256,18 +314,19 @@ void ConversationView::rebuild() {
             }
         }
         const auto text = message.value("content").toString();
-        if (!text.isEmpty()) {
-            auto *reply = new MessageText(text);
+        if (!text.isEmpty() || message.value("working").toBool()) {
+            auto *reply = new MessageText(text, bubble);
+            reply->setVisible(!text.isEmpty());
             connect(reply, &QTextBrowser::anchorClicked, this, &ConversationView::anchorClicked);
             body->addWidget(reply);
         }
         for (const auto& value : message.value("attachments").toArray()) {
             const auto reference = value.toObject();
             if (!reference.value("available").toBool() || reference.value("local_path").toString().isEmpty()) {
-                auto *missing = new QLabel("⚠ " + reference.value("name").toString() + " · image unavailable");
+                auto *missing = new QLabel("⚠ " + reference.value("name").toString() + " · image unavailable", bubble);
                 missing->setTextFormat(Qt::PlainText); missing->setWordWrap(true); body->addWidget(missing); continue;
             }
-            auto *image = new QToolButton;
+            auto *image = new QToolButton(bubble);
             image->setObjectName("referenceImage"); image->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             QImageReader reader(reference.value("local_path").toString()); reader.setScaledSize(reader.size().scaled(160, 100, Qt::KeepAspectRatio));
             const auto preview = reader.read();
@@ -279,10 +338,10 @@ void ConversationView::rebuild() {
         }
         const auto change = message.value("change").toObject();
         if (!change.isEmpty()) {
-            auto *card = new QFrame;
+            auto *card = new QFrame(bubble);
             card->setObjectName("changeCard");
             auto *cardLayout = new QVBoxLayout(card);
-            auto *links = new QLabel;
+            auto *links = new QLabel(card);
             links->setWordWrap(true);
             links->setTextFormat(Qt::RichText);
             const auto revision = change.value("result_revision_id").toString();
@@ -328,19 +387,21 @@ void ConversationView::rebuild() {
             cardLayout->addWidget(links);
             body->addWidget(card);
         }
-        if (!text.isEmpty()) {
+        if (!text.isEmpty() || message.value("working").toBool()) {
             const auto copyKey = context + "/" + message.value("task_id").toString(QString::number(index)) +
                                  "/" + message.value("role").toString();
-            auto *copy = new QToolButton;
+            auto *copy = new QToolButton(turn);
             copy->setObjectName("messageCopy");
             copy->setProperty("copyKey", copyKey);
+            copy->setProperty("messageText", text);
+            copy->setVisible(!text.isEmpty());
             copy->setFixedSize(26, 26);
             copy->setAccessibleName(user ? "Copy your message" : "Copy " + assistantName + " response");
             const bool copied = copiedUntil.value(copyKey) > QDateTime::currentMSecsSinceEpoch();
             setWorkspaceIcon(copy, copied ? "check" : "copy");
             copy->setToolTip(copied ? "Copied" : "Copy message");
-            connect(copy, &QToolButton::clicked, this, [this, text, copyKey, copy] {
-                QApplication::clipboard()->setText(text);
+            connect(copy, &QToolButton::clicked, this, [this, copyKey, copy] {
+                QApplication::clipboard()->setText(copy->property("messageText").toString());
                 copiedUntil[copyKey] = QDateTime::currentMSecsSinceEpoch() + 1500;
                 setWorkspaceIcon(copy, "check");
                 copy->setToolTip("Copied");
@@ -360,12 +421,10 @@ void ConversationView::rebuild() {
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);
-        ++index;
     }
     stack->addStretch(1);
-    auto *old = takeWidget();
+    // setWidget deletes the previous contents without detaching a native widget.
     setWidget(content);
-    delete old;
     QTimer::singleShot(0, this, [this, follow, oldScroll, generation] {
         if(generation==scrollGeneration) { verticalScrollBar()->setValue(follow ? verticalScrollBar()->maximum() : oldScroll);following=follow; }
         else if(following)verticalScrollBar()->setValue(verticalScrollBar()->maximum());

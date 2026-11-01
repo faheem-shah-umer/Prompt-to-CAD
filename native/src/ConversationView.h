@@ -24,6 +24,7 @@ class ConversationView : public QScrollArea {
     void keyPressEvent(QKeyEvent *) override;
   private:
     void rebuild();
+    bool updateWorkingMessages(const QJsonArray &messages);
     QJsonArray entries;
     QToolButton *latest;
     bool following = true, restoring = false;
@@ -33,4 +34,5 @@ class ConversationView : public QScrollArea {
     QString cachedTheme, context;
     QHash<QString, QString> componentNames;
     QSet<QString> workingTasks;
+    QHash<int, QWidget *> messageTurns;
 };

@@ -44,6 +44,8 @@ Orbit with left drag; pan with middle drag or Shift+left; zoom with the wheel or
 
 The conversation shows its persisted title/history, a removable selection chip, model selector, Send/Stop and compact observable activity. Expand Activity details for the task log. Internal viewport observations depict the submitted base revision, not regenerated candidate screenshots. Change cards link affected components and accepted revisions. Restoring a revision changes geometry and is undoable according to document history.
 
+Loads lasting more than about 200 ms show a small labelled spinner. Conversation loads appear inside the chat panel; project/document loads and other workspace operations appear in the status bar. Fast operations show no spinner, and completed/failed operations hide it immediately. The indicator follows the Windows animation preference and keeps a static loading ring/text when client-area animations are disabled.
+
 ## Geometry and task guarantees
 
 The task freezes project/document/revision, instance/body/entity references, units, measurements, coordinate placement and submitted images. Candidate IDs change after successful writes. Tools reject stale references and writes outside the authorized component set. Explicit restructuring transactions can consume selected bodies and create authorized outputs. Controlled scripts provide CadQuery geometry without arbitrary Python imports, shell, file or network access. Versioned project definition tools retain editable source and named parameters; direct edits can invalidate regeneration and are guarded. Colours, dimensions, tolerances and annotations have separate revision-owned metadata and validation paths.

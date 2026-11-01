@@ -9,6 +9,7 @@ find_package(OpenCASCADE 7.8.1 EXACT REQUIRED COMPONENTS FoundationClasses Model
 qt_add_executable(PromptToCAD WIN32 branding.qrc src/main.cpp src/WorkspaceWindow.cpp src/WorkspaceWindow.h src/MeshSource.cpp src/MeshSource.h src/CadView.cpp src/CadView.h src/RpcClient.cpp src/RpcClient.h)
 target_sources(PromptToCAD PRIVATE src/WorkspaceControls.cpp src/WorkspaceControls.h src/WorkspacePanels.cpp src/WorkspaceEngineering.cpp src/WorkspaceTheme.cpp src/WorkspaceTheme.h src/StartupSplash.cpp src/StartupSplash.h src/WorkspaceSettings.cpp src/WorkspaceChat.cpp src/ConversationView.cpp src/ConversationView.h src/WorkspaceIcons.cpp src/WorkspaceIcons.h)
 target_sources(PromptToCAD PRIVATE src/WorkspaceAttachments.cpp src/WorkspaceLayout.cpp src/WorkspaceProperties.cpp)
+target_sources(PromptToCAD PRIVATE src/LoadingIndicator.cpp src/LoadingIndicator.h)
 if(WIN32)
     enable_language(RC)
     configure_file(app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)

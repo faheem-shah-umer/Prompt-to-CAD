@@ -335,7 +335,7 @@ void WorkspaceWindow::account() {
     apiDisclosure->setText("API access · separately billed"); apiDisclosure->setCheckable(true);
     apiDisclosure->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); apiDisclosure->setArrowType(Qt::RightArrow);
     apiDisclosure->setObjectName("apiAccessDisclosure");
-    auto *apiSection = new QFrame; apiSection->setObjectName("settingsCard");
+    auto *apiSection = new QFrame(ai->parentWidget()); apiSection->setObjectName("settingsCard");
     auto *apiSectionLayout = new QVBoxLayout(apiSection); apiSectionLayout->addWidget(api);
     connect(apiDisclosure, &QToolButton::toggled, dialog, [mode, apiDisclosure](bool open) {
         apiDisclosure->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); mode->setCurrentIndex(open ? 1 : 0);
