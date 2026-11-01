@@ -44,6 +44,7 @@ def check(root, history=False):
     remote = git("config", "--get", "remote.origin.url").decode().strip()
     owner = re.search(r"github\.com[:/]([^/]+)/", remote)
     owner = owner[1].lower() if owner else None
+    public_repo = re.sub(r"\.git$", "", remote)
     findings = []
     try:
         icons = application_icons(root)
@@ -74,7 +75,10 @@ def check(root, history=False):
         if b"\0" in data[:8000]:
             continue
         for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
-            if owner and owner in line.lower():
+            public_line = line.replace(public_repo, "PUBLIC_REPOSITORY")
+            if owner:
+                public_line = public_line.replace(f"https://{owner}.github.io/Prompt-to-CAD", "PUBLIC_PROJECT_SITE")
+            if owner and owner in public_line.lower():
                 findings.append((relative, number, "repository owner identity in file"))
             for email in EMAIL.findall(line):
                 domain = email.rsplit("@", 1)[1].lower()

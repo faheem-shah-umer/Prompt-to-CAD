@@ -236,7 +236,7 @@ class StorageTests(unittest.TestCase):
 
 
 class PackagingPrivacyTests(unittest.TestCase):
-    def test_installer_inventory_excludes_local_projects_chats_and_credentials(self):
+    def test_portable_inventory_excludes_local_projects_chats_and_credentials(self):
         from tools.package_native import distribution_files
 
         with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:

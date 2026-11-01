@@ -1,75 +1,29 @@
-"""Files permitted in the source repository and packaged application source."""
-
+"""Reviewed source and public-media inclusion rules; shared with packaging."""
 from pathlib import PurePosixPath
+from tools.generate_icons import ICONS
 
-ROOT_FILES = {
-    ".gitattributes",
-    ".gitignore",
-    "LICENSE",
-    "README.md",
-    "THIRD_PARTY_NOTICES.md",
-    "Prompt to CAD.vbs",
-    "requirements.txt",
-    "requirements-dev.txt",
-}
-BRANDING = {
-    "assets/README.md",
-    "assets/app-icon.svg",
-    "assets/app-icon.png",
-    "assets/app-icon.ico",
-}
+ROOT_FILES = {".gitattributes", ".gitignore", "LICENSE", "README.md", "CONTRIBUTING.md", "VERSION",
+    "THIRD_PARTY_NOTICES.md", "Prompt to CAD.vbs", "requirements.txt", "requirements-dev.txt", "requirements-runtime-lock.txt"}
+BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "assets/app-icon.ico"}
+SITE_FILES = {"site/index.html", "site/styles.css", "site/main.js", "site/assets/app-icon.svg",
+    "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md"}
 
 
 def is_public_source(relative):
     path = PurePosixPath(str(relative).replace("\\", "/"))
-    if any(part.startswith(".") or part == "__pycache__" for part in path.parts[1:]):
-        return False
     name = path.as_posix()
-    if (
-        len(path.parts) == 3
-        and path.parts[:2] == ("assets", "icons")
-        and path.name
-        in {
-            "add.svg",
-            "arrow-up.svg",
-            "arrows.svg",
-            "check.svg",
-            "clock-three.svg",
-            "comment-alt.svg",
-            "cross.svg",
-            "cube.svg",
-            "disk.svg",
-            "edit.svg",
-            "folder-open.svg",
-            "folder.svg",
-            "menu-dots.svg",
-            "redo.svg",
-            "search.svg",
-            "settings.svg",
-            "stop.svg",
-            "undo.svg",
-            "user.svg",
-            "LICENSE",
-            "README.md",
-        }
-    ):
+    if name in ROOT_FILES or name in BRANDING or name in SITE_FILES or name == "tools/locks/sdk-win-64.lock":
         return True
-    if name in ROOT_FILES or name in BRANDING:
-        return True
-    if len(path.parts) < 2:
+    if len(path.parts) < 2 or any(part.startswith(".") or part == "__pycache__" for part in path.parts[1:]):
         return False
+    if path.parts[:2] == ("assets", "icons"):
+        return path.name in {item + ".svg" for item in ICONS} | {"LICENSE", "README.md"}
     if path.parts[0] == "backend":
         return path.suffix == ".py" or name == "backend/v2/CAD_INSTRUCTIONS.md"
     if path.parts[0] == "tools":
-        return path.suffix == ".py"
+        return path.suffix == ".py" or name == "tools/check_website.mjs"
     if path.parts[0] == "native":
-        return path.suffix in (".cpp", ".h", ".qrc", ".in") or name in (
-            "native/CMakeLists.txt",
-            "native/requirements-build.txt",
-        )
+        return path.suffix in (".cpp", ".h", ".qrc", ".in") or name in ("native/CMakeLists.txt", "native/requirements-build.txt")
     if path.parts[0] == "docs":
         return path.suffix == ".md"
-    return path.parts[:2] == (".github", "workflows") and path.suffix in (
-        ".yml",
-        ".yaml",
-    )
+    return path.parts[:2] == (".github", "workflows") and path.suffix in (".yml", ".yaml")

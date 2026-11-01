@@ -758,7 +758,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     auto *help = applicationMenus->addMenu("&Help");
     help->addAction("Credits", this, [this] {
         if (focusOpenDialog()) return;
-        QMessageBox::about(this, "Credits", "<b>Prompt to CAD</b><p>Uicons by <a href='https://www.flaticon.com/uicons'>Flaticon</a>.</p><p>See THIRD_PARTY_NOTICES.md for dependency licenses.</p>");
+        QMessageBox::about(this, "Credits", "<b>Prompt to CAD</b><p>Original Prompt to CAD artwork and interface icons.</p><p>Built with Qt, OpenCascade and CadQuery. See THIRD_PARTY_NOTICES.md for dependency licenses.</p>");
     });
     help->addAction("Supported capabilities", this, [this] {
         QMessageBox::information(this, "Prompt to CAD",
@@ -1233,6 +1233,8 @@ void WorkspaceWindow::openFile(const QString &supplied) {
         showState(r, true);
         if (smoke)
             QTimer::singleShot(1200, this, &WorkspaceWindow::smokeCheck);
+        if (!qApp->property("distributionCaptureDir").toString().isEmpty())
+            QTimer::singleShot(600, this, &WorkspaceWindow::captureDistributionCheck);
     });
 }
 void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
@@ -1632,6 +1634,44 @@ void WorkspaceWindow::applyOperation() {
         p["commands"]=commands;call("v2.command_batch",p);
     } else {p["command"] = command;call("v2.command", p);}
 }
+void WorkspaceWindow::captureDistributionCheck() {
+    const auto output = qApp->property("distributionCaptureDir").toString();
+    if (viewerFailed || viewer->bodyCount() != 3 || !viewer->smokeSelectFace()) {
+        qWarning("Distribution check failed: geometry import or native selection.");
+        QApplication::exit(2);
+        return;
+    }
+    viewer->removeSelectedEntity(-1);
+    viewer->fitAll();
+    const bool demo = qApp->property("publicDemoCapture").toBool();
+    if (demo) {
+        navigationPreferred = true; managerPreferred = true; conversationPreferred = true;
+        updateWorkspaceLayout();
+        conversationTitle->setText("A small fixture, clearly defined");
+        const QJsonArray messages{
+            QJsonObject{{"role", "user"}, {"content", "Create a 64 × 44 × 8 mm mounting plate with four holes, a central 20 mm column and a lofted cap. Use separate components."}},
+            QJsonObject{{"role", "assistant"}, {"content", "**Synthetic demonstration**\n\nThree CAD solids loaded: the mounting plate, column and lofted cap.\n\nThis reproducible fixture was built locally through the CAD backend. No live AI inference was used for this capture."}}};
+        chat->setMessages(messages, "public-synthetic-demo");
+    }
+    QTimer::singleShot(300, this, [this, output, demo] {
+        QDir().mkpath(output);
+        const auto viewportPath = output + "/viewport.png";
+        if (!viewer->saveViewport(viewportPath)) { QApplication::exit(2); return; }
+        auto capture = grab();
+        QPainter painter(&capture);
+        painter.drawImage(QRect(viewer->mapTo(this, QPoint()), viewer->size()), QImage(viewportPath));
+        painter.end();
+        const auto name = demo ? "workspace-" + qApp->property("workspaceTheme").toString() + ".png" : QString("workspace.png");
+        if (!capture.save(output + "/" + name)) { QApplication::exit(2); return; }
+        QFile report(output + "/distribution-smoke.json");
+        if (!report.open(QIODevice::WriteOnly)) { QApplication::exit(2); return; }
+        report.write(QJsonDocument(QJsonObject{{"passed", true}, {"solids", 3}, {"native_selection", true},
+            {"isolated_storage", true}, {"live_inference", false}, {"synthetic_demo", demo}}).toJson());
+        report.close();
+        QApplication::exit(0);
+    });
+}
+
 void WorkspaceWindow::smokeCheck() {
     if (!onboardingVerified) {
         if (!startupEmpty) { showError("Normal startup restored a previous project."); return; }

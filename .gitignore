@@ -7,6 +7,10 @@ venv/
 .coverage
 htmlcov/
 /.build-tools/
+/build/
+/.sdk/
+/release-staging/
+/site-preview/
 /.native-build/
 /.native-runtime/
 /.app-runtime/
@@ -108,3 +112,6 @@ Desktop.ini
 
 !/assets/icons/
 !/assets/icons/*.svg
+!/site/assets/workspace-dark.png
+!/site/assets/workspace-light.png
+!/site/assets/app-icon.svg

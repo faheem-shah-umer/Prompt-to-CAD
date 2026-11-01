@@ -1,27 +1,34 @@
-# Repository privacy
+# Privacy and repository boundaries
 
-Use the `prompt-to-cad-v2` branch. Git contains application source, documentation, tests and approved branding assets. User-created models, example CAD files, project/document/revision data, conversations, imported/reference files, exports and generated reports/screenshots are excluded. New projects are stored locally in ignored `Projects/<project name>/` folders inside the checkout, or beside a packaged app. Provider/runtime preferences use ignored `.promptcad/`; credentials remain protected by Windows in user storage. These local files are excluded from Git and installer inventories.
+The public tree contains application source, dependency declarations, build/check scripts, documentation, original branding and explicitly reviewed synthetic demonstration media. It does not contain personal projects, prompts, chats, account state, credentials, reference images or exports.
 
-The source policy in `tools/source_policy.py` is shared by the tracked-file checker and packager. It allows source files in designated source directories and the original logo assets. JSON/JSONL records, CAD/mesh files, databases, reference images and generated validation outputs are ignored and rejected if force-added. Add any future legitimate source asset to this reviewed policy explicitly. Validation creates fresh synthetic geometry in ignored temporary folders instead of reusing saved user designs.
+## Local application data
 
-Public OAuth client identifiers, endpoints, model names and the code handling authentication are application configuration, not account credentials. Do not replace them with a developer key or remove the login implementation. API keys, access/refresh/ID tokens, authorization codes, actual account email addresses, session exports and encrypted credential stores must never be committed.
+Projects and their documents/conversations/revisions use `Projects/` beside the source workspace or extracted portable application. Backend preferences use `.promptcad/`. Native appearance/window preferences use Qt's Windows user-settings registry namespace (`PromptToCAD/PromptToCADV2`); UI logs use the application's local-data directory under `%LOCALAPPDATA%`, unless `CAD_UI_LOG` is explicitly configured. Account material uses separate Windows-protected storage under the user's `.promptcad/v2/identity`; deleting a project does not imply deleting or revoking an account. Moving a project can preserve its local conversation history. Portable refers to the bundled runtime, not to storing every preference or credential inside the extracted folder.
 
-Run the tracked-file check before publishing:
+AI requests send the prompt and explicitly submitted CAD/image context to the configured provider. Local storage does not mean AI inference is offline. No personal account is included in source or distributions. Users authorize their own connection.
+
+## Inclusion and exclusion
+
+`.gitignore` broadly excludes projects, credentials, CAD files, generated media, caches, virtual environments, downloaded SDKs, build output and release staging. Ignore rules are only a first layer: `tools/source_policy.py` defines the reviewed public-source and exact media allowlist, shared by privacy checks and packaging. Never force-add user files or stage the entire working tree.
+
+Public media under `site/assets/` is newly captured from the real app using `tools.create_demo` and a synthetic local fixture. Every run isolates projects, account identity and Qt settings. Captures are labelled as synthetic (no live AI inference) and re-encoded without image metadata. [Provenance](../site/assets/PROVENANCE.md) records their hashes and generation method. Existing project or chat screenshots must never be reused for publicity.
+
+Portable packaging copies a reviewed file inventory and runtime dependency closure. It never copies `.venv`, the SDK environment, a user's project folders or credentials. It refuses to overwrite an existing staging directory. Dependency license texts may contain their upstream authors' attribution; that required legal text is not the owner's private account data. The exact dependency-owned `certifi/cacert.pem` is a public CA bundle, not an account key.
+
+## Audit commands and limits
 
 ```powershell
-.venv\Scripts\python.exe -m tools.check_privacy
-.build-tools\gitleaks\gitleaks.exe git . --log-opts="--all --reflog" --redact --no-banner
+python -m tools.check_privacy
+python -m tools.audit_history
+python -m tools.scan_secrets
+python -m tools.audit_package release-staging/<candidate>
 ```
 
-[Gitleaks](https://github.com/gitleaks/gitleaks) is a separate developer tool. Install an official release and verify its checksum; no account credentials are needed for a scan. CI also scans Git history with redacted output. The local privacy check reports file/line locations and reasons, never matching values. Test-only identities use reserved example domains.
+The source checker reports file/line and category without matching values. The history audit covers all reachable refs and unique blobs, reports non-neutral author metadata and files outside the current policy, and never rewrites history. Gitleaks is checksum-verified and runs with redaction; only summary counts/rule IDs are suitable for public reports. A clean secret scan is not proof that all historical media or every possible secret is harmless.
 
-For future local commits, set a repository-specific identity:
+The current audit found existing author metadata and historical screenshots/CAD examples/validation artifacts outside today's source policy. They were not copied into the current public-media set or portable runtime. Their provenance/privacy review remains unresolved. The repository is private, with a review branch for Windows CI. Public publication remains pending; no history rewrite, force-push, visibility change, Pages deployment or release publication is part of this review.
 
-```powershell
-git config --local user.name "Prompt to CAD contributors"
-git config --local user.email "noreply@prompt-to-cad.invalid"
-```
+Repository URLs necessarily identify the existing repository. Checks allow those exact repository/project-site URLs, rather than treating them as embedded credentials. They do not allow arbitrary owner identifiers elsewhere. Do not publish raw audit reports, login protocol logs or private matching values.
 
-`tools.check_privacy --history` also checks commit identities on local branches. Editing a file or renaming a branch does not erase its earlier versions or author metadata. Sanitizing already-pushed history changes commit IDs and requires a coordinated force-push. Other clones, pull-request refs, caches and the hosting account's owner name are separate surfaces; a clean scan does not establish anonymity or prove that every possible secret is absent.
-
-Never add raw scanner findings or login protocol logs to validation reports. Retain counts, scan scope and reviewed findings instead. If a live credential is discovered in Git, revoke it as well as removing it from history.
+If a live credential is found, stop publication and revoke it. Removal from the current tree cannot erase previous publication. Any future history remediation requires a separate, explicitly approved process; it is not performed by this work.

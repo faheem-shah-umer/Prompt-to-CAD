@@ -1,4 +1,6 @@
+"""Create a reviewed Windows x64 portable ZIP. No installer or user-data copying."""
 import argparse
+import hashlib
 import importlib.metadata as metadata
 import json
 import os
@@ -11,482 +13,294 @@ import sys
 import zipfile
 
 from packaging.requirements import Requirement
-from tools.build_native import ROOT, build_environment
-from tools.fixtures import write_assembly
+from tools.build_native import ROOT, add_sdk_arguments, resolve_sdks, build_environment
 from tools.source_policy import is_public_source
 
 
 def dependency_closure():
-    pending = [
-        "cadquery",
-        "pydantic",
-        "httpx",
-        "PyJWT",
-        "cryptography",
-        "trimesh",
-        "scipy",
-        "Pillow",
-    ]
-    distributions = {}
+    pending = [Requirement(line).name for line in (ROOT / "requirements.txt").read_text().splitlines()
+               if line.strip() and not line.startswith("#")]
+    result = {}
     while pending:
         distribution = metadata.distribution(pending.pop())
         name = distribution.metadata["Name"].lower().replace("_", "-")
-        if name in distributions:
+        if name in result:
             continue
-        distributions[name] = distribution
-        for specification in distribution.requires or []:
-            requirement = Requirement(specification)
+        result[name] = distribution
+        for value in distribution.requires or []:
+            requirement = Requirement(value)
             if requirement.marker is None or requirement.marker.evaluate({"extra": ""}):
                 pending.append(requirement.name)
-    return distributions
+    return result
 
 
 def copy_python(destination):
     base = Path(sys.base_prefix)
     destination.mkdir(parents=True)
     for source in base.iterdir():
-        if source.is_file() and (
-            source.suffix.lower() == ".dll"
-            or source.name in ("python.exe", "pythonw.exe", "LICENSE.txt")
-        ):
+        if source.is_file() and (source.suffix.lower() == ".dll" or source.name in ("python.exe", "pythonw.exe", "LICENSE.txt")):
             shutil.copy2(source, destination / source.name)
-    shutil.copytree(
-        base / "DLLs",
-        destination / "DLLs",
-        ignore=shutil.ignore_patterns("*.pdb", "*_test*", "_tkinter.pyd"),
-    )
-    with zipfile.ZipFile(
-        destination / "python311.zip", "w", zipfile.ZIP_DEFLATED
-    ) as archive:
+    shutil.copytree(base / "DLLs", destination / "DLLs", ignore=shutil.ignore_patterns("*.pdb", "*_test*", "_tkinter.pyd"))
+    with zipfile.ZipFile(destination / "python311.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for source in (base / "Lib").rglob("*"):
             relative = source.relative_to(base / "Lib")
-            if any(
-                part
-                in (
-                    "site-packages",
-                    "__pycache__",
-                    "test",
-                    "tests",
-                    "idlelib",
-                    "tkinter",
-                    "ensurepip",
-                    "venv",
-                )
-                for part in relative.parts
-            ):
+            if any(part in {"site-packages", "__pycache__", "test", "tests", "idlelib", "tkinter", "ensurepip", "venv"} for part in relative.parts):
                 continue
             if source.is_file() and source.suffix != ".pyc":
                 archive.write(source, relative.as_posix())
     site = destination / "Lib/site-packages"
     site.mkdir(parents=True)
-    packages = dependency_closure()
-    for distribution in packages.values():
+    packages = []
+    for name, distribution in sorted(dependency_closure().items()):
         package_root = Path(distribution.locate_file("")).resolve()
+        notices = []
         for relative in distribution.files or []:
             source = Path(distribution.locate_file(relative)).resolve()
-            if (
-                not source.is_file()
-                or not source.is_relative_to(package_root)
-                or "__pycache__" in source.parts
-            ):
+            if not source.is_file() or not source.is_relative_to(package_root) or "__pycache__" in source.parts or source.suffix in (".pyc", ".pdb") or source.name == "direct_url.json":
                 continue
             target = site / source.relative_to(package_root)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-    (destination / "python311._pth").write_text(
-        "python311.zip\nDLLs\nLib/site-packages\n.\n../app\nimport site\n"
-    )
-    return {
-        name: distribution.version for name, distribution in sorted(packages.items())
-    }
+            if re.search(r"licen[cs]e|notice|copying|copyright", source.name, re.I):
+                notices.append(target.relative_to(destination.parent).as_posix())
+        if not notices:
+            raise RuntimeError(f"No license/notice recorded for Python distribution {name}; package stopped.")
+        packages.append({"name": name, "version": distribution.version,
+            "license": distribution.metadata.get("License-Expression") or distribution.metadata.get("License") or "See retained notices",
+            "notices": notices,
+            "source_metadata": distribution.metadata.get_all("Project-URL", [])})
+    (destination / "python311._pth").write_text("python311.zip\nDLLs\nLib/site-packages\n.\n../app\nimport site\n", encoding="utf-8")
+    return packages
 
 
-def copy_native(destination, qt, occt, env):
-    destination.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / ".native-build/bin/PromptToCAD.exe", destination)
-    plugins = destination / "plugins/platforms"
-    plugins.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(qt / "lib/qt6/plugins/platforms/qwindows.dll", plugins)
-    images = destination / "plugins/imageformats"
-    images.mkdir(parents=True, exist_ok=True)
-    for name in ("qjpeg.dll", "qwebp.dll"):
-        shutil.copy2(qt / "lib/qt6/plugins/imageformats" / name, images)
-    (destination / "qt.conf").write_text("[Paths]\nPrefix=.\nPlugins=plugins\n")
+def conda_records(prefix):
+    folder = prefix.parent if prefix.name.lower() == "library" else prefix
+    result = {}
+    for path in (folder / "conda-meta").glob("*.json"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for relative in record.get("files", []):
+            result[(folder / relative).resolve()] = record
+    return result
+
+
+def copy_python_msvc(destination, prefix):
+    """Give Python extensions their own CRT, without relying on a global redist."""
+    owners = {}
+    for source, record in conda_records(prefix).items():
+        if (record['name'] in {'vc14_runtime', 'vcomp14'} and source.parent == prefix / 'bin'
+                and source.suffix.lower() == '.dll'):
+            shutil.copy2(source, destination / source.name)
+            owners[source] = record
+    if not owners:
+        raise RuntimeError('The SDK is missing redistributable MSVC runtime files for bundled Python.')
+    return owners
+
+
+def copy_native(destination, args, env):
+    destination.mkdir(parents=True)
+    executable = args.build_dir / "bin/PromptToCAD.exe"
+    if not executable.is_file():
+        raise RuntimeError("Build the application first using the same --build-dir.")
+    shutil.copy2(executable, destination)
+    plugin_root = args.qt_prefix / "lib/qt6/plugins"
+    pending = [destination / executable.name]
+    records = {**conda_records(args.qt_prefix), **conda_records(args.occt_prefix)}
+    owners = {}
+    for relative in ("platforms/qwindows.dll", "imageformats/qjpeg.dll", "imageformats/qwebp.dll"):
+        source = plugin_root / relative
+        target = destination / "plugins" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        pending.append(target)
+        owners[source.resolve()] = records.get(source.resolve())
+    (destination / "qt.conf").write_text("[Paths]\nPrefix=.\nPlugins=plugins\n", encoding="utf-8")
     dumpbin = shutil.which("dumpbin", path=env["PATH"])
     if not dumpbin:
-        raise RuntimeError(
-            "dumpbin is needed to collect the native runtime dependencies."
-        )
-    search = [
-        occt / "bin",
-        qt / "bin",
-        Path(sys.base_prefix),
-        Path(sys.base_prefix) / "DLLs",
-        Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32",
-    ]
-    pending = [
-        destination / "PromptToCAD.exe",
-        plugins / "qwindows.dll",
-        images / "qjpeg.dll",
-        images / "qwebp.dll",
-    ]
+        raise RuntimeError("dumpbin is missing; use the x64 Visual Studio developer environment.")
+    system = Path(os.environ["SystemRoot"]) / "System32"
+    search = [args.occt_prefix / "bin", args.qt_prefix / "bin", Path(sys.base_prefix), Path(sys.base_prefix) / "DLLs", system]
     copied = set()
     while pending:
-        source = pending.pop()
-        output = subprocess.run(
-            [dumpbin, "/DEPENDENTS", str(source)],
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        for name in re.findall(
-            r"^\s+([A-Za-z0-9_.+-]+\.dll)\s*$", output, re.MULTILINE | re.IGNORECASE
-        ):
-            if name.lower() in copied or name.lower().startswith(
-                ("api-ms-", "ext-ms-")
-            ):
+        output = subprocess.check_output([dumpbin, "/DEPENDENTS", str(pending.pop())], env=env, text=True)
+        for name in re.findall(r"^\s+([A-Za-z0-9_.+-]+\.dll)\s*$", output, re.M | re.I):
+            if name.lower() in copied or name.lower().startswith(("api-ms-", "ext-ms-")):
                 continue
             copied.add(name.lower())
-            candidates = [
-                folder / name for folder in search if (folder / name).is_file()
-            ]
-            if not candidates:
-                raise RuntimeError(f"Missing native dependency: {name}")
-            dependency = candidates[0]
-            if dependency.parent == search[-1]:
+            source = next((folder / name for folder in search if (folder / name).is_file()), None)
+            if source is None:
+                raise RuntimeError(f"Unresolved native DLL: {name}")
+            if source.parent == system:
+                if name.lower().startswith(("msvcp", "vcruntime", "concrt", "vcomp")):
+                    raise RuntimeError(f"{name} is available only from the host OS; install a redistributable SDK runtime before packaging.")
                 continue
-            target = destination / dependency.name
-            shutil.copy2(dependency, target)
+            target = destination / name
+            shutil.copy2(source, target)
             pending.append(target)
-    resources = occt / "share/opencascade/resources"
-    if resources.exists():
-        shutil.copytree(resources, destination / "resources", dirs_exist_ok=True)
+            owners[source.resolve()] = records.get(source.resolve())
+    resources = args.occt_prefix / "share/opencascade/resources/Shaders"
+    if not resources.is_dir():
+        raise RuntimeError("OCCT shader resources are missing.")
+    shutil.copytree(resources, destination / "resources/Shaders")
+    return owners
 
 
-def copy_sources(destination):
-    app = destination / "app"
-    tracked = None
-    if (ROOT / ".git").exists():
-        tracked = set(
-            subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
-            .decode()
-            .split("\0")
-        )
+def recipe_source_access(package):
+    rendered = package / 'info/recipe/meta.yaml'
+    text = rendered.read_text(encoding='utf-8') if rendered.is_file() else ''
+    declaration = re.search(r'(?ms)^source:\n(.*?)(?=^[A-Za-z_][A-Za-z_]*:|\Z)', text)
+    commit = re.search(r'(?m)^  sha: ([a-f0-9]{40})$', text)
+    repository = re.search(r'(?m)^  remote_url: (https://[^\s]+)$', text)
+    return {"rendered_source_declaration": declaration[1].strip() if declaration else None,
+        "recipe_repository": repository[1] if repository else None,
+        "recipe_commit": commit[1] if commit else None,
+        "corresponding_source_verified": False}
 
-    def copy_public(folder, target):
-        for path in (ROOT / folder).rglob("*"):
-            relative = path.relative_to(ROOT).as_posix()
-            if (
-                not path.is_file()
-                or not is_public_source(relative)
-                or (tracked is not None and relative not in tracked)
-            ):
-                continue
-            output = target / path.relative_to(ROOT / folder)
-            output.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, output)
 
-    for module in ("native", "v2"):
-        copy_public("backend/" + module, app / "backend" / module)
-    shutil.copy2(ROOT / "backend/__init__.py", app / "backend/__init__.py")
-    (app / "tmp").mkdir(exist_ok=True)
-    copy_public("docs", destination / "docs")
-    (destination / "README.md").write_text(
-        '# Prompt to CAD\n\n<img src="assets/app-icon.svg" alt="Prompt to CAD logo" width="80">\n\nRun bin/PromptToCAD.exe. Python, Qt and the CAD engine are included. Install Codex separately and connect your own eligible ChatGPT plan from Settings → AI connection. No credentials or model weights are included.\n\nSee [setup and capabilities](docs/setup.md), THIRD_PARTY_NOTICES.md, licences/, and source/ for buildable application source. This build is unsigned.\n',
-        encoding="utf-8",
-    )
-    source = destination / "source"
-    copy_public("assets", destination / "assets")
-    for folder in ("assets", "native", "tools", "backend"):
-        copy_public(folder, source / folder)
-    for name in ("requirements.txt", "requirements-dev.txt"):
-        shutil.copy2(ROOT / name, source / name)
+def native_notices(bundle, owners, args):
+    components = {}
+    records = {**conda_records(args.qt_prefix), **conda_records(args.occt_prefix)}
+    for source, record in owners.items():
+        if not record:
+            raise RuntimeError(f"No dependency provenance for {source.name}; use the fresh SDK created by tools.setup_windows.")
+        identity = f'{record["name"]}-{record["version"]}-{record["build"]}'
+        if identity in components:
+            continue
+        candidates = []
+        if record.get("link", {}).get("source"):
+            candidates.append(Path(record["link"]["source"]))
+        if record.get("extracted_package_dir"):
+            candidates.append(Path(record["extracted_package_dir"]))
+        package = next((path for path in candidates if (path / "info/licenses").is_dir()), None)
+        # The FreeType recipe puts notices in its matching development output,
+        # while the split DLL output has no licence files of its own.
+        notice_owner = record
+        if package is None and record["name"] == "libfreetype6":
+            notice_owner = next((item for item in records.values()
+                if item["name"] == "freetype" and item["version"] == record["version"]), None)
+            if notice_owner:
+                candidate = Path(notice_owner.get("link", {}).get("source", ""))
+                if (candidate / "info/licenses").is_dir():
+                    package = candidate
+        if package is None:
+            raise RuntimeError(f"Missing retained license texts for native package {identity}.")
+        target = bundle / "licences/native" / identity
+        shutil.copytree(package / "info/licenses", target)
+        # Only portable recipe files are copied; rendered build configuration contains host paths.
+        recipe = package / "info/recipe"
+        if recipe.is_dir():
+            for path in recipe.rglob("*"):
+                if path.is_file() and path.suffix in (".patch", ".diff"):
+                    destination = target / "patches" / path.relative_to(recipe)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, destination)
+        about = json.loads((package / "info/about.json").read_text()) if (package / "info/about.json").is_file() else {}
+        components[identity] = {"name": record["name"], "version": record["version"], "build": record["build"],
+            "license": record.get("license", "See retained notices"), "package_url": record.get("url"),
+            "sha256": record.get("sha256"), "upstream": about.get("dev_url") or about.get("home"),
+            "notices": target.relative_to(bundle).as_posix(),
+            "notice_package": notice_owner["name"] if notice_owner else None,
+            "selected_license": {"libfreetype6": "FTL", "freeimage": "FreeImage Public License (FIPL)"}.get(record['name'], record.get('license')),
+            "source_access": recipe_source_access(package)}
+    return list(components.values())
+
+
+def public_sources(bundle):
+    names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
+    source = bundle / "source"
+    for name in sorted(set(names)):
+        if not name or not is_public_source(name):
+            continue
+        path = ROOT / name
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError("Source inclusion refused a missing file or filesystem link.")
+        target = source / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        if name.startswith(("backend/native/", "backend/v2/")) or name == "backend/__init__.py":
+            runtime = bundle / "app" / name
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, runtime)
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
-        shutil.copy2(ROOT / name, destination / name)
-
-
-def nsis_string(text):
-    return str(text).replace("$", "$$").replace('"', '$\\"')
+        shutil.copy2(ROOT / name, bundle / name)
+    shutil.copytree(source / "docs", bundle / "docs", dirs_exist_ok=True)
 
 
 def distribution_files(bundle):
-    files = []
-    for folder in ("bin", "python", "licences", "source", "app", "docs", "assets"):
+    """The portable inventory excludes user folders even if added to staging."""
+    bundle = Path(bundle).resolve()
+    result = []
+    for folder in ("bin", "python", "licences", "source", "app", "docs"):
         for path in (bundle / folder).rglob("*"):
             if not path.is_file():
                 continue
-            if not path.resolve().is_relative_to(bundle.resolve()):
-                raise RuntimeError("A distribution file leaves its bundle directory.")
+            if path.is_symlink() or not path.resolve().is_relative_to(bundle):
+                raise RuntimeError("Distribution inventory contains a filesystem link.")
             relative = path.relative_to(bundle / folder).as_posix()
             if folder == "source" and not is_public_source(relative):
                 continue
-            if folder == "app" and not (
-                relative.startswith("backend/") and is_public_source(relative)
-            ):
+            if folder == "app" and not (relative.startswith("backend/") and is_public_source(relative)):
                 continue
-            if folder in ("docs", "assets") and not is_public_source(
-                folder + "/" + relative
-            ):
+            if folder == "docs" and not is_public_source("docs/" + relative):
                 continue
-            if path.suffix == ".dpapi" or path.name in (
-                "auth.json",
-                ".env",
-                "credentials.json",
-            ):
-                raise RuntimeError("Credential material cannot be packaged.")
-            files.append(path)
-    files += [
-        bundle / name
-        for name in (
-            "LICENSE",
-            "README.md",
-            "THIRD_PARTY_NOTICES.md",
-            "runtime-manifest.json",
-        )
-        if (bundle / name).is_file()
-    ]
-    return sorted(files)
+            if path.suffix.lower() in (".dpapi", ".pdb", ".pyc") or path.name in ("auth.json", "credentials.json", ".env"):
+                raise RuntimeError("Credential or development file in distribution inventory.")
+            result.append(path)
+    result.extend(bundle / name for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "runtime-manifest.json", "Start-PromptToCAD.cmd") if (bundle / name).is_file())
+    return sorted(result)
 
 
-def installer(bundle, compiler, output):
+def finish_bundle(bundle, packages, native, smoke_test=False):
+    from tools.prepare_legal_texts import prepare
+    shutil.copytree(prepare(), bundle / "licences/supplemental", dirs_exist_ok=True)
+    public_sources(bundle)
+    version = (ROOT / "VERSION").read_text().strip()
+    manifest = {"version": version, "target": "windows-x64", "python": platform.python_version(),
+        "qt": "6.9.0", "occt": "7.8.1", "packages": packages, "native": native,
+        "publication_ready": False, "pending_gates": ["clean Windows runner", "corresponding-source licensing review", "publication approval"]}
+    (bundle / "runtime-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (bundle / "README.md").write_text(f"# Prompt to CAD {version} · Windows x64 preview\n\nExtract the entire folder to a writable location. Run Start-PromptToCAD.cmd or bin/PromptToCAD.exe. No administrator privileges or development SDK are required. This is an unsigned review candidate, not a production CAD certification.\n\nPython and native CAD runtimes are included. For AI features, install Codex separately and connect your own eligible ChatGPT account or separately billed API key in Settings. Offline import, viewing, measurement, supported direct edits and export do not need AI.\n\nProjects are local in Projects/; backend preferences are in .promptcad/. Native appearance preferences use Windows user settings; logs use local application data. Windows-protected account storage is separate. The archive contains no account, project or conversation data. See docs/privacy.md, runtime-manifest.json, THIRD_PARTY_NOTICES.md and licences/.\n\nBuildable application source is under source/. Dynamic libraries remain replaceable; see docs/dependency-licensing.md. Publishing is withheld until every release gate is verified.\n", encoding="utf-8")
+    (bundle / "Start-PromptToCAD.cmd").write_text('@echo off\r\nset "PATH=%~dp0bin;%PATH%"\r\nstart "" "%~dp0bin\\PromptToCAD.exe"\r\n', encoding="utf-8")
+    if smoke_test:
+        from tools.smoke_package import check_package
+        check_package(bundle)
+    from tools.audit_package import audit
+    audit(bundle)
     files = distribution_files(bundle)
-    directories = sorted(
-        {
-            parent
-            for path in files
-            for parent in path.parents
-            if parent != bundle and parent.is_relative_to(bundle)
-        },
-        key=lambda path: len(path.parts),
-        reverse=True,
-    )
-    script = [
-        "Unicode true",
-        "RequestExecutionLevel user",
-        "SetCompressor zlib",
-        'Name "Prompt to CAD"',
-        f'Icon "{nsis_string(bundle / "assets/app-icon.ico")}"',
-        f'UninstallIcon "{nsis_string(bundle / "assets/app-icon.ico")}"',
-        f'OutFile "{nsis_string(output)}"',
-        'InstallDir "$LOCALAPPDATA\\Programs\\PromptToCADV2"',
-        "Page directory",
-        "Page instfiles",
-        "UninstPage uninstConfirm",
-        "UninstPage instfiles",
-        'Section "Application"',
-    ]
-    previous = None
-    for path in files:
-        folder = path.parent.relative_to(bundle)
-        if folder != previous:
-            location = (
-                "$INSTDIR"
-                if folder == Path(".")
-                else "$INSTDIR\\" + nsis_string(folder)
-            )
-            script.append(f'SetOutPath "{location}"')
-            previous = folder
-        script.append(f'File "{nsis_string(path)}"')
-    script += [
-        'SetOutPath "$INSTDIR"',
-        'WriteUninstaller "$INSTDIR\\Uninstall.exe"',
-        'CreateShortcut "$SMPROGRAMS\\Prompt to CAD.lnk" "$INSTDIR\\bin\\PromptToCAD.exe" "" "$INSTDIR\\bin\\PromptToCAD.exe" 0',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayName" "Prompt to CAD"',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayVersion" "0.4.0"',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "DisplayIcon" \'"$INSTDIR\\bin\\PromptToCAD.exe",0\'',
-        'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2" "UninstallString" \'"$INSTDIR\\Uninstall.exe"\'',
-        "SectionEnd",
-        'Section "Uninstall"',
-    ]
-    # Delete the installed inventory only; user-added files and local project data survive uninstall.
-    script += [
-        f'Delete "$INSTDIR\\{nsis_string(path.relative_to(bundle))}"' for path in files
-    ]
-    script += [
-        f'RMDir "$INSTDIR\\{nsis_string(path.relative_to(bundle))}"'
-        for path in directories
-    ]
-    script += [
-        'Delete "$INSTDIR\\Uninstall.exe"',
-        'RMDir "$INSTDIR"',
-        'Delete "$SMPROGRAMS\\Prompt to CAD.lnk"',
-        'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\PromptToCADV2"',
-        "SectionEnd",
-    ]
-    path = ROOT / "tmp/native-installer.nsi"
-    path.write_text("\n".join(script), encoding="utf-8")
-    subprocess.run([str(compiler), "/V2", str(path)], check=True)
+    manifest["files"] = {path.relative_to(bundle).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in files if path.name != "runtime-manifest.json"}
+    (bundle / "runtime-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    archive = bundle.parent / f"PromptToCAD-{version}-windows-x64.zip"
+    if archive.exists():
+        raise RuntimeError("Versioned ZIP already exists; choose another output parent. No archive was overwritten.")
+    with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED, compresslevel=6) as output:
+        for path in distribution_files(bundle):
+            output.write(path, f"PromptToCAD-{version}/" + path.relative_to(bundle).as_posix())
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    archive.with_suffix(".zip.sha256").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+    print(f"Review candidate created: {archive.name}; publication gates remain pending.")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--output", type=Path, default=ROOT / "dist-native/PromptToCAD-0.4.0"
-    )
-    parser.add_argument(
-        "--qt-prefix",
-        type=Path,
-        default=Path(
-            os.getenv(
-                "CAD_QT_PREFIX", str(Path.home() / "anaconda3/envs/occenv/Library")
-            )
-        ),
-    )
-    parser.add_argument(
-        "--occt-prefix",
-        type=Path,
-        default=Path(
-            os.getenv("CAD_OCCT_PREFIX", str(ROOT / ".native-runtime/occt/Library"))
-        ),
-    )
-    parser.add_argument("--installer", type=Path, help="Path to makensis.exe")
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_sdk_arguments(parser)
+    parser.add_argument("--output", type=Path, required=True, help="A new empty staging directory; never refreshed or overwritten.")
     parser.add_argument("--smoke-test", action="store_true")
-    parser.add_argument(
-        "--refresh",
-        action="store_true",
-        help="Reuse a staged runtime under dist-native and refresh application/source files.",
-    )
     args = parser.parse_args()
-    if sys.version_info[:2] != (3, 11):
-        parser.error("Build this package with the pinned Python 3.11 runtime.")
+    if sys.version_info[:2] != (3, 11) or os.name != "nt" or platform.machine().lower() not in ("amd64", "x86_64"):
+        parser.error("Package with CPython 3.11 on Windows x64.")
+    resolve_sdks(args)
     bundle = args.output.resolve()
-    refreshing = bundle.exists() and args.refresh
-    if bundle.exists() and not refreshing:
-        parser.error(
-            "The package output already exists. Choose a new output directory, or --refresh a staged build."
-        )
-    if refreshing and not bundle.is_relative_to((ROOT / "dist-native").resolve()):
-        parser.error("Only a staged package under dist-native can be refreshed.")
-    if refreshing and any(
-        path.is_file()
-        for folder in (
-            bundle / "Projects",
-            bundle / ".promptcad",
-            bundle / "app/Projects",
-            bundle / "app/.promptcad",
-        )
-        for path in folder.rglob("*")
-    ):
-        parser.error(
-            "This output contains local project or account data. Choose a fresh output directory; user data was not changed."
-        )
-    bundle.mkdir(parents=True, exist_ok=True)
-    env = build_environment(args.qt_prefix, args.occt_prefix)
-    if refreshing:
-        existing = json.loads((bundle / "runtime-manifest.json").read_text())
-        packages = {
-            name: distribution.version
-            for name, distribution in dependency_closure().items()
-        }
-        if packages != existing["packages"]:
-            parser.error("The dependency set changed. Build a new package directory.")
-    else:
-        print("Copying isolated Python runtime and modelling dependencies…", flush=True)
-        packages = copy_python(bundle / "python")
-    copy_native(bundle / "bin", args.qt_prefix, args.occt_prefix, env)
-    copy_sources(bundle)
-    licences = bundle / "licences"
-    licences.mkdir(exist_ok=True)
-    for name, location in {
-        "occt": args.occt_prefix / "share/doc/opencascade",
-        "qt": Path.home() / "anaconda3/pkgs/qt6-main-6.9.0-h83cda92_0/info/licenses",
-    }.items():
-        if location.exists():
-            shutil.copytree(location, licences / name, dirs_exist_ok=True)
-    qt_version = subprocess.run(
-        [str(args.qt_prefix / "bin/qtpaths6.exe"), "--qt-version"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    (bundle / "runtime-manifest.json").write_text(
-        json.dumps(
-            {
-                "version": "0.4.0",
-                "python": platform.python_version(),
-                "native": {"qt": qt_version, "occt": "7.8.1"},
-                "packages": packages,
-            },
-            indent=2,
-        )
-    )
-    if args.smoke_test:
-        test_env = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith(
-                (
-                    "QT_",
-                    "PYTHON",
-                    "LLM_",
-                    "OPENAI_",
-                    "CODEX_",
-                    "ANTHROPIC_",
-                    "PROMPTCAD_",
-                )
-            )
-        }
-        test_env["PATH"] = str(
-            Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32"
-        )
-        test_env["PROMPTCAD_HOME"] = str(ROOT / "tmp/packaged-v2-state")
-        test_env["CAD_UI_LOG"] = str(ROOT / "tmp/packaged-ui.log")
-        command = [
-            str(bundle / "bin/PromptToCAD.exe"),
-            "--smoke-test",
-            "--open",
-            str(write_assembly(ROOT / "tmp/packaged-fixture")),
-        ]
-        runtime_check = "import jwt, trimesh, scipy; from cryptography.hazmat.primitives.asymmetric import rsa; key=rsa.generate_private_key(public_exponent=65537,key_size=2048); token=jwt.encode({'sub':'package-test'},key,algorithm='RS256'); assert jwt.decode(token,key.public_key(),algorithms=['RS256'])['sub']=='package-test'; assert trimesh.Scene(trimesh.creation.box()).export(file_type='glb')[:4]==b'glTF'; print('V2 packaged authentication and mesh dependencies passed')"
-        subprocess.run(
-            [str(bundle / "python/python.exe"), "-B", "-c", runtime_check],
-            cwd=bundle / "app",
-            env=test_env,
-            check=True,
-            timeout=60,
-        )
-        subprocess.run(command, cwd=bundle, env=test_env, check=True, timeout=180)
-        report = json.loads((bundle / "app/tmp/native-smoke-report.json").read_text())
-        if not report["passed"]:
-            raise RuntimeError("The isolated packaged smoke test failed.")
-        shutil.copy2(
-            bundle / "app/tmp/native-workspace.png",
-            ROOT / "tmp/packaged-native-workspace.png",
-        )
-        shutil.copy2(
-            bundle / "app/tmp/native-smoke-report.json",
-            ROOT / "tmp/packaged-smoke-report.json",
-        )
-        for path in bundle.rglob("*"):
-            if path.is_file() and (
-                path.suffix == ".dpapi" or path.name in ("auth.json", ".env")
-            ):
-                raise RuntimeError(
-                    "Credential material must not be present in a distribution: "
-                    + str(path.relative_to(bundle))
-                )
-        for name in (
-            "native-smoke-report.json",
-            "native-workspace.png",
-            "native-viewport.png",
-            "native-settings.png",
-            "native-startup.png",
-            "native-appearance.png",
-            "native-agent-working.png",
-            "native-agent-completed.png",
-        ):
-            (bundle / "app/tmp" / name).unlink(missing_ok=True)
-        print(
-            "Packaged application passed with only Windows System32 on PATH.",
-            flush=True,
-        )
-    if args.installer:
-        installer(
-            bundle, args.installer, bundle.parent / "PromptToCAD-0.4.0-Setup.exe"
-        )
-    print(bundle, flush=True)
+    if bundle.exists():
+        parser.error("Output already exists. Choose a new staging directory; no files were changed.")
+    bundle.mkdir(parents=True)
+    env = build_environment(args.qt_prefix, args.occt_prefix, args.toolchain_env)
+    print("Copying the reviewed Python runtime...", flush=True)
+    packages = copy_python(bundle / "python")
+    print("Resolving native DLL dependencies...", flush=True)
+    owners = copy_native(bundle / "bin", args, env)
+    owners.update(copy_python_msvc(bundle / 'python', args.qt_prefix))
+    native = native_notices(bundle, owners, args)
+    finish_bundle(bundle, packages, native, args.smoke_test)
 
 
 if __name__ == "__main__":

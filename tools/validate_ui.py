@@ -13,16 +13,18 @@ import trimesh
 from backend.native.documents import write_json
 from backend.v2.workspace import WorkspaceV2
 from backend.v2.projects import Projects
-from tools.build_native import ROOT, build_environment
+from tools.build_native import ROOT, build_environment, add_sdk_arguments, resolve_sdks
 from tools.fixtures import write_assembly
 
 
 def main():
     parser = argparse.ArgumentParser()
+    add_sdk_arguments(parser)
     parser.add_argument(
         "--case", choices=("laptop-solid", "scaled-mesh", "large-solid")
     )
     args = parser.parse_args()
+    resolve_sdks(args)
     output = ROOT / "artifacts/validation"
     output.mkdir(parents=True, exist_ok=True)
     fixtures = ROOT / "tmp" / ("ui-fixture-" + uuid4().hex[:8])
@@ -47,13 +49,7 @@ def main():
         mesh_path = document["project_dir"]
     finally:
         workspace.worker.close()
-    qt = Path(
-        os.getenv("CAD_QT_PREFIX", str(Path.home() / "anaconda3/envs/occenv/Library"))
-    )
-    occt = Path(
-        os.getenv("CAD_OCCT_PREFIX", str(ROOT / ".native-runtime/occt/Library"))
-    )
-    base = build_environment(qt, occt)
+    base = build_environment(args.qt_prefix, args.occt_prefix, args.toolchain_env)
     cases = [
         (
             "laptop-solid",
@@ -90,7 +86,7 @@ def main():
             "CAD_UI_LOG": str(ROOT / "tmp" / (name + ".log")),
         }
         command = [
-            str(ROOT / ".native-build/bin/PromptToCAD.exe"),
+            str(args.build_dir / "bin/PromptToCAD.exe"),
             "--workspace",
             str(ROOT),
             "--smoke-test",

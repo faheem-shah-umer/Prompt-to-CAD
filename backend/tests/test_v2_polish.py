@@ -219,7 +219,10 @@ class WorkspacePolishTests(unittest.TestCase):
         self.assertNotEqual(copied["document"]["revision_id"], rid)
         self.assertNotEqual(copied["conversation"]["conversation_id"], cid)
         self.assertIsNone(copied["conversation"]["provider_session"])
-        self.assertEqual(fingerprint(copied["document"]), fingerprint(doc))
+        self.assertEqual(copied["document"]["components"], doc["components"])
+        # Save As deliberately remaps definition IDs; their content must survive.
+        self.assertEqual([d["sha256"] for d in copied["document"].get("definitions", [])],
+                         [d["sha256"] for d in doc.get("definitions", [])])
         message = copied["conversation"]["messages"][0]
         mapped_branch = message["change"]["result_revision_id"]
         self.assertNotEqual(mapped_branch, rid)

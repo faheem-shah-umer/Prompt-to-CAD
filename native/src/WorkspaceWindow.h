@@ -92,6 +92,7 @@ class WorkspaceWindow : public QMainWindow {
     void applyOperation();
     void showError(const QString &);
     void smokeCheck();
+    void captureDistributionCheck();
     void renderChat();
     void receiveAssistant(const QJsonObject &event, bool complete);
     void updateTask(const QString &status, const QString &message);

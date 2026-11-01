@@ -483,15 +483,18 @@ class V2WorkspaceTests(unittest.TestCase):
 
     def test_script_parameters_keep_other_instances_and_guard_downstream_edits(self):
         doc = self.assembly()
+        # A shared editable definition belongs to both outputs. A restricted
+        # selection must not change it; document scope permits regeneration.
+        with self.assertRaises(WorkspaceError):
+            self.workspace.dispatch("v2.command", {
+                "base_revision_id": doc["revision_id"],
+                "selection": {"revision_id": doc["revision_id"], "instance_id": "plate", "kind": "body"},
+                "command": {"type": "parameters", "instance_id": "plate", "values": {"width": 100}},
+            })
         changed = self.workspace.dispatch(
             "v2.command",
             {
                 "base_revision_id": doc["revision_id"],
-                "selection": {
-                    "revision_id": doc["revision_id"],
-                    "instance_id": "plate",
-                    "kind": "body",
-                },
                 "command": {
                     "type": "parameters",
                     "instance_id": "plate",
@@ -502,7 +505,10 @@ class V2WorkspaceTests(unittest.TestCase):
         self.assertAlmostEqual(
             changed["components"][0]["metrics"]["dimensions_mm"][0], 100
         )
-        self.assertEqual(changed["components"][1], doc["components"][1])
+        # Regeneration assigns a new shared definition ID and parameter metadata;
+        # the independent post's geometry and placement must still be unchanged.
+        for field in ("instance_id", "matrix", "metrics"):
+            self.assertEqual(changed["components"][1][field], doc["components"][1][field])
         drilled = self.workspace.dispatch(
             "v2.command",
             {
