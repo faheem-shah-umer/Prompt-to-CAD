@@ -41,7 +41,7 @@ def main():
         subprocess.run([str(executable), command, "--yes", "--no-rc", "--override-channels", "--root-prefix", str(cache / "cache"),
             "--prefix", str(prefix), "--channel", "conda-forge", "--strict-channel-priority",
             *specifications], check=True)
-        lock = subprocess.check_output([str(executable), "list", "--prefix", str(prefix), "--explicit"], text=True)
+        lock = subprocess.check_output([str(executable), "list", "--prefix", str(prefix), "--explicit", "--sha256"], text=True)
         (cache / "resolved-win-64.txt").write_text(lock, encoding="utf-8")
     try:
         resolve_sdks(args)

@@ -36,6 +36,16 @@ def resolve_sdks(args):
     return args
 
 
+def msvc_environment(setup):
+    command_processor = os.environ.get('COMSPEC', 'C:/Windows/System32/cmd.exe')
+    # Passing this as a list adds C-runtime escaping that cmd.exe does not parse.
+    command = f'"{command_processor}" /d /s /c ""{setup}" -no_logo -arch=x64 -host_arch=x64 >nul && set"'
+    result = subprocess.run(command, executable=command_processor, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError('Could not initialize Visual Studio 2022 x64 tools. Try its x64 Native Tools prompt and rerun setup.')
+    return result.stdout
+
+
 def build_environment(qt_prefix, occt_prefix, toolchain_env=None):
     env = os.environ.copy()
     if toolchain_env:
@@ -47,15 +57,12 @@ def build_environment(qt_prefix, occt_prefix, toolchain_env=None):
         vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
         if not vswhere.is_file():
             raise RuntimeError("Install Visual Studio 2022 Build Tools: Desktop development with C++ and a Windows SDK, or use its x64 developer prompt.")
-        installation = subprocess.check_output([str(vswhere), "-latest", "-products", "*", "-requires",
+        installation = subprocess.check_output([str(vswhere), "-latest", "-version", "[17.0,18.0)", "-products", "*", "-requires",
             "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"], text=True).strip()
         setup = Path(installation) / "Common7/Tools/VsDevCmd.bat"
         if not installation or not setup.is_file():
             raise RuntimeError("The Visual Studio C++ x64 workload is missing.")
-        result = subprocess.run(["cmd.exe", "/d", "/s", "/c",
-            f'""{setup}" -no_logo -arch=x64 -host_arch=x64 >nul && set"'],
-            capture_output=True, text=True, check=True)
-        for line in result.stdout.splitlines():
+        for line in msvc_environment(setup).splitlines():
             name, separator, value = line.partition("=")
             if separator and name.upper() in ("PATH", "INCLUDE", "LIB", "LIBPATH"):
                 env[name.upper()] = value
