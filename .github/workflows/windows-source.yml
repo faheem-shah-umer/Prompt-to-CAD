@@ -22,7 +22,6 @@ jobs:
       - name: Set up pinned Qt and OpenCascade SDKs
         run: .venv\Scripts\python.exe -m tools.setup_windows --download-sdk
       - name: Build source application
-        id: build
         run: .venv\Scripts\python.exe -m tools.build_native
       - name: Check tracked source privacy
         run: .venv\Scripts\python.exe -m tools.check_privacy
@@ -31,10 +30,8 @@ jobs:
       - name: Enable pinned software OpenGL for the CI viewport
         run: Copy-Item -LiteralPath .sdk\windows\Library\bin\opengl32sw.dll -Destination build\bin\opengl32.dll
       - name: Launch from outside the checkout and exercise the native viewport
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           QT_OPENGL: software
         run: .venv\Scripts\python.exe -m tools.validate_ui --case laptop-solid --launcher
       - name: Validate backend and portable launcher
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: .venv\Scripts\python.exe -m tools.validate

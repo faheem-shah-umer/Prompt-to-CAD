@@ -30,7 +30,7 @@ def main():
     output = ROOT / "artifacts/validation"
     output.mkdir(parents=True, exist_ok=True)
     fixtures = ROOT / "tmp" / ("ui-fixture-" + uuid4().hex[:8])
-    fixtures.mkdir()
+    fixtures.mkdir(parents=True)
     solid_path = str(write_assembly(fixtures))
     scene = trimesh.Scene()
     sphere = trimesh.creation.icosphere(subdivisions=2, radius=10)
