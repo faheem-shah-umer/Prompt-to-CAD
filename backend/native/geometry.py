@@ -61,6 +61,16 @@ def world_shape(folder, part):
     return load_shape(folder, part).moved(cq.Location(transform(part["matrix"])))
 
 
+def has_auxiliary_geometry(shape, solids):
+    for kind in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX):
+        members = TopTools_IndexedMapOfShape()
+        for solid in solids:
+            TopExp.MapShapes_s(solid.wrapped, kind, members)
+        if any(not members.Contains(entity.wrapped) for entity in indexed(shape, kind)):
+            return True
+    return False
+
+
 def store_shape(folder, shape, allow_compound=False):
     report = measure(shape)
     solids = shape.Solids()
@@ -69,12 +79,8 @@ def store_shape(folder, shape, allow_compound=False):
             or any(not s.isValid() or s.Volume() <= 1e-7 for s in solids)):
         raise WorkspaceError("An operation must leave one valid solid with positive volume.")
     # Reject loose faces/edges alongside solids, even for an explicit compound part.
-    for kind in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX):
-        members = TopTools_IndexedMapOfShape()
-        for solid in solids:
-            TopExp.MapShapes_s(solid.wrapped, kind, members)
-        if any(not members.Contains(entity.wrapped) for entity in indexed(shape, kind)):
-            raise WorkspaceError("Compound parts may contain valid solids only.")
+    if has_auxiliary_geometry(shape, solids):
+        raise WorkspaceError("Compound parts may contain valid solids only.")
     folder = Path(folder)
     assets = folder / "assets"
     assets.mkdir(exist_ok=True)
@@ -112,8 +118,11 @@ def import_step(path, folder):
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     components, nodes, definitions = [], [], {}
+    skipped_instances = 0
+    trimmed_definitions = set()
 
     def visit(label, parent, placement, inherited_color, ancestry):
+        nonlocal skipped_instances
         if len(ancestry) > 64:
             raise WorkspaceError("The assembly nesting exceeds 64 levels.")
         referred = TDF_Label()
@@ -160,11 +169,18 @@ def import_step(path, folder):
                 if child_colors and all(all(abs(a - b) < 1e-6 for a, b in zip(c, child_colors[0])) for c in child_colors):
                     rgb = child_colors[0]
             if key not in definitions:
-                shape = cq.Shape.cast(tool.GetShape_s(definition)).located(cq.Location())
-                solids = shape.Solids()
-                if not solids:
-                    raise WorkspaceError(f"'{name}' contains no solid. Surface-only STEP editing is not supported.")
-                definitions[key] = [(store_shape(folder, shape, allow_compound=len(solids) > 1), str(uuid4()))]
+                raw_shape = tool.GetShape_s(definition)
+                shape = None if raw_shape.IsNull() else cq.Shape.cast(raw_shape).located(cq.Location())
+                solids = shape.Solids() if shape is not None else []
+                definitions[key] = []
+                if solids:
+                    if has_auxiliary_geometry(shape, solids):
+                        shape = solids[0] if len(solids) == 1 else cq.Compound.makeCompound(solids)
+                        trimmed_definitions.add(key)
+                    definitions[key] = [(store_shape(folder, shape, allow_compound=len(solids) > 1), str(uuid4()))]
+            if not definitions[key]:
+                skipped_instances += 1
+                return
             for position, (asset, definition_id) in enumerate(definitions[key]):
                 components.append({"instance_id": str(uuid4()), "definition_id": definition_id,
                                    "parent_id": parent, "name": name if len(definitions[key]) == 1 else f"{name} {position + 1}",
@@ -175,9 +191,18 @@ def import_step(path, folder):
     for i in range(1, roots.Length() + 1):
         visit(roots.Value(i), None, gp_Trsf(), [0.65, 0.72, 0.82], [])
     if not components:
-        raise WorkspaceError("The STEP file contains no solid bodies.", "import_failed")
+        raise WorkspaceError("The STEP file contains no solid bodies. Surface-only STEP editing is not supported.", "import_failed")
+    warnings = []
+    if skipped_instances:
+        warnings.append(f"Skipped {skipped_instances} auxiliary STEP representation instance(s) with no solid bodies. "
+                        "Surfaces, curves and reference geometry are not imported for editing.")
+    if trimmed_definitions:
+        warnings.append(f"Ignored auxiliary surface, curve or reference geometry in {len(trimmed_definitions)} "
+                        "solid-bearing STEP definition(s). Their solid bodies were retained.")
+    if len(components) > 100:
+        warnings.append("This assembly exceeds the 100-component tested target.")
     return {"components": components, "assembly_nodes": nodes, "origin": "step",
-            "warnings": ["This assembly exceeds the 100-component tested target."] if len(components) > 100 else []}
+            "warnings": warnings}
 
 
 def from_recipe(recipe, folder):

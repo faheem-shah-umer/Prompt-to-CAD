@@ -70,3 +70,7 @@ When specifically requested, use synthetic projects/images/credentials to valida
 - Native labels, colour/editor dialogs, clipboard/drop/previews, change cards and compact composer layouts in dark/light themes and Windows scaling.
 
 No personal project, account, registration or reference image should be used for these checks without an explicit request.
+
+## STEP assemblies with reference geometry
+
+STEP import retains solid-bearing XCAF definitions, their assembly groups, instance placements, names and colours. Surface-only, curve-only and empty reference definitions are skipped with an import warning. Loose auxiliary faces/edges/vertices alongside solids are removed at the import boundary; the remaining solids still pass the normal validity and positive-volume checks. Modelling operations continue to reject loose non-solid topology. A file containing no solid bodies is still rejected. Warnings are stored with the imported revision and shown as native notifications. No original sketches, constraints or editable surface history are inferred.
