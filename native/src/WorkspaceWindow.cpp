@@ -16,6 +16,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -1736,8 +1737,16 @@ void WorkspaceWindow::smokeCheck() {
         viewer->smokeSelectFace();
         const int originalModelCount=models->count(),originalModel=models->currentIndex();
         models->addItem("Fixture model A","fixture-a");models->addItem("Fixture model B","fixture-b");
-        models->showPopup();QApplication::processEvents();
-        auto *modelPanel=findChild<QFrame *>("modelPopover");auto *modelSearch=modelPanel?modelPanel->findChild<QLineEdit *>("modelSearch"):nullptr;
+        models->showPopup();
+        QElapsedTimer popupWait;
+        popupWait.start();
+        QFrame *modelPanel = nullptr;
+        QLineEdit *modelSearch = nullptr;
+        while (popupWait.elapsed() < 1000 && !modelSearch) {
+            QApplication::processEvents(QEventLoop::AllEvents, 25);
+            modelPanel = findChild<QFrame *>("modelPopover");
+            modelSearch = modelPanel ? modelPanel->findChild<QLineEdit *>("modelSearch") : nullptr;
+        }
         if(!modelSearch){showError("Searchable model popover did not open.");return;}
         modelSearch->setText("model B");modelPanel->grab().save(workspace+"/tmp/native-model-picker.png");QApplication::sendEvent(modelSearch,&enter);QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
         if(models->currentData().toString()!="fixture-b"){showError("Model search keyboard choice failed.");return;}
