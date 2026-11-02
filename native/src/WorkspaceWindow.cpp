@@ -1737,17 +1737,13 @@ void WorkspaceWindow::smokeCheck() {
         viewer->smokeSelectFace();
         const int originalModelCount=models->count(),originalModel=models->currentIndex();
         models->addItem("Fixture model A","fixture-a");models->addItem("Fixture model B","fixture-b");
-        models->showPopup();
+        const bool modelsEnabled = models->isEnabled();
+        models->setEnabled(true);
+        static_cast<ModelPicker *>(models)->showModelPopup();
         QElapsedTimer popupWait;
         popupWait.start();
         QFrame *modelPanel = nullptr;
         QLineEdit *modelSearch = nullptr;
-        auto *effortPanel = findChild<QFrame *>("effortPopover");
-        auto *modelLink = effortPanel ? effortPanel->findChild<QToolButton *>("effortModelLink") : nullptr;
-        if (modelLink) {
-            modelLink->click();
-            QApplication::processEvents(QEventLoop::AllEvents, 25);
-        }
         while (popupWait.elapsed() < 1000 && !modelSearch) {
             QApplication::processEvents(QEventLoop::AllEvents, 25);
             modelPanel = findChild<QFrame *>("modelPopover");
@@ -1756,7 +1752,7 @@ void WorkspaceWindow::smokeCheck() {
         if(!modelSearch){showError("Searchable model popover did not open.");return;}
         modelSearch->setText("model B");modelPanel->grab().save(workspace+"/tmp/native-model-picker.png");QApplication::sendEvent(modelSearch,&enter);QApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
         if(models->currentData().toString()!="fixture-b"){showError("Model search keyboard choice failed.");return;}
-        while(models->count()>originalModelCount)models->removeItem(models->count()-1);models->setCurrentIndex(originalModel);
+        while(models->count()>originalModelCount)models->removeItem(models->count()-1);models->setCurrentIndex(originalModel);models->setEnabled(modelsEnabled);
         if(findChild<QPushButton *>("undoToolbar")->isEnabled()&&findChild<QPushButton *>("undoToolbar")->cursor().shape()!=Qt::PointingHandCursor){showError("Clickable button cursor regression failed.");return;}
         manageProjects();auto *library=findChild<QDialog *>("projectCatalogue");auto *libraryTabs=library?library->findChild<QTabWidget *>("libraryTabs"):nullptr;
         if(!libraryTabs||libraryTabs->count()!=2||libraryTabs->tabText(0)!="Archive"||libraryTabs->tabText(1)!="Trash"){showError("Archive and Trash were not separate views.");return;}
