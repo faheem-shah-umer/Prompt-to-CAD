@@ -28,10 +28,13 @@ jobs:
         run: .venv\Scripts\python.exe -m tools.check_privacy
       - name: Check documentation links
         run: .venv\Scripts\python.exe -m tools.check_links
-      - name: Validate backend and portable launcher
-        run: .venv\Scripts\python.exe -m tools.validate
+      - name: Enable pinned software OpenGL for the CI viewport
+        run: Copy-Item -LiteralPath .sdk\windows\Library\bin\opengl32sw.dll -Destination build\bin\opengl32.dll
       - name: Launch from outside the checkout and exercise the native viewport
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           QT_OPENGL: software
         run: .venv\Scripts\python.exe -m tools.validate_ui --case laptop-solid --launcher
+      - name: Validate backend and portable launcher
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: .venv\Scripts\python.exe -m tools.validate

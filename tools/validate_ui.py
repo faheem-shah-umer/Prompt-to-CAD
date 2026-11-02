@@ -109,12 +109,15 @@ def main():
             command, **launch_options, env=env, capture_output=True, text=True, timeout=180
         )
         if result.returncode:
+            ui_log = Path(env["CAD_UI_LOG"])
+            diagnostics = ui_log.read_text(encoding="utf-8", errors="replace")[-6000:] if ui_log.is_file() else "No native UI log was written."
             raise RuntimeError(
                 name
                 + " (exit "
                 + str(result.returncode)
                 + "): "
                 + result.stderr[-3000:]
+                + "\n" + diagnostics
             )
         report = json.loads((ROOT / "tmp/native-smoke-report.json").read_text())
         if not report["passed"] or min(report.get("viewport_size", [0, 0])) < 300:

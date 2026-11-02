@@ -53,7 +53,7 @@ The standard-part adapter keeps CadQuery/OCP versions unchanged. See [standard p
 .venv\Scripts\python.exe -m tools.validate_ui --case laptop-solid
 ```
 
-Run checks deliberately. They use synthetic data and no paid inference. The manual **Windows source check** workflow installs dependencies and builds on a fresh `windows-2022` x64 runner, runs the backend/launcher and privacy/link checks, then runs `tools.validate_ui --case laptop-solid --launcher`. This last check invokes the `.cmd` from outside the checkout with isolated synthetic state; CI requests Qt software OpenGL. A successful run verifies the specific source commit shown in that run, not subsequent local edits.
+Run checks deliberately. They use synthetic data and no paid inference. The manual **Windows source check** workflow installs dependencies and builds on a fresh `windows-2022` x64 runner, runs privacy/link checks, exercises `tools.validate_ui --case laptop-solid --launcher`, and validates the backend/launcher tests. The viewport check invokes the `.cmd` from outside the checkout with isolated synthetic state. For the CI runner's graphics environment, it copies the pinned Qt SDK's `opengl32sw.dll` to the ignored `build/bin/opengl32.dll` so OpenCascade's native Windows OpenGL context also uses software rendering. Normal source builds use the installed graphics driver. A successful run verifies the specific source commit shown in that run, not subsequent local edits.
 
 For synthetic README/site media, `python -m tools.create_demo` uses isolated sessions under `artifacts/`. Never reuse private projects or chats.
 
