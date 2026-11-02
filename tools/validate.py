@@ -36,6 +36,8 @@ def main():
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(json.dumps(report), flush=True)
+    for test, traceback in result.failures + result.errors:
+        print(f"{test}\n{traceback}", flush=True)
     raise SystemExit(0 if result.wasSuccessful() else 1)
 
 
