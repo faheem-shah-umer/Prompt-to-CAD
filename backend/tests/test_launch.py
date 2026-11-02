@@ -18,7 +18,7 @@ class DeveloperLauncherTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="Prompt to CAD ")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.sdk = self.root / "SDK with spaces"
         self.build = self.root / "build"
         self.stack = self.enterContext(ExitStack())
