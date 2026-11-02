@@ -1742,6 +1742,12 @@ void WorkspaceWindow::smokeCheck() {
         popupWait.start();
         QFrame *modelPanel = nullptr;
         QLineEdit *modelSearch = nullptr;
+        auto *effortPanel = findChild<QFrame *>("effortPopover");
+        auto *modelLink = effortPanel ? effortPanel->findChild<QToolButton *>("effortModelLink") : nullptr;
+        if (modelLink) {
+            modelLink->click();
+            QApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
         while (popupWait.elapsed() < 1000 && !modelSearch) {
             QApplication::processEvents(QEventLoop::AllEvents, 25);
             modelPanel = findChild<QFrame *>("modelPopover");
