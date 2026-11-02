@@ -59,6 +59,9 @@ void RpcClient::start(const QString& workspace, const QString& python, const QSt
     auto env = QProcessEnvironment::systemEnvironment();
     env.insert("PYTHONUNBUFFERED", "1");
     env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONNOUSERSITE", "1");
+    env.insert("PYTHONPATH", QDir(workspace).absolutePath());
+    env.insert("PROMPTCAD_WORKSPACE", QDir(workspace).absolutePath());
     process.setProcessEnvironment(env);
     process.setWorkingDirectory(workspace);
     process.setProgram(python);

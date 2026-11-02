@@ -36,6 +36,16 @@ class Workspace:
             timeout = min(
                 timeout if timeout is not None else self.worker.timeout, remaining
             )
+        command = params.get("command", {})
+        standard_parameters = (method == "apply" and command.get("type") == "parameters" and
+            any(p.get("standard_part") and p["instance_id"] == command.get("instance_id")
+                for p in params.get("snapshot", {}).get("components", [])))
+        if method in ("standard_parts", "standard_part") or standard_parameters:
+            worker = GeometryWorker(self.projects_dir / ".logs", timeout=self.worker.timeout)
+            try:
+                return worker.call(method, params, cancel=self.cancelled, progress=self.notify, timeout=timeout)
+            finally:
+                worker.close()
         return self.worker.call(
             method, params, cancel=self.cancelled, progress=self.notify, timeout=timeout
         )

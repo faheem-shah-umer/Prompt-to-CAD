@@ -38,6 +38,7 @@ projects/
 /Projects/
 native-projects/
 runs/
+logs/
 generation-jobs/
 exports/
 backups/

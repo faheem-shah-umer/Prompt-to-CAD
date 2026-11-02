@@ -105,7 +105,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton#quietButton { color:@secondary@; }
         QPushButton#quietButton:disabled { color:@disabled@; }
         QPushButton#usageBadge { padding:4px 8px; font-size:12px; text-align:left; }
-        #rail QPushButton#accountBadge, #rail QPushButton#accountBadge:hover, #rail QPushButton#accountBadge:pressed, #rail QPushButton#accountBadge:focus { background:transparent; border:0; padding:0; }
+        #rail QPushButton#accountBadge, #rail QPushButton#accountBadge:hover, #rail QPushButton#accountBadge:pressed, #rail QPushButton#accountBadge:focus { background:transparent; border:0; padding:0; min-width:40px; max-width:40px; min-height:40px; max-height:40px; }
         QTreeWidget, QListWidget, QTextBrowser, QPlainTextEdit, QLineEdit { background:@raised@; border:1px solid @border@; border-radius:8px; padding:8px; selection-background-color:@selected@; selection-color:@text@; }
         QTreeWidget:focus[keyboardFocus="true"], QListWidget:focus[keyboardFocus="true"], QPlainTextEdit:focus, QLineEdit:focus { border-color:@focus@; }
         QLineEdit { min-height:20px; padding:6px 8px; }
@@ -137,6 +137,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:4px 6px; font-size:12px; }
         QToolButton#workDisclosure { padding:3px 0; color:@secondary@; }
         QLabel#activitySummary, QLabel#livePhase { color:@secondary@; }
+        QScrollArea#workActivityScroll, QScrollArea#workActivityScroll > QWidget { background:transparent; border:0; padding:0; }
         QFrame#changeCard { background:transparent; border:0; border-top:1px solid @border@; border-radius:0; padding:4px; }
         QFrame#notificationHost { background:transparent; }
         QFrame#notificationCard[severity="error"] { border-left:2px solid @danger@; }

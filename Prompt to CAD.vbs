@@ -20,7 +20,7 @@ If Not files.FileExists(executable) Or Not files.FileExists(files.BuildPath(runt
         shell.Run quote & python & quote & " -m tools.run_native", 1, False
         WScript.Quit 0
     End If
-    MsgBox "No application build was found. Follow docs/setup.md to build it, or use Start-PromptToCAD.cmd from the portable ZIP.", vbExclamation, "Prompt to CAD"
+    MsgBox "No application build was found. Follow README.md or docs/setup.md to set up dependencies and build build\bin\PromptToCAD.exe, then run Run-PromptToCAD.cmd.", vbExclamation, "Prompt to CAD"
     WScript.Quit 1
 End If
 

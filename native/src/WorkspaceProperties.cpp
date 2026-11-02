@@ -36,7 +36,7 @@ void WorkspaceWindow::showSelectionProperties() {
     if (ids.isEmpty()) {
         properties->setHtml("<h3>Document properties</h3><p>" +
             QString::number(document.value("components").toArray().size()) +
-            " components · mm</p><p>Select a component, face or edge to inspect its dimensions.</p>");
+            " components · mm</p><p>Select a component, face or edge to inspect its dimensions.</p>" + engineeringHtml({}));
         if (modelSummary) modelSummary->setText("Select geometry to inspect dimensions.");
         return;
     }

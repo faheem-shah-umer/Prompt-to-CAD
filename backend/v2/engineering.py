@@ -71,6 +71,10 @@ def edit(snapshot, record, action="upsert"):
         raise WorkspaceError("Choose a current component for this record.", "stale_selection")
     item = {"id": identity, "kind": record["kind"], "instance_id": target,
             "text": str(record.get("text", ""))[:2000], "units": record.get("units", "mm")}
+    visible = record.get("viewport_visible", (existing or {}).get("viewport_visible", False))
+    if type(visible) is not bool:
+        raise WorkspaceError("Viewport visibility must be true or false.", "invalid_metadata")
+    item["viewport_visible"] = visible
     if item["units"] not in ("mm", "deg", "unitless"):
         raise WorkspaceError("Engineering units must be mm, deg or unitless.", "invalid_metadata")
     if item["kind"] in ("label", "note") and not item["text"].strip():
@@ -158,6 +162,8 @@ def validate_records(snapshot):
         if not isinstance(identity, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", identity) or identity in seen:
             raise WorkspaceError("Engineering record IDs must be valid and distinct.", "invalid_metadata")
         seen.add(identity)
+        if "viewport_visible" in record and type(record["viewport_visible"]) is not bool:
+            raise WorkspaceError("Viewport visibility must be true or false.", "invalid_metadata")
         if (record.get("kind") not in ("dimension", "label", "note") or record.get("status") not in ("current", "stale")
                 or record.get("units") not in ("mm", "deg", "unitless")
                 or not isinstance(record.get("text"), str) or len(record["text"]) > 2000):

@@ -10,6 +10,7 @@ This repository supplies application source and dependency declarations. SDKs an
 | Qt Core / Gui / Widgets / Svg | LGPLv3 route for the configured SDK, plus incorporated third-party terms |
 | OpenCascade | LGPL2.1 with the OCCT exception |
 | CadQuery / OCP bindings | Apache-2.0; wrapped OCCT keeps its separate terms |
+| cq_warehouse | Apache-2.0, Copyright 2022 Gumyr; pinned revision and [full license/adapter modifications](docs/licenses/cq-warehouse.md) |
 | CasADi and solver dependencies | LGPLv3+ and component-specific terms |
 | VTK | BSD-style and incorporated third-party terms |
 | Certifi | MPL2; its public CA bundle is not account material |

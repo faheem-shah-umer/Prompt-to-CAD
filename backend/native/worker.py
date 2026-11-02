@@ -10,6 +10,9 @@ sys.stdout = sys.stderr
 
 from . import geometry
 from .contracts import WorkspaceError
+from .runtime_identity import RuntimeIdentity
+
+RUNTIME_IDENTITY = RuntimeIdentity("geometry")
 
 
 def emit(method, params):
@@ -17,10 +20,17 @@ def emit(method, params):
 
 
 def dispatch(method, params):
+    RUNTIME_IDENTITY.ensure_current()
     folder = params.get("project_dir")
     if method == "hello":
         import OCP
-        return {"protocol_version": 1, "occt_version": OCP.__version__, "worker_pid": os.getpid()}
+        return {"protocol_version": 1, "occt_version": OCP.__version__, "worker_pid": os.getpid(),
+                "runtime_identity": RUNTIME_IDENTITY.report(private=True)}
+    if method in ("standard_parts", "standard_part"):
+        from backend.v2.process_limits import constrain_worker
+        constrain_worker()
+        from backend.v2.standard_parts import catalog, generate
+        return catalog(params.get("request", {})) if method == "standard_parts" else generate(folder, params["snapshot"], params["request"])
     if method == "import_step":
         return geometry.import_step(params["path"], folder)
     if method == "scale_mesh_scene":
@@ -68,6 +78,11 @@ def dispatch(method, params):
     if method == "apply_batch":
         return geometry.apply_face_batch(folder, params["snapshot"], params["commands"])
     if method == "apply":
+        if params["command"].get("type") == "parameters" and any(
+                p.get("standard_part") and p["instance_id"] == params["command"].get("instance_id")
+                for p in params["snapshot"]["components"]):
+            from backend.v2.process_limits import constrain_worker
+            constrain_worker()
         candidate = geometry.apply_command(folder, params["snapshot"], params["command"])
         geometry.check_new_intersections(folder, params["snapshot"], candidate, params["command"])
         return candidate
@@ -77,7 +92,7 @@ def dispatch(method, params):
         meshes = verify_meshes(folder, snapshot)
         solids = {**snapshot, "components": [p for p in snapshot["components"] if p.get("representation") != "mesh"]}
         for part in solids["components"]:
-            geometry.store_shape(folder, geometry.load_shape(folder, part))
+            geometry.store_shape(folder, geometry.load_shape(folder, part), allow_compound=part.get("shape_kind") == "compound")
         if not solids["components"]:
             return {"passed": bool(meshes), "meshes": meshes, "mesh_interference": "Not evaluated; meshes are visual geometry, not engineering solids."}
         import tempfile
@@ -151,6 +166,7 @@ def main():
             response = {"jsonrpc": "2.0", "id": request.get("id") if isinstance(request, dict) else None,
                         "error": {"code": -32000, "message": str(error),
                                   "data": {"code": getattr(error, "code", "geometry_failed")}}}
+        response["runtime_identity"] = RUNTIME_IDENTITY.report()
         protocol.write(json.dumps(response, allow_nan=False) + "\n")
 
 

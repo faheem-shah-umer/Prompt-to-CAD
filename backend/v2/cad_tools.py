@@ -4,6 +4,7 @@ import copy
 import json
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
@@ -157,6 +158,17 @@ SOURCE_IDS = {**IDS, "maxItems": 100}
 VEC = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
 COLOUR = {"anyOf": [VEC, {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}]}
 TOOLS.extend([
+    {"name": "cad_decision", "description": "Record a brief public CAD decision summary for this turn's project log. State the chosen approach, supporting facts, alternatives and why cq_warehouse is suitable or unsuitable. This is a concise rationale, not private reasoning. Report before modelling, and update when the approach changes; no geometry or operation-budget change.",
+     "inputSchema": schema({"candidate_id": TOKEN, "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "cq_warehouse": schema({"choice": {"enum": ["use", "do_not_use", "not_applicable", "undecided"]},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 2000}}, ["choice", "reason"]),
+        "alternatives": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 300}}}, ["candidate_id", "summary", "cq_warehouse"])},
+    {"name": "cad_standard_parts", "description": "Discover registered cq_warehouse physical generators. List families, or describe one generator's standards, sizes, typed parameters and defaults. No arbitrary library APIs.",
+     "inputSchema": schema({"family": {"enum": ["fastener", "bearing", "sprocket", "chain", "thread"]}, "generator_id": {"type": "string"}, "standard": {"type": "string"}})},
+    {"name": "cad_standard_part", "description": "Create one logical standard component or regenerate an existing standard part. Discover parameters first. Detailed threads are default. parameters holds typed strings, numbers, booleans and bounded arrays. Placement is absolute world translation (mm)/Euler rotation (degrees), applied BEFORE collision checks; omitted on updates preserves placement. Creation always preserves existing parts, including under face selection. Updates require body authority and undoing downstream topology edits.",
+     "inputSchema": schema({"candidate_id": TOKEN, "generator_id": {"type": "string"}, "instance_id": {"type": "string"}, "name": {"type": "string", "maxLength": 200},
+        "parameters": {"type": "object", "additionalProperties": True},
+        "placement": schema({"translation": VEC, "rotation": VEC})}, ["candidate_id"])},
     {"name": "cad_reference_image", "description": "Read one reference image explicitly requested from this conversation's history by asset_id. Use only when the user refers to that image. Requires reported model image support; never loads arbitrary filesystem paths.",
      "inputSchema": schema({"asset_id": {"type": "string"}}, ["asset_id"])},
     {"name": "cad_capabilities", "description": "Read actual CAD operations, scripting bounds, scope rules and known limitations. Use before declaring an operation unsupported.", "inputSchema": schema()},
@@ -169,10 +181,11 @@ TOOLS.extend([
         ["candidate_id", "operation", "source_instance_ids"])},
     {"name": "cad_appearance", "description": "Assign uniform component RGB colour without changing geometry. Requires whole-component selection when scope is restricted. Reset mesh overrides with source_colors=true.",
      "inputSchema": schema({"candidate_id": TOKEN, "instance_ids": IDS, "color": COLOUR, "source_colors": {"type": "boolean"}}, ["candidate_id", "instance_ids"])},
-    {"name": "cad_engineering", "description": "Add/update/remove revision-owned dimension, label or note metadata. Tolerances do NOT resize geometry. Bind dimensions to existing named parameters or measured entity pairs; unbound nominal values remain declared/unverified. No GD&T/PMI export is claimed.",
+    {"name": "cad_engineering", "description": "Add/update/remove saved dimension, label or note metadata. Notes appear in conversation and Properties. Viewport display defaults off; set viewport_visible=true only when the user explicitly requests viewport annotations. Tolerances do NOT resize geometry. Bind dimensions to existing named parameters or measured entity pairs; unbound nominal values remain declared/unverified. No GD&T/PMI export is claimed.",
      "inputSchema": schema({"candidate_id": TOKEN, "action": {"enum": ["upsert", "remove"]},
         "record": schema({"id": {"type": "string"}, "kind": {"enum": ["dimension", "label", "note"]},
             "instance_id": {"type": "string"}, "text": {"type": "string", "maxLength": 2000},
+            "viewport_visible": {"type": "boolean", "description": "Display in the viewport only at the user's explicit request; defaults to false for new and legacy records."},
             "nominal": {"type": "number"}, "parameter": {"type": "string"},
             "units": {"enum": ["mm", "deg", "unitless"]},
             "anchor": schema({"kind": {"enum": ["body", "face", "edge", "vertex"]}, "index": {"type": "integer", "minimum": 1}, "asset_hash": {"type": "string"}, "position": VEC}, ["kind"]),
@@ -195,6 +208,8 @@ for tool in TOOLS:
         in (
             "cad_context",
             "cad_capabilities",
+            "cad_decision",
+            "cad_standard_parts",
             "cad_reference_image",
             "cad_definition",
             "cad_inspect",
@@ -238,6 +253,9 @@ class TaskTools:
         self.created = set()
         self.retired = set()
         self.transactions = []
+        self.turn_log = None
+        self.decisions = []
+        self.mcp_runtime = None
         self.selection = normalize(
             selection,
             snapshot,
@@ -357,6 +375,8 @@ class TaskTools:
                     "parent_id": p.get("parent_id"),
                     "body_id": p.get("definition_id"),
                     "representation": p.get("representation", "solid"),
+                    "shape_kind": p.get("shape_kind", "solid"),
+                    "standard_generator": p.get("standard_part", {}).get("generator_id"),
                     "parameters": p.get("parameters", {}),
                     "color": p.get("color"),
                     "color_override": p.get("color_override"),
@@ -381,6 +401,29 @@ class TaskTools:
 
     def call(self, name, params):
         with self.lock:
+            log = self.turn_log
+            if log is None or log.closed:
+                return self._call(name, params)
+            command = params.get("command", {})
+            target = params.get("instance_id") or (command.get("instance_id") if isinstance(command, dict) else None)
+            part = next((p for p in self.candidate["components"] if p["instance_id"] == target), {})
+            numeric_regeneration = name == "cad_apply" and isinstance(command, dict) and command.get("type") == "parameters" and bool(part.get("standard_part"))
+            generation = name == "cad_standard_part" or numeric_regeneration
+            generator = params.get("generator_id") or part.get("standard_part", {}).get("generator_id")
+            call = log.tool_started(name, params, generation, generator if generation else None)
+            try:
+                result = self._call(name, params)
+            except Exception as error:
+                log.tool_finished(call, error=error)
+                raise
+            log.tool_finished(call, result=result)
+            return result
+
+    def _call(self, name, params):
+        with self.lock:
+            runtime = getattr(self.workspace, "application_runtime", None)
+            if runtime is not None:
+                runtime.ensure_current()
             if self.closed or self.workspace.cancelled.is_set():
                 raise WorkspaceError("This task is no longer writable.", "cancelled")
             if name == "cad_viewport":
@@ -410,11 +453,15 @@ class TaskTools:
                         "image_data": base64.b64encode(output.getvalue()).decode()}
             if name == "cad_context":
                 return self.context()
+            if name == "cad_standard_parts":
+                return self.geometry("standard_parts", request=params)
             if name == "cad_capabilities":
                 return {"tools": [t["name"] for t in TOOLS],
+                    "application_runtime": runtime.report() if runtime is not None else None,
                     "script_language": self.geometry("capabilities"),
                     "restructure": ["split_by_local_plane", "split_by_component", "connected_union", "replace_selected_with_multiple_outputs"],
                     "solid_editing": ["hole", "extrude", "offset_planar_face", "face_holes", "fillet", "chamfer", "boolean", "pattern", "transform", "named_parameters"],
+                    "standard_parts": "cad_standard_parts discovers the installed pinned library. Compound parts use one component ID with multiple valid solids; typed generator parameters are separate from numeric named parameters.",
                     "scripting": "Typed CadQuery constructors/methods, branches, comparisons, tuple assignment, bounded collections/loops; parts and optional colors outputs. No imports, arbitrary functions, I/O, reflection or shell.",
                     "engineering": ["bound_or_declared_dimensions", "plus_minus_tolerance", "limit_tolerance", "label", "note"],
                     "appearance": "Uniform RGB per component, mesh source-colour reset; STEP solid and GLB colour export; STL has no colours.",
@@ -426,6 +473,24 @@ class TaskTools:
                     "Candidate references are stale. Call cad_context and inspect again.",
                     "stale_selection",
                 )
+            if name == "cad_decision":
+                if len(self.decisions) >= 64:
+                    raise WorkspaceError("Use at most 64 concise decision summaries per turn.", "operation_limit")
+                summary, choice = params.get("summary"), params.get("cq_warehouse")
+                alternatives = params.get("alternatives", [])
+                if (not isinstance(summary, str) or not 1 <= len(summary.strip()) <= 2000
+                    or not isinstance(choice, dict) or choice.get("choice") not in ("use", "do_not_use", "not_applicable", "undecided")
+                    or not isinstance(choice.get("reason"), str) or not 1 <= len(choice["reason"].strip()) <= 2000
+                    or not isinstance(alternatives, list) or len(alternatives) > 12
+                    or any(not isinstance(value, str) or len(value) > 300 for value in alternatives)):
+                    raise WorkspaceError("Provide a concise decision summary and explicit cq_warehouse choice/reason.", "invalid_decision")
+                decision = {"decision_id": uuid4().hex, "reported_at": time.time(),
+                    "candidate_id": self.candidate_id, "summary": summary.strip(),
+                    "cq_warehouse": {"choice": choice["choice"], "reason": choice["reason"].strip()}, "alternatives": alternatives}
+                self.decisions.append(copy.deepcopy(decision))
+                if self.turn_log is not None:
+                    self.turn_log.decision(decision)
+                return {"candidate_id": self.candidate_id, "decision_id": decision["decision_id"], "recorded": True}
             if name == "cad_definition":
                 wanted = params["instance_id"]
                 part = next(
@@ -461,6 +526,8 @@ class TaskTools:
                     "candidate_id": self.candidate_id,
                     "instance_id": wanted,
                     "parameters": part.get("parameters", {}),
+                    "standard_part": part.get("standard_part"),
+                    "standard_regeneration_allowed": bool(part.get("standard_part") and part["asset_hash"] == part["standard_part"]["generated_asset_hash"]),
                     "script": {
                         k: script.get(k) for k in ("source", "parameters", "instance_id", "source_instance_ids", "output_names")
                     }
@@ -509,7 +576,7 @@ class TaskTools:
                 definition = definitions.find(self.candidate, params["definition_id"])
                 return {"candidate_id": self.candidate_id, "definition": definition,
                         "source": definitions.read(self.document.folder, definition)}
-            if name not in ("cad_apply", "cad_apply_batch", "cad_script", "cad_restructure", "cad_appearance", "cad_engineering", "cad_files"):
+            if name not in ("cad_apply", "cad_apply_batch", "cad_script", "cad_restructure", "cad_appearance", "cad_engineering", "cad_files", "cad_standard_part"):
                 raise WorkspaceError("Unknown CAD capability. Read cad_capabilities.", "unsupported_operation")
             if len(self.commands) >= 32:
                 raise WorkspaceError("The task reached its 32-operation budget. Continue in a new turn.", "operation_limit")
@@ -527,7 +594,13 @@ class TaskTools:
             record = {"type": name, **copy.deepcopy(params)}
             record.pop("candidate_id", None)
             requested_sources = None
-            if name == "cad_apply_batch":
+            if name == "cad_standard_part":
+                identity = params.get("instance_id")
+                if identity:
+                    self.require_bodies([identity])
+                requested_sources = {identity} if identity else set()
+                updated = self.geometry("standard_part", request={k: v for k, v in params.items() if k != "candidate_id"})
+            elif name == "cad_apply_batch":
                 updated = self.geometry("apply_batch", commands=commands)
                 record = {"type": "batch", "commands": commands}
             elif name == "cad_apply":
@@ -687,11 +760,21 @@ class ToolBridge:
                     if not 0 < length <= 1024 * 1024:
                         raise WorkspaceError("Tool input exceeds the limit.")
                     message = json.loads(self.rfile.read(length))
-                    result = {
-                        "result": tools.call(
-                            message["name"], message.get("arguments", {})
-                        )
-                    }
+                    if message["name"] == "_runtime_check":
+                        with tools.lock:
+                            if tools.closed:
+                                raise WorkspaceError("The CAD tool session is closed.", "cancelled")
+                            runtime = tools.workspace.application_runtime
+                            peer = message.get("arguments", {})
+                            runtime.verify_peer(peer, "mcp")
+                            tools.mcp_runtime = peer
+                            if tools.turn_log is not None:
+                                tools.turn_log.event("mcp_tools_delivered", peer)
+                        result = {"result": {"verified": True}}
+                    else:
+                        if tools.mcp_runtime is None:
+                            raise WorkspaceError("The CAD MCP tool registry has not been verified. Restart Prompt to CAD.", "runtime_mismatch")
+                        result = {"result": tools.call(message["name"], message.get("arguments", {}))}
                 except Exception as error:
                     result = {
                         "error": str(error),

@@ -3,7 +3,7 @@ from pathlib import PurePosixPath
 from tools.generate_icons import ICONS
 
 ROOT_FILES = {".gitattributes", ".gitignore", "LICENSE", "README.md", "VERSION",
-    "THIRD_PARTY_NOTICES.md", "Prompt to CAD.vbs", "requirements.txt", "requirements-dev.txt", "requirements-runtime-lock.txt"}
+    "THIRD_PARTY_NOTICES.md", "Prompt to CAD.vbs", "Run-PromptToCAD.cmd", "requirements.txt", "requirements-dev.txt", "requirements-runtime-lock.txt"}
 BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "assets/app-icon.ico"}
 SITE_FILES = {"site/index.html", "site/styles.css", "site/main.js", "site/assets/app-icon.svg",
     "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md"}

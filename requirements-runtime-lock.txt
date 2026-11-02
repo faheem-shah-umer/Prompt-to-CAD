@@ -11,6 +11,7 @@ casadi==3.8.2
 certifi==2026.10.23
 cffi==2.1.1
 contourpy==1.3.3
+cq-warehouse @ git+https://github.com/gumyr/cq_warehouse.git@a57bb7a24762d367d66369f280a24c38a64e73dd
 cryptography==50.0.2
 cycler==0.12.1
 ezdxf==1.4.5

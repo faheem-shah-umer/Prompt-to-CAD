@@ -933,6 +933,8 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             call("v2.restore", p);
         } else if (link.scheme() == "component")
             viewer->selectInstance(link.path());
+        else if (link.scheme() == "engineering")
+            editEngineeringRecord(link.path());
     });
     connect(chat, &ConversationView::attachmentRequested, this, &WorkspaceWindow::addReferenceAttachment);
     connect(rpc, &RpcClient::progress, this, [this](const QJsonObject &event) {
@@ -1242,11 +1244,13 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
     state = value;
     changeConversationDraftContext();
     auto next = value.value("document").toObject();
+    const bool newDocument = next.value("document_id") != document.value("document_id");
+    const bool firstGeometry = document.value("components").toArray().isEmpty() && !next.value("components").toArray().isEmpty();
     bool changed = next.value("revision_id") != document.value("revision_id") ||
                    next.value("document_id") != document.value("document_id");
     document = next;
     if (changed || fit) {
-        viewer->setDocument(document, fit || changed);
+        viewer->setDocument(document, fit || newDocument || firstGeometry);
         selected = {};
         selectionChip->hide();
         properties->clear();

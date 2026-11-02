@@ -8,6 +8,10 @@ Projects and their conversations/documents/revisions use `Projects/` beside the 
 
 Deleting a project does not revoke an account. AI features send the request and submitted CAD/image context to the configured provider. Local storage does not make AI inference offline.
 
+AI diagnostic [turn logs](turn-logs.md) live under each project's `logs/turns/` folder. They contain private project descriptions, bounded tool observations and concise assistant-stated decisions, including cq_warehouse selection reasons. Known credentials and local paths are redacted and code/image payloads omitted; arbitrary project text can still be sensitive. Keep logs out of Git and review them before sharing. No automatic upload is added.
+
+Private [runtime identity diagnostics](runtime-consistency.md) in `.promptcad/runtime/backend-<pid>.json` contain interpreter/module paths and source fingerprints for checking that all CAD processes load the same checkout. These raw machine paths are not public project media and should not be published.
+
 ## Development files
 
 Keep all project-managed development output inside this repository: `.local/` for preserved desktop/compiler tools, `.sdk/` for SDK downloads/cache, `build/` for builds, and `tmp/`/`artifacts/` for temporary checks. These are ignored and must never be staged. Do not create sibling build or test folders.

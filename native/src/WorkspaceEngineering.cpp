@@ -1,5 +1,6 @@
 #include "WorkspaceWindow.h"
 #include <QColorDialog>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -63,7 +64,9 @@ void WorkspaceWindow::chooseComponentColour(bool sourceColors) {
 }
 
 QString WorkspaceWindow::engineeringHtml(const QStringList &ids) const {
-    QString output = "<h4>Appearance</h4><p><a href=\"appearance:colour\">Change component colour</a></p>";
+    if (ids.isEmpty() && document.value("engineering").toArray().isEmpty()) return {};
+    QString output;
+    if (!ids.isEmpty()) output = "<h4>Appearance</h4><p><a href=\"appearance:colour\">Change component colour</a></p>";
     bool mesh = false;
     for (const auto& value : document.value("components").toArray()) {
         const auto part = value.toObject();
@@ -74,10 +77,12 @@ QString WorkspaceWindow::engineeringHtml(const QStringList &ids) const {
         mesh |= part.value("representation") == "mesh";
     }
     if (mesh) output += "<p><a href=\"appearance:source\">Use source mesh colours</a></p>";
-    output += "<h4>Engineering information</h4><p><a href=\"engineering:new\">Add dimension, label or note</a></p>";
+    output += "<h4>Engineering information</h4>";
+    if (!ids.isEmpty()) output += "<p><a href=\"engineering:new\">Add dimension, label or note</a></p>";
     for (const auto& value : document.value("engineering").toArray()) {
         const auto record = value.toObject();
-        if (!ids.contains(record.value("instance_id").toString())) continue;
+        if (!ids.isEmpty() && !ids.contains(record.value("instance_id").toString())) continue;
+        if (ids.isEmpty()) output += "<p><b>" + componentName(record.value("instance_id").toString()).toHtmlEscaped() + "</b></p>";
         output += "<p><a href=\"engineering:" + QString::fromLatin1(QUrl::toPercentEncoding(record.value("id").toString())) + "\">" +
             record.value("kind").toString().toHtmlEscaped() + "</a> · " + record.value("text").toString().toHtmlEscaped().replace("\n", "<br>");
         if (record.value("kind") == "dimension") {
@@ -91,6 +96,7 @@ QString WorkspaceWindow::engineeringHtml(const QStringList &ids) const {
             if (record.contains("within_limits") && !record.value("within_limits").toBool()) output += "<br><b>Current nominal is outside the recorded limits.</b>";
         }
         if (record.value("status") == "stale") output += "<br><b>Stale anchor — select fresh geometry to reanchor.</b>";
+        output += record.value("viewport_visible").toBool(false) ? "<br>Shown in viewport" : "<br>Hidden in viewport";
         output += "</p>";
     }
     return output;
@@ -102,7 +108,7 @@ void WorkspaceWindow::editEngineeringRecord(const QString &identity) {
     if (!identity.isEmpty()) for (const auto& value : document.value("engineering").toArray())
         if (value.toObject().value("id").toString() == identity) { existing = value.toObject(); break; }
     const auto entities = selected.value("entities").toArray();
-    if (selected.isEmpty() || (identity.isEmpty() && entities.size() > 1)) {
+    if (existing.isEmpty() && (selected.isEmpty() || entities.size() > 1)) {
         notify("Select one component or entity to annotate.", "info"); return;
     }
     const auto target = existing.isEmpty() ? selected.value("instance_id").toString() : existing.value("instance_id").toString();
@@ -123,8 +129,13 @@ void WorkspaceWindow::editEngineeringRecord(const QString &identity) {
     auto *kind = new QComboBox; kind->addItems({"note", "label", "dimension"});
     kind->setCurrentText(existing.value("kind").toString("note")); form->addRow("Type", kind);
     auto *text = new QLineEdit(existing.value("text").toString()); text->setMaxLength(2000); form->addRow("Text", text);
+    auto *viewportVisible = new QCheckBox("Show in viewport");
+    viewportVisible->setObjectName("annotationViewportVisible");
+    viewportVisible->setChecked(existing.value("viewport_visible").toBool(false));
+    form->addRow("Display", viewportVisible);
     auto *anchors = new QComboBox;
-    bool bodyScope = selected.value("instance_id").toString() == target && selected.value("kind") == "body";
+    bool bodyScope = (!existing.isEmpty() && selected.isEmpty()) ||
+        (selected.value("instance_id").toString() == target && selected.value("kind") == "body");
     for (const auto& value : entities) {
         const auto entry = value.toObject();
         bodyScope |= entry.value("instance_id").toString() == target && entry.value("kind") == "body";
@@ -180,7 +191,8 @@ void WorkspaceWindow::editEngineeringRecord(const QString &identity) {
     const auto frozen = selected;
     connect(buttons, &QDialogButtonBox::accepted, dialog, [=, this] {
         if (kind->currentText() != "dimension" && text->text().trimmed().isEmpty()) { notify("Enter text for the label or note.", "info"); return; }
-        QJsonObject record{{"instance_id", target}, {"kind", kind->currentText()}, {"text", text->text()}, {"anchor", anchors->currentData().toJsonObject()}};
+        QJsonObject record{{"instance_id", target}, {"kind", kind->currentText()}, {"text", text->text()},
+            {"viewport_visible", viewportVisible->isChecked()}, {"anchor", anchors->currentData().toJsonObject()}};
         if (!identity.isEmpty()) record["id"] = identity;
         if (kind->currentText() == "dimension") {
             record["units"] = units->currentText();

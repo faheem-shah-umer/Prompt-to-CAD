@@ -21,6 +21,7 @@
 #include <QKeyEvent>
 #include <QVBoxLayout>
 #include <cmath>
+#include <functional>
 
 namespace {
 QString duration(double seconds) {
@@ -85,6 +86,79 @@ class MessageText : public QTextBrowser {
     }
     QString source;
 };
+
+class ActivityLog : public QScrollArea {
+  public:
+    ActivityLog(const QString &text, QWidget *parent, std::function<void()> reading)
+        : QScrollArea(parent), onReading(std::move(reading)) {
+        setObjectName("workActivityScroll");
+        setAccessibleName("Task activity log");
+        setFrameShape(QFrame::NoFrame);
+        setWidgetResizable(false);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        setFocusPolicy(Qt::StrongFocus);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        viewport()->setAutoFillBackground(false);
+        activity = new QLabel(this);
+        activity->setObjectName("activitySummary");
+        activity->setWordWrap(true);
+        activity->setTextFormat(Qt::PlainText);
+        activity->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        setWidget(activity);
+        connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this](int) { readingActivity(); });
+        connect(verticalScrollBar(), &QScrollBar::sliderMoved, this, [this](int) { readingActivity(); });
+        setActivity(text);
+    }
+    void setActivity(const QString &text) {
+        if (activity->text() == text) { layoutActivity(); return; }
+        const int position = verticalScrollBar()->value();
+        const bool follow = verticalScrollBar()->maximum() - position < 24;
+        const auto generation = scrollGeneration;
+        activity->setText(text);
+        layoutActivity();
+        QTimer::singleShot(0, this, [this, position, follow, generation] {
+            if (generation == scrollGeneration)
+                verticalScrollBar()->setValue(follow ? verticalScrollBar()->maximum() : position);
+        });
+    }
+  protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QScrollArea::resizeEvent(event);
+        layoutActivity();
+    }
+    void wheelEvent(QWheelEvent *event) override {
+        readingActivity();
+        QScrollArea::wheelEvent(event);
+    }
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Home || event->key() == Qt::Key_End ||
+            event->key() == Qt::Key_PageUp || event->key() == Qt::Key_PageDown ||
+            event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) readingActivity();
+        QScrollArea::keyPressEvent(event);
+    }
+  private:
+    void readingActivity() {
+        if (verticalScrollBar()->maximum() <= 0) return;
+        ++scrollGeneration;
+        onReading();
+    }
+    void layoutActivity() {
+        if (!activity || layingOut) return;
+        layingOut = true;
+        activity->ensurePolished();
+        const int width = qMax(1, viewport()->width());
+        const int contentHeight = qMax(activity->fontMetrics().lineSpacing(), activity->heightForWidth(width));
+        activity->resize(width, contentHeight);
+        const int height = qMin(240, contentHeight);
+        if (this->height() != height) setFixedHeight(height);
+        layingOut = false;
+    }
+    QLabel *activity = nullptr;
+    std::function<void()> onReading;
+    unsigned scrollGeneration = 0;
+    bool layingOut = false;
+};
 } // namespace
 
 ConversationView::ConversationView(QWidget *parent) : QScrollArea(parent) {
@@ -126,7 +200,14 @@ void ConversationView::setDocumentContext(const QJsonObject &document) {
         const auto part = value.toObject();
         names[part.value("instance_id").toString()] = part.value("name").toString("Component");
     }
-    if (componentNames != names) { componentNames = names; cachedTheme.clear(); }
+    QJsonArray notes;
+    for (const auto &value : document.value("engineering").toArray())
+        if (value.toObject().value("kind") == "note") notes.append(value);
+    if (componentNames != names || designNotes != notes) {
+        componentNames = names;
+        designNotes = notes;
+        cachedTheme.clear();
+    }
 }
 void ConversationView::setMessages(const QJsonArray &messages, const QString &conversation) {
     if (context != conversation) {
@@ -177,9 +258,9 @@ bool ConversationView::updateWorkingMessages(const QJsonArray &messages) {
         auto *toggle = turn->findChild<QToolButton *>("workDisclosure");
         const auto caption = "Working · " + duration(message.value("elapsed_seconds").toDouble());
         if (toggle->text() != caption) toggle->setText(caption);
-        auto *activity = turn->findChild<QLabel *>("activitySummary");
+        auto *activity = static_cast<ActivityLog *>(turn->findChild<QScrollArea *>("workActivityScroll"));
         const auto log = activityText(message.value("activity").toArray());
-        if (activity->text() != log) activity->setText(log);
+        activity->setActivity(log);
         auto *phase = turn->findChild<QLabel *>("livePhase");
         const auto phaseText = message.value("phase").toString();
         if (phase->text() != phaseText) phase->setText(phaseText);
@@ -292,11 +373,12 @@ void ConversationView::rebuild() {
             toggle->setChecked(expanded.contains(key));
             toggle->setArrowType(toggle->isChecked() ? Qt::DownArrow : Qt::RightArrow);
             toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            auto *activity = new QLabel(bubble);
-            activity->setObjectName("activitySummary");
-            activity->setWordWrap(true);
-            activity->setTextFormat(Qt::PlainText);
-            activity->setText(activityText(events));
+            auto *activity = new ActivityLog(activityText(events), bubble, [this] {
+                ++scrollGeneration;
+                following = false;
+                latest->show();
+                latest->raise();
+            });
             activity->setVisible(toggle->isChecked());
             connect(toggle, &QToolButton::toggled, this, [this, key, activity, toggle](bool open) {
                 if (open) expanded.insert(key); else expanded.remove(key);
@@ -421,6 +503,36 @@ void ConversationView::rebuild() {
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);
+    }
+    if (!designNotes.isEmpty()) {
+        auto *notes = new QWidget(content);
+        notes->setObjectName("savedDesignNotes");
+        auto *notesLayout = new QVBoxLayout(notes);
+        notesLayout->setContentsMargins(0, 0, 10, 0);
+        auto *heading = new QLabel("Saved design notes", notes);
+        notesLayout->addWidget(heading);
+        for (const auto &value : designNotes) {
+            const auto record = value.toObject();
+            auto *owner = new QLabel(componentNames.value(record.value("instance_id").toString(), "Removed component"), notes);
+            owner->setTextFormat(Qt::PlainText);
+            if (record.value("status") == "stale") owner->setText(owner->text() + " · Stale anchor");
+            owner->setWordWrap(true);
+            notesLayout->addWidget(owner);
+            auto *text = new QLabel(record.value("text").toString(), notes);
+            text->setTextFormat(Qt::PlainText);
+            text->setWordWrap(true);
+            text->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            notesLayout->addWidget(text);
+            auto *edit = new QToolButton(notes);
+            edit->setText("Edit note");
+            edit->setAccessibleName("Edit saved design note for " + owner->text());
+            const auto identity = record.value("id").toString();
+            connect(edit, &QToolButton::clicked, this, [this, identity] {
+                Q_EMIT anchorClicked(QUrl("engineering:" + QString::fromLatin1(QUrl::toPercentEncoding(identity))));
+            });
+            notesLayout->addWidget(edit, 0, Qt::AlignLeft);
+        }
+        stack->addWidget(notes);
     }
     stack->addStretch(1);
     // setWidget deletes the previous contents without detaching a native widget.

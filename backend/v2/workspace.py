@@ -12,6 +12,7 @@ from backend.native.project_lock import RevisionConflict
 from backend.native.contracts import WorkspaceError
 from backend.native.documents import Document, write_json
 from backend.native.workspace import Workspace
+from backend.native.runtime_identity import RuntimeIdentity
 
 from .auth import Connections
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
@@ -30,6 +31,7 @@ class WorkspaceV2(Workspace):
         self, home, notify=lambda event: None, identity_home=None, projects_dir=None
     ):
         self.home = Path(home).resolve()
+        self.application_runtime = RuntimeIdentity("backend", tools=TOOLS, instructions=INSTRUCTIONS)
         self.active_task = None
         self.task_state = "disconnected"
         self.acceptance_lock = threading.RLock()
@@ -60,6 +62,8 @@ class WorkspaceV2(Workspace):
             else {}
         )
         self.startup_notice = ""
+        write_json(self.home / "runtime" / ("backend-" + str(os.getpid()) + ".json"),
+                   self.application_runtime.report(private=True))
 
     def emit(self, event):
         event = dict(event)
@@ -267,6 +271,11 @@ class WorkspaceV2(Workspace):
         return entry
 
     def dispatch(self, method, params):
+        if method == "workspace.runtime":
+            self.application_runtime.ensure_current()
+            worker = self.geometry("hello", {})["runtime_identity"]
+            self.application_runtime.verify_peer(worker, "geometry")
+            return {"backend": self.application_runtime.report(private=True), "geometry": worker}
         if method.startswith("v2.") and method != "v2.state":
             if self.active_task:
                 raise WorkspaceError(
@@ -674,6 +683,7 @@ class WorkspaceV2(Workspace):
         raise WorkspaceError("Unknown V2 method: " + method, "method_not_found")
 
     def run_task(self, params):
+        self.application_runtime.ensure_current()
         if not self.project_id:
             raise WorkspaceError("Create a project first.")
         if not self.projects.project(self.project_id).get("active_conversation_id"):
@@ -743,6 +753,7 @@ class WorkspaceV2(Workspace):
             )
         task = {
             "task_id": task_id,
+            "application_runtime": self.application_runtime.report(),
             "document_id": original["document_id"],
             "conversation_id": state["conversation"]["conversation_id"],
             "base_revision_id": original.get("revision_id"),
@@ -764,6 +775,12 @@ class WorkspaceV2(Workspace):
             self.project_id,
             task["task_id"],
         )
+        from .turn_logs import TurnLog
+        turn_log = TurnLog(self.projects.project_path(self.project_id), task, self.project_id,
+            notify=lambda message: self.notify({"stage": "logging", "message": message}))
+        turn_log.event("backend_runtime_verified", self.application_runtime.report())
+        tools.turn_log = turn_log
+        task["turn_log"] = "logs/turns/" + task["task_id"]
         tools.viewport = viewport if supports_images else None
         tools.image_supported = supports_images
         tools.references = {r["asset_id"]: r for message in state["conversation"]["messages"]
@@ -819,6 +836,7 @@ class WorkspaceV2(Workspace):
                     "PYTHONPATH": os.pathsep.join(paths),
                     "PROMPTCAD_TOOL_URL": bridge.url,
                     "PROMPTCAD_TOOL_TOKEN": bridge.token,
+                    **self.application_runtime.environment(),
                 },
                 "startup_timeout_sec": 30,
                 "tool_timeout_sec": 660,
@@ -892,6 +910,9 @@ class WorkspaceV2(Workspace):
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
             if tools.commands:
+                self.application_runtime.ensure_current()
+                if tools.mcp_runtime is None:
+                    raise WorkspaceError("The CAD MCP tool contract was not verified. Restart the application before generating geometry.", "runtime_mismatch")
                 self.notify(
                     {
                         "stage": "verifying",
@@ -998,6 +1019,9 @@ class WorkspaceV2(Workspace):
         finally:
             with tools.lock:
                 tools.closed = True
+                turn_log.finish(task)
+                if turn_log.error:
+                    task["log_warning"] = "Project turn log could not be fully written: " + turn_log.error
             if bridge:
                 bridge.close()
             if self.runtime:

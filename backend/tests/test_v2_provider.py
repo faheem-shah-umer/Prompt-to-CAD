@@ -8,6 +8,21 @@ from backend.v2.provider import CodexAppServer
 
 
 class ProviderProtocolTests(unittest.TestCase):
+    def test_start_and_resume_both_send_current_cad_instructions(self):
+        from backend.native.runtime_identity import ROOT
+
+        instructions = (ROOT / "backend/v2/CAD_INSTRUCTIONS.md").read_text(encoding="utf-8")
+        runtime = CodexAppServer.__new__(CodexAppServer)
+        runtime.cwd = ROOT
+        runtime.request = Mock(return_value={"thread": {"id": "fixture-thread"}})
+        for previous in (None, "fixture-thread"):
+            runtime.start_thread(instructions, "fixture-model", previous)
+            method, payload = runtime.request.call_args.args
+            self.assertEqual(method, "thread/resume" if previous else "thread/start")
+            self.assertEqual(payload["developerInstructions"], instructions)
+            self.assertIn("cq_warehouse", payload["developerInstructions"])
+            self.assertIn("cad_standard_part", payload["developerInstructions"])
+
     def runtime(self, events):
         runtime = CodexAppServer.__new__(CodexAppServer)
         runtime.thread_id = "fixture-thread"

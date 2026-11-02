@@ -85,26 +85,30 @@ def build(args):
     missing = [name for name, path in required.items() if not path]
     if missing:
         raise RuntimeError("Missing build tools: " + ", ".join(missing) + ". Install requirements-dev.txt and the x64 C++ workload.")
+    viewer_check = getattr(args, "viewer_check", False)
     subprocess.run([required["cmake"], "-S", str(ROOT / "native"), "-B", str(args.build_dir), "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_TRY_COMPILE_CONFIGURATION=Release",
+        "-DPROMPTCAD_VIEWER_CHECK=" + ("ON" if viewer_check else "OFF"),
         "-DCMAKE_CXX_COMPILER=" + Path(required["cl"]).as_posix(),
         "-DCMAKE_RC_COMPILER=" + Path(required["rc"]).as_posix(),
         "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, (args.qt_prefix, args.occt_prefix))),
         "-DOpenCASCADE_DIR=" + str(args.occt_prefix / "lib/cmake/opencascade"),
         "-DCMAKE_MAKE_PROGRAM=" + required["ninja"]], env=env, check=True)
-    subprocess.run([required["cmake"], "--build", str(args.build_dir), "--parallel", "4"], env=env, check=True)
+    target = ["--target", "PromptCadViewerCheck"] if viewer_check else []
+    subprocess.run([required["cmake"], "--build", str(args.build_dir), *target, "--parallel", "4"], env=env, check=True)
     if getattr(args, "test", False):
         ctest = shutil.which("ctest", path=env["PATH"])
         if not ctest:
             raise RuntimeError("ctest is missing; install requirements-dev.txt.")
         subprocess.run([ctest, "--test-dir", str(args.build_dir), "--output-on-failure"], env=env, check=True)
-    return args.build_dir / "bin/PromptToCAD.exe"
+    return args.build_dir / ("bin/PromptCadViewerCheck.exe" if viewer_check else "bin/PromptToCAD.exe")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_sdk_arguments(parser)
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--viewer-check", action="store_true", help="Build only the focused compound rendering/selection check.")
     args = parser.parse_args()
     try:
         print(build(args))

@@ -77,6 +77,9 @@ class Projects:
                                     message="Application stopped. The accepted document was preserved.",
                                 )
                                 write_json(path, record)
+                                if record.get("turn_log"):
+                                    from .turn_logs import TurnLog
+                                    TurnLog.recover(path.parent.parent, record)
                         except RevisionConflict:
                             pass
             except (OSError, ValueError, KeyError, TypeError, WorkspaceError):
@@ -305,6 +308,10 @@ class Projects:
                     record = self.read(path)
                     if record.get("conversation_id") == cid:
                         paths.append(path)
+                        if record.get("turn_log"):
+                            from .turn_logs import record_folder
+                            log = record_folder(base, record)
+                            paths.extend(log / name for name in ("events.jsonl", "summary.json", "summary.md"))
                 for path in paths:
                     if not path.resolve().is_relative_to(base):
                         raise WorkspaceError("Invalid conversation file path.")

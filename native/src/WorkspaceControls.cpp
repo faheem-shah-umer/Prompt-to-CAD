@@ -502,25 +502,29 @@ QLabel *workspaceTitle(const QString &text, QWidget *parent) {
 namespace {
 class AccountButton : public QPushButton {
 public:
-  explicit AccountButton(QWidget *parent) : QPushButton(parent) { setFixedSize(36, 36); }
+  explicit AccountButton(QWidget *parent) : QPushButton(parent) {
+    setFixedSize(40, 40);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  }
 protected:
   void paintEvent(QPaintEvent *) override {
     const auto colors = workspaceColors();
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QRectF circle = QRectF(rect()).adjusted(2, 2, -2, -2);
+    const qreal diameter = qMax(0, qMin(width(), height()) - 8);
+    const QRectF circle((width() - diameter) / 2, (height() - diameter) / 2, diameter, diameter);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(isDown() ? colors.pressed : underMouse() ? colors.hover : colors.raised);
+    painter.setBrush(!isEnabled() ? colors.selected : isDown() ? colors.actionPressed : underMouse() ? colors.actionHover : colors.action);
     painter.drawEllipse(circle);
     if (hasFocus() && property("keyboardFocus").toBool()) {
       painter.setPen(QPen(colors.focus, 1.5));
       painter.setBrush(Qt::NoBrush);
-      painter.drawEllipse(circle);
+      painter.drawEllipse(circle.adjusted(-2, -2, 2, 2));
     }
-    if (text().isEmpty()) icon().paint(&painter, QRect(rect().center() - QPoint(8, 8), QSize(16, 16)), Qt::AlignCenter,
+    if (text().isEmpty()) workspaceIcon("user", true).paint(&painter, QRect(rect().center() - QPoint(8, 8), QSize(16, 16)), Qt::AlignCenter,
                                        isEnabled() ? QIcon::Normal : QIcon::Disabled);
     else {
-      painter.setPen(isEnabled() ? colors.text : colors.disabled);
+      painter.setPen(isEnabled() ? colors.onAction : colors.disabled);
       auto initialsFont = font();
       initialsFont.setWeight(QFont::DemiBold);
       painter.setFont(initialsFont);

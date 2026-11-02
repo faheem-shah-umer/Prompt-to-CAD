@@ -56,6 +56,7 @@ protected:
     void wheelEvent(QWheelEvent*) override;
 private:
     void initialize();
+    void synchronizeViewport();
     void updateSelection();
     void displayInstance(const QString& id);
     void buildAnnotations();
@@ -75,5 +76,7 @@ private:
     QString mode = "body";
     QPoint lastPosition, pressedPosition;
     bool pendingDocument = false;
+    bool pendingFit = false;
+    QSize renderedViewport;
     bool lightTheme = false;
 };

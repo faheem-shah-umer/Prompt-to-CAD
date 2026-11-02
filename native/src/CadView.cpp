@@ -75,11 +75,32 @@ void CadView::initialize() {
     view->MustBeResized();
 }
 void CadView::showEvent(QShowEvent*) {
-    try { initialize(); if (pendingDocument) setDocument(document); }
+    try { initialize(); if (pendingDocument) setDocument(document); update(); }
     catch (const Standard_Failure& error) { Q_EMIT viewerError(QString::fromUtf8(error.GetMessageString())); }
 }
-void CadView::paintEvent(QPaintEvent*) { if (!view.IsNull()) view->Redraw(); }
-void CadView::resizeEvent(QResizeEvent*) { if (!view.IsNull()) view->MustBeResized(); }
+void CadView::synchronizeViewport() {
+    if (view.IsNull() || view->Window().IsNull()) return;
+    Standard_Integer width = 0, height = 0;
+    view->Window()->Size(width, height);
+    const QSize nativeSize(width, height);
+    if (width <= 0 || height <= 0 || nativeSize == renderedViewport) return;
+    view->MustBeResized();
+    view->Invalidate();
+    renderedViewport = nativeSize;
+}
+void CadView::paintEvent(QPaintEvent*) {
+    if (view.IsNull()) return;
+    try {
+        // Qt has applied the native child-window geometry by paint time.
+        synchronizeViewport();
+        if (pendingFit) { pendingFit = false; fitAll(); }
+        else view->Redraw();
+    } catch (const Standard_Failure& error) { Q_EMIT viewerError(QString::fromUtf8(error.GetMessageString())); }
+}
+void CadView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    update();
+}
 
 void CadView::setDocument(const QJsonObject& incoming, bool fit) {
     document = incoming;
@@ -145,13 +166,16 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         setSelectionMode(mode);
         currentSelection = {};
         Q_EMIT selectionChanged({});
-        if (fit) fitAll(); else view->Redraw();
+        if (fit) { pendingFit = true; update(); }
+        else { synchronizeViewport(); view->Redraw(); }
         Q_EMIT visibilityChanged();
     } catch (const Standard_Failure& error) { Q_EMIT viewerError(QString::fromUtf8(error.GetMessageString())); }
       catch (const std::exception& error) { Q_EMIT viewerError(QString::fromUtf8(error.what())); }
 }
 void CadView::fitAll() {
-    if (view.IsNull()) return;
+    if (view.IsNull() || !isVisible()) { pendingFit = true; return; }
+    pendingFit = false;
+    synchronizeViewport();
     view->FitAll(0.06, false); view->ZFitAll(); view->Redraw();
 }
 void CadView::standardView(const QString& direction) {
@@ -505,6 +529,7 @@ void CadView::setLightTheme(bool light) {
 void CadView::buildAnnotations() {
     for (const auto& value : document.value("engineering").toArray()) {
         const auto record = value.toObject();
+        if (!record.value("viewport_visible").toBool(false)) continue;
         if (record.value("status").toString() != "current") continue;
         const auto owner = record.value("instance_id").toString();
         QJsonObject part;

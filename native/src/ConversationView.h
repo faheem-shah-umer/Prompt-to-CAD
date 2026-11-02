@@ -26,6 +26,7 @@ class ConversationView : public QScrollArea {
     void rebuild();
     bool updateWorkingMessages(const QJsonArray &messages);
     QJsonArray entries;
+    QJsonArray designNotes;
     QToolButton *latest;
     bool following = true, restoring = false;
     unsigned scrollGeneration = 0;

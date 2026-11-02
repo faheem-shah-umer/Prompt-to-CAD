@@ -5,6 +5,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from tools.fixtures import write_assembly
 def main():
     parser = argparse.ArgumentParser()
     add_sdk_arguments(parser)
+    parser.add_argument("--launcher", action="store_true", help="Exercise Run-PromptToCAD.cmd from outside the checkout.")
     parser.add_argument(
         "--case", choices=("laptop-solid", "scaled-mesh", "large-solid")
     )
@@ -49,7 +51,7 @@ def main():
         mesh_path = document["project_dir"]
     finally:
         workspace.worker.close()
-    base = build_environment(args.qt_prefix, args.occt_prefix, args.toolchain_env)
+    base = build_environment(args.qt_prefix, args.occt_prefix, args.toolchain_env, compiler=False)
     cases = [
         (
             "laptop-solid",
@@ -85,18 +87,26 @@ def main():
             "PROMPTCAD_HOME": str(fixtures / name),
             "CAD_UI_LOG": str(ROOT / "tmp" / (name + ".log")),
         }
-        command = [
-            str(args.build_dir / "bin/PromptToCAD.exe"),
-            "--workspace",
-            str(ROOT),
+        application_args = [
             "--smoke-test",
             "--smoke-size",
             size,
             "--open",
             model,
         ]
+        command = [str(args.build_dir / "bin/PromptToCAD.exe"), "--workspace", str(ROOT),
+                   "--python", sys.executable, *application_args]
+        launch_options = {"cwd": ROOT}
+        if args.launcher:
+            processor = os.environ.get("COMSPEC", "C:/Windows/System32/cmd.exe")
+            arguments = [str(ROOT / "Run-PromptToCAD.cmd"), "--qt-prefix", str(args.qt_prefix),
+                         "--occt-prefix", str(args.occt_prefix), "--build-dir", str(args.build_dir),
+                         "--", *application_args]
+            command = f'"{processor}" /d /s /c "call {subprocess.list2cmdline(arguments)}"'
+            launch_options = {"cwd": fixtures, "executable": processor}
+            env["CI"] = "true"
         result = subprocess.run(
-            command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=180
+            command, **launch_options, env=env, capture_output=True, text=True, timeout=180
         )
         if result.returncode:
             raise RuntimeError(

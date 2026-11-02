@@ -12,7 +12,7 @@ from OCP.STEPCAFControl import STEPCAFControl_Reader, STEPCAFControl_Writer
 from OCP.STEPControl import STEPControl_AsIs
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
-from OCP.TDF import TDF_Label, TDF_LabelSequence
+from OCP.TDF import TDF_Label, TDF_LabelSequence, TDF_ChildIterator
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX
 from OCP.TopExp import TopExp
@@ -61,10 +61,20 @@ def world_shape(folder, part):
     return load_shape(folder, part).moved(cq.Location(transform(part["matrix"])))
 
 
-def store_shape(folder, shape):
+def store_shape(folder, shape, allow_compound=False):
     report = measure(shape)
-    if not report["brep_valid"] or report["solid_count"] != 1 or report["volume_mm3"] <= 1e-7:
+    solids = shape.Solids()
+    count_ok = 1 <= len(solids) <= 1000 if allow_compound else len(solids) == 1
+    if (not report["brep_valid"] or not count_ok or report["volume_mm3"] <= 1e-7
+            or any(not s.isValid() or s.Volume() <= 1e-7 for s in solids)):
         raise WorkspaceError("An operation must leave one valid solid with positive volume.")
+    # Reject loose faces/edges alongside solids, even for an explicit compound part.
+    for kind in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX):
+        members = TopTools_IndexedMapOfShape()
+        for solid in solids:
+            TopExp.MapShapes_s(solid.wrapped, kind, members)
+        if any(not members.Contains(entity.wrapped) for entity in indexed(shape, kind)):
+            raise WorkspaceError("Compound parts may contain valid solids only.")
     folder = Path(folder)
     assets = folder / "assets"
     assets.mkdir(exist_ok=True)
@@ -79,6 +89,7 @@ def store_shape(folder, shape):
     # The viewer enumerates this exact persisted shape, not the transient builder shape.
     persisted = cq.Shape.importBrep(str(target))
     return {"brep": f"assets/{digest}.brep", "asset_hash": digest, "metrics": measure(persisted),
+            "shape_kind": "compound" if len(solids) > 1 else "solid",
             "topology": {"faces": len(indexed(persisted, TopAbs_FACE)),
                          "edges": len(indexed(persisted, TopAbs_EDGE)),
                          "vertices": len(indexed(persisted, TopAbs_VERTEX))}}
@@ -122,10 +133,12 @@ def import_step(path, folder):
         location = placement.Multiplied(tool.GetLocation_s(label).Transformation())
         color = Quantity_Color()
         rgb = inherited_color
+        has_color = False
         for candidate in (label, definition):
             if colors.GetColor_s(candidate, XCAFDoc_ColorType.XCAFDoc_ColorGen, color) or colors.GetColor_s(
                     candidate, XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
                 rgb = [color.Red(), color.Green(), color.Blue()]
+                has_color = True
                 break
         name = label_name(label, label_name(definition, f"Component {len(nodes) + len(components) + 1}"))
         node_id = str(uuid4())
@@ -136,12 +149,22 @@ def import_step(path, folder):
             for i in range(1, children.Length() + 1):
                 visit(children.Value(i), node_id, location, rgb, ancestry + [key])
         else:
+            if not has_color:
+                # STEP writes a compound's uniform colour onto its solid sublabels.
+                child = TDF_ChildIterator(definition, True)
+                child_colors = []
+                while child.More():
+                    if colors.GetColor_s(child.Value(), XCAFDoc_ColorType.XCAFDoc_ColorGen, color) or colors.GetColor_s(child.Value(), XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
+                        child_colors.append([color.Red(), color.Green(), color.Blue()])
+                    child.Next()
+                if child_colors and all(all(abs(a - b) < 1e-6 for a, b in zip(c, child_colors[0])) for c in child_colors):
+                    rgb = child_colors[0]
             if key not in definitions:
                 shape = cq.Shape.cast(tool.GetShape_s(definition)).located(cq.Location())
                 solids = shape.Solids()
                 if not solids:
                     raise WorkspaceError(f"'{name}' contains no solid. Surface-only STEP editing is not supported.")
-                definitions[key] = [(store_shape(folder, solid), str(uuid4())) for solid in solids]
+                definitions[key] = [(store_shape(folder, shape, allow_compound=len(solids) > 1), str(uuid4()))]
             for position, (asset, definition_id) in enumerate(definitions[key]):
                 components.append({"instance_id": str(uuid4()), "definition_id": definition_id,
                                    "parent_id": parent, "name": name if len(definitions[key]) == 1 else f"{name} {position + 1}",
@@ -187,6 +210,7 @@ def inspect(folder, snapshot, instance_id=None, limit=128, offset=0):
         faces, edges = indexed(shape, TopAbs_FACE), indexed(shape, TopAbs_EDGE)
         description = {key: part[key] for key in ("instance_id", "name", "metrics", "matrix", "topology")}
         description.update(parameters=part.get("parameters", {}), definition_id=part.get("definition_id"), parent_id=part.get("parent_id"), representation="solid")
+        description.update(shape_kind=part.get("shape_kind", "solid"), standard_part=part.get("standard_part"), asset_hash=part["asset_hash"])
         description["faces"] = [{"index": i, "type": face.geomType(), "area_mm2": face.Area(),
                                  "centre": face.Center().toTuple(),
                                  "normal": face.normalAt().toTuple() if face.geomType() == "PLANE" else None,
@@ -204,6 +228,7 @@ def inspect(folder, snapshot, instance_id=None, limit=128, offset=0):
     if instance_id and not descriptions:
         raise WorkspaceError("The selected component no longer exists.", "stale_selection")
     return {"revision_id": snapshot.get("revision_id"), "components": descriptions,
+            "component_count": len(descriptions), "solid_count": sum(d.get("metrics", {}).get("solid_count", 0) for d in descriptions),
             "coordinates": "Operation coordinates and topology measurements are local to each body; matrix maps to world mm."}
 
 
@@ -241,10 +266,42 @@ def extrusion_tool(command):
 
 def boolean_apply(body, tool, operation):
     before = body.Volume()
-    candidate = {"add": body.fuse, "cut": body.cut, "intersect": body.intersect}[operation](tool).clean()
+    solids = body.Solids()
+    if len(solids) > 1:
+        if operation == "add":
+            affected = [s for s in solids if s.distance(tool) < 1e-7]
+            if not affected:
+                raise WorkspaceError("An added feature must connect to the component's material.")
+            merged = affected[0].fuse(tool, *affected[1:]).clean()
+            members = [s for s in solids if not any(s.isSame(a) for a in affected)] + merged.Solids()
+        else:
+            members = []
+            for solid in solids:
+                if solid.intersect(tool).Volume() <= 1e-7:
+                    if operation == "cut":
+                        members.append(solid)
+                    continue
+                members.extend((solid.cut(tool) if operation == "cut" else solid.intersect(tool)).clean().Solids())
+        candidate = cq.Compound.makeCompound(members)
+    else:
+        candidate = {"add": body.fuse, "cut": body.cut, "intersect": body.intersect}[operation](tool).clean()
     if abs(candidate.Volume() - before) < 1e-7:
         raise WorkspaceError("The operation did not change the solid.")
     return candidate
+
+
+def owning_solid(body, entity, kind):
+    owners = [i for i, solid in enumerate(body.Solids())
+              if any(entity.isSame(member) for member in indexed(solid, kind))]
+    if len(owners) != 1:
+        raise WorkspaceError("The topology reference has no unambiguous owning solid.", "stale_selection")
+    return owners[0]
+
+
+def replace_member(body, index, replacement):
+    members = body.Solids()
+    members[index:index + 1] = replacement.Solids()
+    return cq.Compound.makeCompound(members)
 
 
 def apply_command(folder, snapshot, command_data):
@@ -257,6 +314,12 @@ def apply_command(folder, snapshot, command_data):
     if part is None:
         raise WorkspaceError("The command targets a missing component.", "stale_selection")
     if command.type == "parameters":
+        if part.get("standard_part"):
+            from backend.v2.standard_parts import generate
+            previous = part["standard_part"]["parameters"]
+            values = {key: int(value) if type(previous.get(key)) is int and value.is_integer() else value
+                      for key, value in command.values.items()}
+            return generate(folder, candidate, {"instance_id": command.instance_id, "parameters": values})
         if part.get("editable_definition_kind") == "recipe" and any(command.instance_id in r["output_names"].values() for r in candidate.get("recipe_runs", [])):
             from backend.v2.component_edits import change_recipe_parameters
             return change_recipe_parameters(folder, candidate, command.instance_id, command.values)
@@ -288,12 +351,26 @@ def apply_command(folder, snapshot, command_data):
                 i < 1 or i > len(edges) for i in command.edge_indices):
             raise WorkspaceError("An edge reference is invalid. Inspect the current body again.", "stale_selection")
         selected = [edges[i - 1] for i in command.edge_indices]
-        body = body.fillet(command.size, selected) if command.type == "fillet" else body.chamfer(command.size, None, selected)
+        if part.get("shape_kind") == "compound":
+            groups = {}
+            for edge in selected:
+                groups.setdefault(owning_solid(body, edge, TopAbs_EDGE), []).append(edge)
+            members = body.Solids()
+            for index, selected_edges in groups.items():
+                solid = members[index]
+                members[index] = solid.fillet(command.size, selected_edges) if command.type == "fillet" else solid.chamfer(command.size, None, selected_edges)
+            body = cq.Compound.makeCompound(members)
+        else:
+            body = body.fillet(command.size, selected) if command.type == "fillet" else body.chamfer(command.size, None, selected)
     elif command.type in ("offset_face", "face_holes"):
         faces = indexed(body, TopAbs_FACE)
         if command.face_index > len(faces):
             raise WorkspaceError("Inspect the current topology before using this face.", "stale_selection")
         face = faces[command.face_index - 1]
+        compound = body if part.get("shape_kind") == "compound" else None
+        owner = owning_solid(body, face, TopAbs_FACE) if compound is not None else None
+        if compound is not None:
+            body = compound.Solids()[owner]
         if face.geomType() != "PLANE":
             raise WorkspaceError("This operation requires a planar face.")
         normal = face.normalAt()
@@ -309,6 +386,8 @@ def apply_command(folder, snapshot, command_data):
                 tool = cq.Solid.makeCylinder(command.diameter / 2, command.depth + 0.02,
                                              origin.add(normal.multiply(0.01)), normal.multiply(-1))
                 body = boolean_apply(body, tool, "cut")
+        if compound is not None:
+            body = replace_member(compound, owner, body)
     elif command.type == "extrude":
         body = boolean_apply(body, extrusion_tool(command), command.operation)
     elif command.type == "pattern":
@@ -331,7 +410,7 @@ def apply_command(folder, snapshot, command_data):
             raise WorkspaceError("A boolean needs a different, existing tool component.")
         tool = world_shape(folder, other).moved(cq.Location(transform(part["matrix"]).Inverted()))
         body = boolean_apply(body, tool, command.operation)
-    part.update(store_shape(folder, body))
+    part.update(store_shape(folder, body, allow_compound=part.get("shape_kind") == "compound"))
     part["definition_id"] = str(uuid4())
     candidate["direct_edits"] = True
     return candidate
@@ -356,7 +435,7 @@ def export_step(folder, snapshot, path):
         matrices[node["id"]] = transform(node["matrix"])
     definitions = {}
     for part in snapshot["components"]:
-        key = part["definition_id"]
+        key = (part["definition_id"], tuple(part["color"]))
         if key not in definitions:
             label = tool.AddShape(load_shape(folder, part).wrapped, False)
             definitions[key] = label
@@ -367,6 +446,8 @@ def export_step(folder, snapshot, path):
         TDataStd_Name.Set_s(instance, TCollection_ExtendedString(part["name"]))
         rgb = part["color"]
         colors.SetColor(instance, Quantity_Color(*rgb, Quantity_TOC_RGB), XCAFDoc_ColorType.XCAFDoc_ColorGen)
+        if part.get("shape_kind") == "compound":
+            colors.SetColor(label, Quantity_Color(*rgb, Quantity_TOC_RGB), XCAFDoc_ColorType.XCAFDoc_ColorGen)
     tool.UpdateAssemblies()
     writer = STEPCAFControl_Writer()
     writer.SetNameMode(True)
@@ -394,6 +475,7 @@ def verify_export(folder, snapshot, path):
                     all(abs(a - b) < 0.01 for a, b in zip(measure(expected_shape)["dimensions_mm"],
                                                         measure(actual_shape)["dimensions_mm"])) and
                     abs(expected_shape.Volume() - actual_shape.Volume()) < max(0.01, expected_shape.Volume() * 1e-5) and
+                    len(expected_shape.Solids()) == len(actual_shape.Solids()) and
                     expected_shape.Center().sub(actual_shape.Center()).Length < 0.01 and
                     all(abs(a - b) < 1 / 255 + 1e-5 for a, b in zip(part["color"], other["color"]))):
                     found = i
@@ -407,7 +489,8 @@ def verify_export(folder, snapshot, path):
         actual_groups = [n["name"] for n in imported.get("assembly_nodes", [])]
         if expected_groups and not all(actual_groups.count(name) >= expected_groups.count(name) for name in expected_groups):
             raise WorkspaceError("STEP round-trip lost assembly groups.", "verification_failed")
-    return {"passed": True, "solid_count": len(expected), "names_colors_placements": True}
+    return {"passed": True, "component_count": len(expected),
+            "solid_count": sum(len(load_shape(folder, p).Solids()) for p in expected), "names_colors_placements": True}
 
 
 def check_new_intersections(folder, before, after, command):
@@ -503,6 +586,7 @@ def apply_face_batch(folder, snapshot, values):
             raise WorkspaceError("Combine edits to the same face into one batch command.")
         used.add(key)
         face = faces[command.face_index-1]
+        owner = owning_solid(originals[command.instance_id], face, TopAbs_FACE) if part.get("shape_kind") == "compound" else None
         if face.geomType() != "PLANE":
             raise WorkspaceError("This batch requires planar faces.")
         normal = face.normalAt()
@@ -510,19 +594,27 @@ def apply_face_batch(folder, snapshot, values):
         if command.type == "offset_face":
             if abs(command.distance) < 1e-6:
                 raise WorkspaceError("Choose a nonzero face offset.")
-            tools.append(("add" if command.distance > 0 else "cut", cq.Solid.extrudeLinear(face.outerWire(), face.innerWires(), normal.multiply(command.distance))))
+            tools.append((owner, "add" if command.distance > 0 else "cut", cq.Solid.extrudeLinear(face.outerWire(), face.innerWires(), normal.multiply(command.distance))))
         else:
             plane = cq.Plane(origin=face.Center(), normal=normal)
             for x, y in command.centres:
                 origin = plane.toWorldCoords((x, y))
-                tools.append(("cut", cq.Solid.makeCylinder(command.diameter/2, command.depth+0.02, origin.add(normal.multiply(0.01)), normal.multiply(-1))))
+                tools.append((owner, "cut", cq.Solid.makeCylinder(command.diameter/2, command.depth+0.02, origin.add(normal.multiply(0.01)), normal.multiply(-1))))
     for part in candidate["components"]:
         if part["instance_id"] not in originals:
             continue
         body = originals[part["instance_id"]]
-        for operation, tool in operations[part["instance_id"]]:
-            body = boolean_apply(body, tool, operation)
-        part.update(store_shape(folder, body))
+        members = body.Solids()
+        for owner, operation, tool in operations[part["instance_id"]]:
+            if owner is None:
+                body = boolean_apply(body, tool, operation)
+            else:
+                members[owner] = boolean_apply(members[owner], tool, operation)
+                if len(members[owner].Solids()) != 1:
+                    raise WorkspaceError("A planar face edit must retain its owning solid.")
+        if part.get("shape_kind") == "compound":
+            body = cq.Compound.makeCompound(members)
+        part.update(store_shape(folder, body, allow_compound=part.get("shape_kind") == "compound"))
         part["definition_id"] = str(uuid4())
     candidate["direct_edits"] = True
     check_new_intersections(folder, snapshot, candidate, {"type": "batch"})

@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .contracts import WorkspaceError
+from .runtime_identity import RuntimeIdentity
 
 
 class GeometryWorker:
@@ -22,6 +23,7 @@ class GeometryWorker:
         self.process = None
         self.log = None
         self.responses = None
+        self.runtime_identity = RuntimeIdentity("geometry_client")
 
     def start(self):
         if self.process and self.process.poll() is None:
@@ -33,10 +35,11 @@ class GeometryWorker:
         responses = self.responses
         interpreter = sys.executable
         environment = os.environ.copy()
+        environment.update(self.runtime_identity.environment())
         if os.name == "nt" and sys.prefix != sys.base_prefix:
             # The Windows venv executable is a launcher; kill the actual interpreter on timeout.
             interpreter = sys._base_executable
-            environment["PYTHONPATH"] = os.pathsep.join(site.getsitepackages())
+        environment["PYTHONPATH"] = os.pathsep.join([str(self.runtime_identity.root), *site.getsitepackages()])
         self.process = subprocess.Popen(
             [interpreter, "-B", "-m", "backend.native.worker"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=self.log, text=True, encoding="utf-8",
@@ -55,6 +58,7 @@ class GeometryWorker:
         threading.Thread(target=read, daemon=True).start()
 
     def call(self, method, params, cancel=None, progress=None, timeout=None):
+        self.runtime_identity.ensure_current()
         self.start()
         request_id = uuid4().hex
         deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
@@ -79,6 +83,7 @@ class GeometryWorker:
                     continue
                 if reply.get("id") != request_id:
                     raise WorkspaceError("The geometry worker returned an unexpected response.", "protocol_error")
+                self.runtime_identity.verify_peer(reply.get("runtime_identity", {}), "geometry")
                 if "error" in reply:
                     error = reply["error"]
                     raise WorkspaceError(error["message"], error.get("data", {}).get("code", "geometry_failed"))
@@ -87,7 +92,7 @@ class GeometryWorker:
             self.close()
             raise WorkspaceError("Lost the geometry worker connection.", "worker_crashed") from error
         except WorkspaceError as error:
-            if error.code in ("cancelled", "timeout", "worker_crashed", "protocol_error"):
+            if error.code in ("cancelled", "timeout", "worker_crashed", "protocol_error", "runtime_mismatch"):
                 self.close()
             raise
 
