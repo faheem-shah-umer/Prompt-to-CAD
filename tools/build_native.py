@@ -32,7 +32,7 @@ def resolve_sdks(args):
     for name, path in (("Qt", args.qt_prefix / "lib/cmake/Qt6/Qt6Config.cmake"),
                        ("OCCT", args.occt_prefix / "lib/cmake/opencascade/OpenCASCADEConfig.cmake")):
         if not path.is_file():
-            raise RuntimeError(f"{name} SDK missing. Run python -m tools.setup_windows --download-sdk or configure its prefix. See docs/setup.md.")
+            raise RuntimeError(f"{name} SDK missing. Run .venv\\Scripts\\python.exe -m tools.setup_windows --download-sdk or configure its prefix. See docs/setup.md.")
     return args
 
 

@@ -71,14 +71,22 @@ class DeveloperLauncherTests(unittest.TestCase):
 
     def test_python_requirements_come_from_existing_file(self):
         (self.root / "requirements.txt").write_text("# Runtime roots\nsample-runtime==1.2.0\n", encoding="utf-8")
+        (self.root / "requirements-runtime-lock.txt").write_text("sample-runtime==1.2.0\nsample-transitive==1.2.0\n", encoding="utf-8")
         with patch("tools.run_native.metadata.version", return_value="1.2.0") as version:
             check_dependencies()
-        version.assert_called_once_with("sample-runtime")
+        self.assertEqual([call.args[0] for call in version.call_args_list], ["sample-runtime", "sample-transitive"])
         for result in (metadata.PackageNotFoundError("sample-runtime"), "0.1.0"):
             values = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
             with self.subTest(result=str(result)), patch("tools.run_native.metadata.version", **values), \
                     self.assertRaisesRegex(RuntimeError, "sample-runtime.*requirements-dev.txt"):
                 check_dependencies()
+
+    def test_missing_transitive_dependency_explains_install(self):
+        (self.root / "requirements.txt").write_text("sample-runtime==1.2.0\n", encoding="utf-8")
+        (self.root / "requirements-runtime-lock.txt").write_text("sample-transitive==1.2.0\n", encoding="utf-8")
+        with patch("tools.run_native.metadata.version", side_effect=["1.2.0", metadata.PackageNotFoundError("sample-transitive")]), \
+                self.assertRaisesRegex(RuntimeError, "sample-transitive.*requirements-dev.txt"):
+            check_dependencies()
 
     def test_missing_dependency_checker_explains_install(self):
         with patch.dict(sys.modules, {"packaging.requirements": None}), \

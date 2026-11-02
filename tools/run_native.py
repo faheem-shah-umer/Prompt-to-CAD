@@ -23,7 +23,10 @@ def check_dependencies():
     except ImportError as error:
         raise RuntimeError("Python dependencies are missing. Run " + INSTALL) from error
     missing = []
-    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+    lines = []
+    for filename in ("requirements.txt", "requirements-runtime-lock.txt"):
+        lines.extend((ROOT / filename).read_text(encoding="utf-8").splitlines())
+    for line in dict.fromkeys(lines):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         requirement = Requirement(line)
