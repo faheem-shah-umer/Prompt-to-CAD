@@ -33,6 +33,12 @@ def dispatch(method, params):
         return catalog(params.get("request", {})) if method == "standard_parts" else generate(folder, params["snapshot"], params["request"])
     if method == "import_step":
         return geometry.import_step(params["path"], folder)
+    if method == "catalog_insert":
+        from backend.v2.process_limits import constrain_worker
+
+        constrain_worker()
+        return geometry.append_catalog_step(folder, params["snapshot"], params["path"],
+                                            params["provenance"], params["placement"])
     if method == "scale_mesh_scene":
         from backend.v2.meshes import load as load_mesh, store as store_mesh
         import copy

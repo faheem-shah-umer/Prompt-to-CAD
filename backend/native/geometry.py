@@ -106,12 +106,21 @@ def label_name(label, fallback):
     return attr.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attr) else fallback
 
 
-def import_step(path, folder):
+def import_step(path, folder, *, self_contained=False):
     document = TDocStd_Document(TCollection_ExtendedString("BinXCAF"))
     reader = STEPCAFControl_Reader()
     reader.SetNameMode(True)
     reader.SetColorMode(True)
-    if reader.ReadFile(str(path)) != IFSelect_RetDone or not reader.Transfer(document):
+    if reader.ReadFile(str(path)) != IFSelect_RetDone:
+        raise WorkspaceError("OpenCascade could not read this STEP file.", "import_failed")
+    if self_contained:
+        from OCP.STEPConstruct import STEPConstruct_ExternRefs
+
+        references = STEPConstruct_ExternRefs(reader.Reader().WS())
+        references.LoadExternRefs()
+        if references.NbExternRefs():
+            raise WorkspaceError("Catalog STEP files must be self-contained.", "catalog_external_reference")
+    if not reader.Transfer(document):
         raise WorkspaceError("OpenCascade could not read this STEP file.", "import_failed")
     tool = XCAFDoc_DocumentTool.ShapeTool_s(document.Main())
     colors = XCAFDoc_DocumentTool.ColorTool_s(document.Main())
@@ -203,6 +212,38 @@ def import_step(path, folder):
         warnings.append("This assembly exceeds the 100-component tested target.")
     return {"components": components, "assembly_nodes": nodes, "origin": "step",
             "warnings": warnings}
+
+
+def append_catalog_step(folder, snapshot, path, provenance, placement):
+    staging = Path(path).parent
+    imported = import_step(path, staging, self_contained=True)
+    components, nodes = imported["components"], imported["assembly_nodes"]
+    pose = cq.Location(tuple(placement["translation"]), tuple(placement["rotation"])).wrapped.Transformation()
+    if len(components) > 1 or nodes:
+        group_id = str(uuid4())
+        for item in [*nodes, *components]:
+            if item["parent_id"] is None:
+                item["parent_id"] = group_id
+        nodes.insert(0, {"id": group_id, "parent_id": None, "name": provenance["name"], "matrix": list(IDENTITY)})
+    for item in [*nodes, *components]:
+        item["matrix"] = matrix(pose.Multiplied(transform(item["matrix"])))
+    for part in components:
+        part.update(editable_definition_kind="imported_step", catalog_part=provenance)
+
+    candidate = copy.deepcopy(snapshot)
+    candidate["components"].extend(components)
+    if nodes:
+        candidate.setdefault("assembly_nodes", []).extend(nodes)
+    candidate["warnings"] = list(dict.fromkeys([*candidate.get("warnings", []), *imported["warnings"]]))
+    created = [part["instance_id"] for part in components]
+    candidate["_component_transaction"] = {
+        "operation": "catalog_insert", "consumed": [], "outputs": created, "mapping": {},
+        "added_groups": [node["id"] for node in nodes],
+    }
+    added = set(created)
+    check_new_intersections(folder, snapshot, candidate, {"type": "catalog_insert"},
+                            shape_for=lambda part: world_shape(staging if part["instance_id"] in added else folder, part))
+    return candidate
 
 
 def from_recipe(recipe, folder):
@@ -518,7 +559,7 @@ def verify_export(folder, snapshot, path):
             "solid_count": sum(len(load_shape(folder, p).Solids()) for p in expected), "names_colors_placements": True}
 
 
-def check_new_intersections(folder, before, after, command):
+def check_new_intersections(folder, before, after, command, *, shape_for=None):
     previous = {p["instance_id"]: p for p in before["components"]}
     changed = {p["instance_id"] for p in after["components"] if
                p["instance_id"] not in previous or
@@ -540,7 +581,7 @@ def check_new_intersections(folder, before, after, command):
     def shape(part):
         key = (part["instance_id"], part["asset_hash"], tuple(part["matrix"]))
         if key not in cache:
-            cache[key] = world_shape(folder, part)
+            cache[key] = shape_for(part) if shape_for else world_shape(folder, part)
         return cache[key]
     for i, a in enumerate(after["components"]):
         for b in after["components"][i + 1:]:

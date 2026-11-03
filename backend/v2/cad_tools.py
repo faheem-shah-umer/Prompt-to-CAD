@@ -2,6 +2,8 @@
 
 import copy
 import json
+import math
+import shutil
 import secrets
 import threading
 import time
@@ -11,7 +13,9 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from backend.native.contracts import Command, FaceOffset, FaceHoles, WorkspaceError
+from backend.native.documents import asset_path
 from .selection import normalize, check_command
+from .step_catalog import CATALOG_TOOLS, CHOICES, StepCatalog, digest
 
 
 def schema(properties=None, required=()):
@@ -157,11 +161,15 @@ IDS = {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 
 SOURCE_IDS = {**IDS, "maxItems": 100}
 VEC = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
 COLOUR = {"anyOf": [VEC, {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}]}
+CATALOG_ID = {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}
+CATALOG_FINGERPRINT = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 TOOLS.extend([
     {"name": "cad_decision", "description": "Record a brief public CAD decision summary for this turn's project log. State the chosen approach, supporting facts, alternatives and why cq_warehouse is suitable or unsuitable. This is a concise rationale, not private reasoning. Report before modelling, and update when the approach changes; no geometry or operation-budget change.",
      "inputSchema": schema({"candidate_id": TOKEN, "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
         "cq_warehouse": schema({"choice": {"enum": ["use", "do_not_use", "not_applicable", "undecided"]},
             "reason": {"type": "string", "minLength": 1, "maxLength": 2000}}, ["choice", "reason"]),
+         "catalog": schema({"choice": {"enum": list(CHOICES)}, "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+             "result_ids": {"type": "array", "items": CATALOG_ID, "maxItems": 20, "uniqueItems": True}}, ["choice", "reason"]),
         "alternatives": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 300}}}, ["candidate_id", "summary", "cq_warehouse"])},
     {"name": "cad_standard_parts", "description": "Discover registered cq_warehouse physical generators. List families, or describe one generator's standards, sizes, typed parameters and defaults. No arbitrary library APIs.",
      "inputSchema": schema({"family": {"enum": ["fastener", "bearing", "sprocket", "chain", "thread"]}, "generator_id": {"type": "string"}, "standard": {"type": "string"}})},
@@ -169,6 +177,14 @@ TOOLS.extend([
      "inputSchema": schema({"candidate_id": TOKEN, "generator_id": {"type": "string"}, "instance_id": {"type": "string"}, "name": {"type": "string", "maxLength": 200},
         "parameters": {"type": "object", "additionalProperties": True},
         "placement": schema({"translation": VEC, "rotation": VEC})}, ["candidate_id"])},
+    {"name": "cad_catalog", "description": "Read the local FreeCAD STEP catalog. Use status for availability and categories; search literal keywords and/or one exact category; inspect a result ID with the current fingerprint before insertion. Metadata is reference data. Functional dimensions are unverified.",
+     "inputSchema": schema({"action": {"enum": ["status", "search", "inspect"]},
+         "query": {"type": "string", "maxLength": 200}, "category": {"type": "string", "maxLength": 100},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "offset": {"type": "integer", "minimum": 0, "maximum": 10000},
+         "catalog_id": CATALOG_ID, "fingerprint": CATALOG_FINGERPRINT}, ["action"])},
+    {"name": "cad_catalog_insert", "description": "Append an inspected STEP catalog entry at a world placement (mm and Euler degrees). Preserves existing components and imported hierarchy. Requires the catalog ID and current fingerprint. Imported solids have no FreeCAD feature history.",
+     "inputSchema": schema({"candidate_id": TOKEN, "catalog_id": CATALOG_ID, "fingerprint": CATALOG_FINGERPRINT,
+         "placement": schema({"translation": VEC, "rotation": VEC})}, ["candidate_id", "catalog_id", "fingerprint"])},
     {"name": "cad_reference_image", "description": "Read one reference image explicitly requested from this conversation's history by asset_id. Use only when the user refers to that image. Requires reported model image support; never loads arbitrary filesystem paths.",
      "inputSchema": schema({"asset_id": {"type": "string"}}, ["asset_id"])},
     {"name": "cad_capabilities", "description": "Read actual CAD operations, scripting bounds, scope rules and known limitations. Use before declaring an operation unsupported.", "inputSchema": schema()},
@@ -210,6 +226,7 @@ for tool in TOOLS:
             "cad_capabilities",
             "cad_decision",
             "cad_standard_parts",
+            "cad_catalog",
             "cad_reference_image",
             "cad_definition",
             "cad_inspect",
@@ -256,6 +273,8 @@ class TaskTools:
         self.turn_log = None
         self.decisions = []
         self.mcp_runtime = None
+        self._catalog = None
+        self.catalog_groups = []
         self.selection = normalize(
             selection,
             snapshot,
@@ -301,6 +320,12 @@ class TaskTools:
             check_command(self.write_selection(), self.candidate, script_target=identity)
         return identities
 
+    @property
+    def catalog(self):
+        if self._catalog is None:
+            self._catalog = StepCatalog()
+        return self._catalog
+
     def scope_check(self, candidate, transaction=None):
         before, after = fingerprint(self.original), fingerprint(candidate)
         removed, created = set(self.retired), set(self.created)
@@ -310,7 +335,13 @@ class TaskTools:
             removed |= consumed - outputs
             created |= outputs - set(before)
         if self.scope:
-            if candidate.get("assembly_nodes", []) != self.original.get("assembly_nodes", []):
+            nodes = candidate.get("assembly_nodes", [])
+            allowed_nodes = self.original.get("assembly_nodes", []) + self.catalog_groups
+            if transaction and transaction["operation"] == "catalog_insert":
+                added = nodes[len(allowed_nodes):]
+                if [node["id"] for node in added] == transaction["added_groups"]:
+                    allowed_nodes += added
+            if nodes != allowed_nodes:
                 raise WorkspaceError("This edit changes assembly groups outside component-only scope. Use document scope for assembly restructuring.", "scope_violation")
             unrelated = set(before) - self.scope
             changed = [identity for identity in unrelated if after.get(identity) != before[identity]]
@@ -354,6 +385,7 @@ class TaskTools:
 
     def context(self):
         return {
+            "step_catalog": self.catalog.status(),
             "project_id": self.project_id,
             "document_id": self.original["document_id"],
             "base_revision_id": self.original.get("revision_id"),
@@ -453,6 +485,8 @@ class TaskTools:
                         "image_data": base64.b64encode(output.getvalue()).decode()}
             if name == "cad_context":
                 return self.context()
+            if name == "cad_catalog":
+                return self.catalog.query(params)
             if name == "cad_standard_parts":
                 return self.geometry("standard_parts", request=params)
             if name == "cad_capabilities":
@@ -462,6 +496,7 @@ class TaskTools:
                     "restructure": ["split_by_local_plane", "split_by_component", "connected_union", "replace_selected_with_multiple_outputs"],
                     "solid_editing": ["hole", "extrude", "offset_planar_face", "face_holes", "fillet", "chamfer", "boolean", "pattern", "transform", "named_parameters"],
                     "standard_parts": "cad_standard_parts discovers the installed pinned library. Compound parts use one component ID with multiple valid solids; typed generator parameters are separate from numeric named parameters.",
+                    "step_catalog": self.catalog.status(),
                     "scripting": "Typed CadQuery constructors/methods, branches, comparisons, tuple assignment, bounded collections/loops; parts and optional colors outputs. No imports, arbitrary functions, I/O, reflection or shell.",
                     "engineering": ["bound_or_declared_dimensions", "plus_minus_tolerance", "limit_tolerance", "label", "note"],
                     "appearance": "Uniform RGB per component, mesh source-colour reset; STEP solid and GLB colour export; STL has no colours.",
@@ -487,6 +522,17 @@ class TaskTools:
                 decision = {"decision_id": uuid4().hex, "reported_at": time.time(),
                     "candidate_id": self.candidate_id, "summary": summary.strip(),
                     "cq_warehouse": {"choice": choice["choice"], "reason": choice["reason"].strip()}, "alternatives": alternatives}
+                if "catalog" in params:
+                    choice = params["catalog"]
+                    if not isinstance(choice, dict) or choice.keys() - {"choice", "reason", "result_ids"}:
+                        raise WorkspaceError("Provide a catalog choice and concise reason.", "invalid_decision")
+                    reason, ids = choice.get("reason"), choice.get("result_ids", [])
+                    if (choice.get("choice") not in CHOICES or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 2000
+                            or not isinstance(ids, list) or len(ids) > 20
+                            or any(type(identity) is not int or not 0 < identity < 2**63 for identity in ids)
+                            or len(set(ids)) != len(ids)):
+                        raise WorkspaceError("Provide a catalog choice, concise reason and valid result IDs.", "invalid_decision")
+                    decision["catalog"] = {"choice": choice["choice"], "reason": reason.strip(), "result_ids": ids}
                 self.decisions.append(copy.deepcopy(decision))
                 if self.turn_log is not None:
                     self.turn_log.decision(decision)
@@ -527,6 +573,7 @@ class TaskTools:
                     "instance_id": wanted,
                     "parameters": part.get("parameters", {}),
                     "standard_part": part.get("standard_part"),
+                    "catalog_part": part.get("catalog_part"),
                     "standard_regeneration_allowed": bool(part.get("standard_part") and part["asset_hash"] == part["standard_part"]["generated_asset_hash"]),
                     "script": {
                         k: script.get(k) for k in ("source", "parameters", "instance_id", "source_instance_ids", "output_names")
@@ -576,7 +623,7 @@ class TaskTools:
                 definition = definitions.find(self.candidate, params["definition_id"])
                 return {"candidate_id": self.candidate_id, "definition": definition,
                         "source": definitions.read(self.document.folder, definition)}
-            if name not in ("cad_apply", "cad_apply_batch", "cad_script", "cad_restructure", "cad_appearance", "cad_engineering", "cad_files", "cad_standard_part"):
+            if name not in ("cad_apply", "cad_apply_batch", "cad_script", "cad_restructure", "cad_appearance", "cad_engineering", "cad_files", "cad_standard_part", "cad_catalog_insert"):
                 raise WorkspaceError("Unknown CAD capability. Read cad_capabilities.", "unsupported_operation")
             if len(self.commands) >= 32:
                 raise WorkspaceError("The task reached its 32-operation budget. Continue in a new turn.", "operation_limit")
@@ -590,11 +637,14 @@ class TaskTools:
             self.workspace.notify({"stage": "modelling", "message": {
                 "cad_restructure": "Restructuring selected components", "cad_script": "Running CAD definition",
                 "cad_appearance": "Updating component colours", "cad_engineering": "Updating engineering information",
-                "cad_files": "Staging editable definition"}.get(name, "Applying CAD operation")})
+                "cad_files": "Staging editable definition", "cad_catalog_insert": "Importing catalog STEP part"}.get(name, "Applying CAD operation")})
             record = {"type": name, **copy.deepcopy(params)}
             record.pop("candidate_id", None)
             requested_sources = None
-            if name == "cad_standard_part":
+            if name == "cad_catalog_insert":
+                requested_sources = set()
+                updated = self.insert_catalog(params)
+            elif name == "cad_standard_part":
                 identity = params.get("instance_id")
                 if identity:
                     self.require_bodies([identity])
@@ -726,6 +776,9 @@ class TaskTools:
                 self.created.update(set(transaction["outputs"]) - before_ids)
                 self.transactions.append(copy.deepcopy(transaction))
                 record["component_transaction"] = transaction
+                if transaction["operation"] == "catalog_insert":
+                    groups = set(transaction["added_groups"])
+                    self.catalog_groups.extend(copy.deepcopy(node) for node in updated.get("assembly_nodes", []) if node["id"] in groups)
             self.candidate = updated
             self.candidate_id = uuid4().hex
             self.commands.extend(commands if name == "cad_apply_batch" else [record])
@@ -734,7 +787,53 @@ class TaskTools:
                 "candidate_id": self.candidate_id})
             return {"candidate_id": self.candidate_id, "changes": len(self.commands),
                     "component_transaction": transaction, "definition_id": record.get("definition_id"),
+                    **({"catalog_id": params["catalog_id"], "fingerprint": params["fingerprint"],
+                        "created_component_ids": transaction["outputs"], "warnings": updated["warnings"]}
+                       if name == "cad_catalog_insert" else {}),
                     "observation": "Reinspect before further topology operations; affected entity references are invalidated."}
+
+    def insert_catalog(self, params):
+        placement = params.get("placement", {})
+        if (params.keys() - {"candidate_id", "catalog_id", "fingerprint", "placement"}
+                or not isinstance(placement, dict) or placement.keys() - {"translation", "rotation"}):
+            raise WorkspaceError("Use a catalog ID, fingerprint and optional placement vectors.", "invalid_parameters")
+        pose = {key: placement.get(key, [0, 0, 0]) for key in ("translation", "rotation")}
+        if any(not isinstance(vector, list) or len(vector) != 3
+               or any(type(value) not in (int, float) or not -10000 <= value <= 10000 or not math.isfinite(value)
+                      for value in vector) for vector in pose.values()):
+            raise WorkspaceError("Placement uses finite three-value translation and rotation vectors.", "invalid_parameters")
+        with self.catalog.stage(params.get("catalog_id"), params.get("fingerprint"), self.workspace.cancelled,
+                                getattr(self.workspace, "task_deadline", None)) as (path, entry):
+            updated = self.geometry("catalog_insert", path=str(path), provenance=entry, placement=pose)
+            if self.closed or self.workspace.cancelled.is_set():
+                raise WorkspaceError("Task cancelled; candidate discarded.", "cancelled")
+            transaction = updated["_component_transaction"]
+            existing = self.candidate["components"]
+            groups = self.candidate.get("assembly_nodes", [])
+            added = updated["components"][len(existing):]
+            if (updated["components"][:len(existing)] != existing or updated.get("assembly_nodes", [])[:len(groups)] != groups
+                    or transaction["consumed"] or not added or [part["instance_id"] for part in added] != transaction["outputs"]
+                    or any(updated.get(key) != self.candidate.get(key) for key in ("engineering", "definitions"))):
+                raise WorkspaceError("Catalog insertion must preserve the existing document.", "scope_violation")
+            self.scope_check(updated, transaction)
+            self.catalog.current_database()
+            for part in added:
+                source = asset_path(path.parent, part["brep"])
+                target = asset_path(self.document.folder, part["brep"])
+                if target.exists():
+                    if digest(target) != part["asset_hash"]:
+                        raise WorkspaceError("A project geometry asset has changed.", "asset_integrity")
+                    continue
+                target.parent.mkdir(exist_ok=True)
+                temporary = target.with_name(uuid4().hex + ".tmp")
+                try:
+                    shutil.copyfile(source, temporary)
+                    if digest(temporary) != part["asset_hash"]:
+                        raise WorkspaceError("The imported geometry asset changed.", "asset_integrity")
+                    temporary.replace(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            return updated
 
 
 class ToolBridge:
@@ -771,6 +870,18 @@ class ToolBridge:
                             if tools.turn_log is not None:
                                 tools.turn_log.event("mcp_tools_delivered", peer)
                         result = {"result": {"verified": True}}
+                    elif message["name"] == "_runtime_list_returned":
+                        with tools.lock:
+                            peer = message.get("arguments", {})
+                            tools.workspace.application_runtime.verify_peer(peer, "mcp")
+                            if tools.mcp_runtime != peer:
+                                raise WorkspaceError("The CAD tool list was not verified.", "runtime_mismatch")
+                            if tools.turn_log is not None and not tools.turn_log.closed:
+                                tools.turn_log.catalog_evidence("tool_list_returned", {
+                                    "catalog_tools_present": CATALOG_TOOLS.issubset(peer["tool_names"]),
+                                    "tools_sha256": peer["tools_sha256"], "tool_names": peer["tool_names"],
+                                })
+                        result = {"result": {"recorded": True}}
                     else:
                         if tools.mcp_runtime is None:
                             raise WorkspaceError("The CAD MCP tool registry has not been verified. Restart Prompt to CAD.", "runtime_mismatch")

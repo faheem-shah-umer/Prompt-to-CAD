@@ -21,8 +21,10 @@ def bridge_call(message):
 
 def serve(input_stream=sys.stdin, output_stream=sys.stdout):
     runtime = RuntimeIdentity("mcp", tools=TOOLS)
+    tool_names = {tool["name"] for tool in TOOLS}
     for line in input_stream:
         request = None
+        listed = None
         try:
             if len(line) > 1024 * 1024:
                 raise ValueError("MCP request exceeds limit")
@@ -41,12 +43,16 @@ def serve(input_stream=sys.stdin, output_stream=sys.stdout):
                 result = {}
             elif method == "tools/list":
                 if os.environ.get("PROMPTCAD_TOOL_URL"):
-                    answer = bridge_call({"name": "_runtime_check", "arguments": runtime.report()})
+                    peer = runtime.report()
+                    answer = bridge_call({"name": "_runtime_check", "arguments": peer})
                     if not answer.get("result", {}).get("verified"):
                         raise ValueError("CAD runtime handshake failed")
+                    listed = peer
                 result = {"tools": TOOLS}
             elif method == "tools/call":
                 message = request.get("params", {})
+                if message.get("name") not in tool_names:
+                    raise ValueError("Unknown CAD tool")
                 answer = bridge_call(message)
                 result = {
                     "content": [{"type": "text", "text": json.dumps({k: v for k, v in answer.get("result", answer).items() if k != "image_data"}, allow_nan=False)}],
@@ -74,6 +80,11 @@ def serve(input_stream=sys.stdin, output_stream=sys.stdout):
             }
         output_stream.write(json.dumps(reply, allow_nan=False) + "\n")
         output_stream.flush()
+        if listed is not None and "result" in reply:
+            try:
+                bridge_call({"name": "_runtime_list_returned", "arguments": listed})
+            except (OSError, ValueError):
+                pass  # The list was already returned. An unavailable log must not block CAD.
 
 
 if __name__ == "__main__":

@@ -780,6 +780,7 @@ class WorkspaceV2(Workspace):
             notify=lambda message: self.notify({"stage": "logging", "message": message}))
         turn_log.event("backend_runtime_verified", self.application_runtime.report())
         tools.turn_log = turn_log
+        turn_log.catalog_evidence("discovery", tools.catalog.initial)
         task["turn_log"] = "logs/turns/" + task["task_id"]
         tools.viewport = viewport if supports_images else None
         tools.image_supported = supports_images
@@ -880,7 +881,8 @@ class WorkspaceV2(Workspace):
                 raise
             conversation.update(provider_session=session, provider_account=account_id)
             self.projects.save_conversation(self.project_id, conversation)
-            context = json.dumps(tools.context(), allow_nan=False)
+            context_data = tools.context()
+            context = json.dumps(context_data, allow_nan=False)
             if not resuming:
                 history = "\n".join(
                     m["role"] + ": " + m["content"] + ("\nReference assets: " + json.dumps(m["attachments"], allow_nan=False) if m.get("attachments") else "")
@@ -897,11 +899,16 @@ class WorkspaceV2(Workspace):
                 + prompt
             )
             self.token_usage = conversation.get("token_usage", {})
+            def turn_notify(event):
+                if event.get("stage") == "agent_running":
+                    turn_log.catalog_evidence("context_submitted", context_data["step_catalog"])
+                self.notify(event)
+
             message = self.runtime.run(
                 text,
                 model,
                 self.cancelled,
-                self.notify,
+                turn_notify,
                 [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
                     and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
                 timeout=max(1, self.task_deadline - time.monotonic()),
