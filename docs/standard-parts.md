@@ -2,7 +2,7 @@
 
 The cq_warehouse adapter supplies 34 registered physical generators across five families: 22 fasteners (nuts, screws and washers), five bearings, a sprocket, a chain and five thread generators. The registry covers every public concrete generator class in those modules at [the pinned upstream revision](https://github.com/gumyr/cq_warehouse/tree/a57bb7a24762d367d66369f280a24c38a64e73dd). Abstract classes, drafting and arbitrary extension APIs are excluded.
 
-This is a generator integration, not a searchable database. SQLite, STEP datasets and a manual component picker are deferred. Chat use requires the application's existing AI connection. The adapter and its synthetic checks run locally without an AI account.
+Chat use requires the application's existing AI connection. The adapter and its synthetic checks run locally without an AI account. The [STEP catalog](step-catalog.md) provides a separate source of existing parts.
 
 ## Chat workflow
 

@@ -20,6 +20,8 @@ Open `summary.md` first. It contains the request, timestamps/status, concise sta
 
 The assistant is instructed to call `cad_decision` after relevant inspection, before modelling and when its approach changes. It reports an approach, supporting facts, alternatives, and a cq_warehouse choice (`use`, `do_not_use`, `not_applicable` or `undecided`) with a short reason. Examples include a matching standard/size, custom geometry outside the catalog, an existing component edit, or a generation failure that changes the approach.
 
+The STEP catalog summary records the availability and fingerprint sent with the turn and whether MCP returned both catalog tools. Search queries, filters, returned metadata and inspection results appear in `events.jsonl`. The summary distinguishes attempted insertions, candidate components, and components retained in the accepted revision. The optional `catalog` decision records the assistant’s stated choice, result IDs and reason separately.
+
 These are **concise assistant-stated explanations**, not hidden reasoning, an exhaustive thought process or proof that an explanation is correct. The application records actual tools independently:
 
 - `discovery_calls`: calls to `cad_standard_parts`. Looking at the catalog does not mean it generated geometry.

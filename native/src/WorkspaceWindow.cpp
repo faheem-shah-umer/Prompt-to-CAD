@@ -1217,7 +1217,7 @@ void WorkspaceWindow::openFile(const QString &supplied) {
                                             "CAD models (*.step *.stp *.json *.glb *.stl *.obj *.ply)");
     if (path.isEmpty())
         return;
-    auto method = QFileInfo(path).isDir() || QFileInfo(path).fileName() == "project.json" ? "v2.open_native"
+    const QString method = QFileInfo(path).isDir() || QFileInfo(path).fileName() == "project.json" ? "v2.open_native"
                                                                                           : "v2.import";
     QJsonObject args{{"path", path}};
     auto extension = QFileInfo(path).suffix().toLower();
@@ -1232,8 +1232,11 @@ void WorkspaceWindow::openFile(const QString &supplied) {
             return;
         args["mm_per_unit"] = scale;
     }
-    call(method, args, [this](auto r) {
+    call(method, args, [this, method](auto r) {
         showState(r, true);
+        if (method == "v2.import")
+            for (const auto &warning : r.value("document").toObject().value("warnings").toArray())
+                notify(warning.toString(), "warning");
         if (smoke)
             QTimer::singleShot(1200, this, &WorkspaceWindow::smokeCheck);
         if (!qApp->property("demoCaptureDir").toString().isEmpty())

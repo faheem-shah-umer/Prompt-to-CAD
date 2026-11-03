@@ -93,6 +93,7 @@ class TurnLog:
             **{key: task.get(key) for key in ("task_id", "document_id", "conversation_id", "base_revision_id", "started_at", "model")},
             "request": task.get("prompt", ""), "status": "running", "decisions": [], "tools": [],
             "application_runtime": task.get("application_runtime"),
+            "catalog_evidence": {},
             "evidence": "Observed tool calls and concise assistant-stated reasons; not hidden reasoning or proof that a stated reason is correct."})
         try:
             self.folder.mkdir(parents=True, exist_ok=False)
@@ -124,6 +125,9 @@ class TurnLog:
             call = {"call_id": uuid4().hex, "name": name, "started_at": time.time(),
                     "status": "running", "library_operation": library_operation, "generator_id": safe(generator_id),
                     "decision_id": self.data["decisions"][-1]["decision_id"] if self.data["decisions"] else None}
+            if name in ("cad_catalog", "cad_catalog_insert"):
+                call["catalog_request"] = safe({key: arguments[key] for key in
+                    ("action", "query", "category", "limit", "offset", "catalog_id", "fingerprint") if key in arguments})
             self.data["tools"].append(call)
             self.event("tool_started", {**call, "arguments": arguments})
             self.checkpoint()
@@ -134,6 +138,10 @@ class TurnLog:
             call.update(status="failed" if error is not None else "succeeded", elapsed_seconds=max(0, time.time() - call["started_at"]))
             if error is not None:
                 call["error"] = safe({"code": getattr(error, "code", "tool_failed"), "message": str(error)})
+            elif call["name"] == "cad_catalog_insert":
+                call["created_component_ids"] = [safe(identity) for identity in result["created_component_ids"]]
+            elif call["name"] == "cad_catalog" and call["catalog_request"].get("action") == "search":
+                call["result_ids"] = [entry["catalog_id"] for entry in result["results"]]
             self.event("tool_" + call["status"], {**call, **({"result": result} if error is None else {})})
             self.checkpoint()
 
@@ -142,6 +150,33 @@ class TurnLog:
             self.data["decisions"].append(safe(value))
             self.event("decision_reported", value)
             self.checkpoint()
+
+    def catalog_evidence(self, kind, payload):
+        with self.lock:
+            self.data.setdefault("catalog_evidence", {})[kind] = safe(payload)
+            self.event("catalog_" + kind, payload)
+            self.checkpoint()
+
+    def catalog_usage(self):
+        evidence = self.data.get("catalog_evidence", {})
+        tools = self.data["tools"]
+        searches = [call for call in tools if call["name"] == "cad_catalog"
+                    and call.get("catalog_request", {}).get("action") == "search"]
+        insertions = [call for call in tools if call["name"] == "cad_catalog_insert"]
+        accepted = {identity for identity in self.data.get("created_components") or () if isinstance(identity, str)} if self.data.get("result_revision_id") else set()
+        return {
+            "discovery": evidence.get("discovery"),
+            "context_submitted": evidence.get("context_submitted"),
+            "tool_list_returned": evidence.get("tool_list_returned"),
+            "search_calls": len(searches),
+            "successful_search_calls": sum(call["status"] == "succeeded" for call in searches),
+            "insertion_attempts": len(insertions),
+            "insertions": [{"catalog_id": call.get("catalog_request", {}).get("catalog_id"), "status": call["status"],
+                            "candidate_component_ids": call.get("created_component_ids", []),
+                            "accepted_component_ids": [identity for identity in call.get("created_component_ids", []) if identity in accepted]}
+                           for call in insertions],
+            "explanation_status": "provided" if any("catalog" in decision for decision in self.data["decisions"]) else "not_provided",
+        }
 
     def usage(self):
         tools = self.data["tools"]
@@ -157,17 +192,21 @@ class TurnLog:
     def checkpoint(self):
         try:
             self.data["cq_warehouse"] = self.usage()
+            self.data["step_catalog"] = self.catalog_usage()
             write_json(self.folder / "summary.json", self.data)
             lines = ["# CAD turn log", "", "Task: " + self.data["task_id"],
                 "Started (UTC): " + datetime.fromtimestamp(self.data["started_at"], UTC).isoformat(),
                 "Status: " + self.data["status"], "", "## Request", "", text_block(self.data["request"]),
                 "", "## cq_warehouse: observed use", "", text_block(json.dumps(self.data["cq_warehouse"], indent=2)),
+                "", "## STEP catalog: observed access and use", "", text_block(json.dumps(self.data["step_catalog"], indent=2)),
                 "", "## Stated decisions", "", self.data["evidence"], ""]
             for decision in self.data["decisions"]:
                 lines.extend(["### Approach", "", text_block(decision["summary"]),
                     "", "cq_warehouse choice: " + decision["cq_warehouse"]["choice"], "",
                     text_block(decision["cq_warehouse"]["reason"]), "", "Alternatives:", "",
                     text_block("\n".join(decision["alternatives"]) or "None reported.")])
+                if "catalog" in decision:
+                    lines.extend(["", "STEP catalog choice", "", text_block(json.dumps(decision["catalog"], ensure_ascii=False))])
             if not self.data["decisions"]:
                 lines.append("No structured decision summary was provided. Inspect the final response if present; the logger does not infer a reason from tool absence.")
             lines.extend(["", "## Outcome", "", text_block(self.data.get("message") or "No final response recorded yet."),
@@ -188,6 +227,8 @@ class TurnLog:
     def finish(self, task):
         with self.lock:
             self.data.update(safe({key: task.get(key) for key in ("status", "completed_at", "result_revision_id", "message", "validation", "affected_components", "created_components", "consumed_components")}))
+            if task.get("created_components") is not None:
+                self.data["created_components"] = [safe(identity) for identity in task["created_components"] if isinstance(identity, str)]
             self.event("turn_finished", {"status": task["status"], "result_revision_id": task.get("result_revision_id")})
             self.checkpoint()
             self.closed = True

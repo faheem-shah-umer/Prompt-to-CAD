@@ -61,6 +61,16 @@ def world_shape(folder, part):
     return load_shape(folder, part).moved(cq.Location(transform(part["matrix"])))
 
 
+def has_auxiliary_geometry(shape, solids):
+    for kind in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX):
+        members = TopTools_IndexedMapOfShape()
+        for solid in solids:
+            TopExp.MapShapes_s(solid.wrapped, kind, members)
+        if any(not members.Contains(entity.wrapped) for entity in indexed(shape, kind)):
+            return True
+    return False
+
+
 def store_shape(folder, shape, allow_compound=False):
     report = measure(shape)
     solids = shape.Solids()
@@ -69,12 +79,8 @@ def store_shape(folder, shape, allow_compound=False):
             or any(not s.isValid() or s.Volume() <= 1e-7 for s in solids)):
         raise WorkspaceError("An operation must leave one valid solid with positive volume.")
     # Reject loose faces/edges alongside solids, even for an explicit compound part.
-    for kind in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX):
-        members = TopTools_IndexedMapOfShape()
-        for solid in solids:
-            TopExp.MapShapes_s(solid.wrapped, kind, members)
-        if any(not members.Contains(entity.wrapped) for entity in indexed(shape, kind)):
-            raise WorkspaceError("Compound parts may contain valid solids only.")
+    if has_auxiliary_geometry(shape, solids):
+        raise WorkspaceError("Compound parts may contain valid solids only.")
     folder = Path(folder)
     assets = folder / "assets"
     assets.mkdir(exist_ok=True)
@@ -100,20 +106,32 @@ def label_name(label, fallback):
     return attr.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attr) else fallback
 
 
-def import_step(path, folder):
+def import_step(path, folder, *, self_contained=False):
     document = TDocStd_Document(TCollection_ExtendedString("BinXCAF"))
     reader = STEPCAFControl_Reader()
     reader.SetNameMode(True)
     reader.SetColorMode(True)
-    if reader.ReadFile(str(path)) != IFSelect_RetDone or not reader.Transfer(document):
+    if reader.ReadFile(str(path)) != IFSelect_RetDone:
+        raise WorkspaceError("OpenCascade could not read this STEP file.", "import_failed")
+    if self_contained:
+        from OCP.STEPConstruct import STEPConstruct_ExternRefs
+
+        references = STEPConstruct_ExternRefs(reader.Reader().WS())
+        references.LoadExternRefs()
+        if references.NbExternRefs():
+            raise WorkspaceError("Catalog STEP files must be self-contained.", "catalog_external_reference")
+    if not reader.Transfer(document):
         raise WorkspaceError("OpenCascade could not read this STEP file.", "import_failed")
     tool = XCAFDoc_DocumentTool.ShapeTool_s(document.Main())
     colors = XCAFDoc_DocumentTool.ColorTool_s(document.Main())
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     components, nodes, definitions = [], [], {}
+    skipped_instances = 0
+    trimmed_definitions = set()
 
     def visit(label, parent, placement, inherited_color, ancestry):
+        nonlocal skipped_instances
         if len(ancestry) > 64:
             raise WorkspaceError("The assembly nesting exceeds 64 levels.")
         referred = TDF_Label()
@@ -160,11 +178,18 @@ def import_step(path, folder):
                 if child_colors and all(all(abs(a - b) < 1e-6 for a, b in zip(c, child_colors[0])) for c in child_colors):
                     rgb = child_colors[0]
             if key not in definitions:
-                shape = cq.Shape.cast(tool.GetShape_s(definition)).located(cq.Location())
-                solids = shape.Solids()
-                if not solids:
-                    raise WorkspaceError(f"'{name}' contains no solid. Surface-only STEP editing is not supported.")
-                definitions[key] = [(store_shape(folder, shape, allow_compound=len(solids) > 1), str(uuid4()))]
+                raw_shape = tool.GetShape_s(definition)
+                shape = None if raw_shape.IsNull() else cq.Shape.cast(raw_shape).located(cq.Location())
+                solids = shape.Solids() if shape is not None else []
+                definitions[key] = []
+                if solids:
+                    if has_auxiliary_geometry(shape, solids):
+                        shape = solids[0] if len(solids) == 1 else cq.Compound.makeCompound(solids)
+                        trimmed_definitions.add(key)
+                    definitions[key] = [(store_shape(folder, shape, allow_compound=len(solids) > 1), str(uuid4()))]
+            if not definitions[key]:
+                skipped_instances += 1
+                return
             for position, (asset, definition_id) in enumerate(definitions[key]):
                 components.append({"instance_id": str(uuid4()), "definition_id": definition_id,
                                    "parent_id": parent, "name": name if len(definitions[key]) == 1 else f"{name} {position + 1}",
@@ -175,9 +200,50 @@ def import_step(path, folder):
     for i in range(1, roots.Length() + 1):
         visit(roots.Value(i), None, gp_Trsf(), [0.65, 0.72, 0.82], [])
     if not components:
-        raise WorkspaceError("The STEP file contains no solid bodies.", "import_failed")
+        raise WorkspaceError("The STEP file contains no solid bodies. Surface-only STEP editing is not supported.", "import_failed")
+    warnings = []
+    if skipped_instances:
+        warnings.append(f"Skipped {skipped_instances} auxiliary STEP representation instance(s) with no solid bodies. "
+                        "Surfaces, curves and reference geometry are not imported for editing.")
+    if trimmed_definitions:
+        warnings.append(f"Ignored auxiliary surface, curve or reference geometry in {len(trimmed_definitions)} "
+                        "solid-bearing STEP definition(s). Their solid bodies were retained.")
+    if len(components) > 100:
+        warnings.append("This assembly exceeds the 100-component tested target.")
     return {"components": components, "assembly_nodes": nodes, "origin": "step",
-            "warnings": ["This assembly exceeds the 100-component tested target."] if len(components) > 100 else []}
+            "warnings": warnings}
+
+
+def append_catalog_step(folder, snapshot, path, provenance, placement):
+    staging = Path(path).parent
+    imported = import_step(path, staging, self_contained=True)
+    components, nodes = imported["components"], imported["assembly_nodes"]
+    pose = cq.Location(tuple(placement["translation"]), tuple(placement["rotation"])).wrapped.Transformation()
+    if len(components) > 1 or nodes:
+        group_id = str(uuid4())
+        for item in [*nodes, *components]:
+            if item["parent_id"] is None:
+                item["parent_id"] = group_id
+        nodes.insert(0, {"id": group_id, "parent_id": None, "name": provenance["name"], "matrix": list(IDENTITY)})
+    for item in [*nodes, *components]:
+        item["matrix"] = matrix(pose.Multiplied(transform(item["matrix"])))
+    for part in components:
+        part.update(editable_definition_kind="imported_step", catalog_part=provenance)
+
+    candidate = copy.deepcopy(snapshot)
+    candidate["components"].extend(components)
+    if nodes:
+        candidate.setdefault("assembly_nodes", []).extend(nodes)
+    candidate["warnings"] = list(dict.fromkeys([*candidate.get("warnings", []), *imported["warnings"]]))
+    created = [part["instance_id"] for part in components]
+    candidate["_component_transaction"] = {
+        "operation": "catalog_insert", "consumed": [], "outputs": created, "mapping": {},
+        "added_groups": [node["id"] for node in nodes],
+    }
+    added = set(created)
+    check_new_intersections(folder, snapshot, candidate, {"type": "catalog_insert"},
+                            shape_for=lambda part: world_shape(staging if part["instance_id"] in added else folder, part))
+    return candidate
 
 
 def from_recipe(recipe, folder):
@@ -493,7 +559,7 @@ def verify_export(folder, snapshot, path):
             "solid_count": sum(len(load_shape(folder, p).Solids()) for p in expected), "names_colors_placements": True}
 
 
-def check_new_intersections(folder, before, after, command):
+def check_new_intersections(folder, before, after, command, *, shape_for=None):
     previous = {p["instance_id"]: p for p in before["components"]}
     changed = {p["instance_id"] for p in after["components"] if
                p["instance_id"] not in previous or
@@ -515,7 +581,7 @@ def check_new_intersections(folder, before, after, command):
     def shape(part):
         key = (part["instance_id"], part["asset_hash"], tuple(part["matrix"]))
         if key not in cache:
-            cache[key] = world_shape(folder, part)
+            cache[key] = shape_for(part) if shape_for else world_shape(folder, part)
         return cache[key]
     for i, a in enumerate(after["components"]):
         for b in after["components"][i + 1:]:
