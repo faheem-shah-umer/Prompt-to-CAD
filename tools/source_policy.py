@@ -1,4 +1,4 @@
-"""Reviewed source and synthetic public-media inclusion rules."""
+"""Reviewed source and approved public-media inclusion rules."""
 from pathlib import PurePosixPath
 from tools.generate_icons import ICONS
 
@@ -6,7 +6,8 @@ ROOT_FILES = {".gitattributes", ".gitignore", "LICENSE", "README.md", "VERSION",
     "THIRD_PARTY_NOTICES.md", "Prompt to CAD.vbs", "Run-PromptToCAD.cmd", "requirements.txt", "requirements-dev.txt", "requirements-runtime-lock.txt"}
 BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "assets/app-icon.ico"}
 SITE_FILES = {"site/index.html", "site/styles.css", "site/main.js", "site/assets/app-icon.svg",
-    "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md"}
+    "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md",
+    "site/assets/pen-plotter-demo.gif", "site/assets/pen-plotter-workspace.png"}
 
 
 def is_public_source(relative):

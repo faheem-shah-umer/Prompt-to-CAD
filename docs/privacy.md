@@ -1,6 +1,6 @@
 # Privacy and source boundaries
 
-Tracked files contain application source, dependency declarations, build/check scripts, documentation, original branding and approved synthetic media. Personal projects, chats, credentials and development environments do not belong in Git.
+Tracked files contain application source, dependency declarations, build/check scripts, documentation, original branding and explicitly approved demo media. Personal projects, chats, credentials and development environments do not belong in Git.
 
 ## Local application data
 
@@ -18,7 +18,7 @@ Keep all project-managed development output inside this repository: `.local/` fo
 
 `.gitignore` is a first layer; `tools/source_policy.py` defines approved source and exact public-media names. Stage reviewed named files only. Source checks and redacted secret scans must not print credential values.
 
-Public screenshots use newly generated synthetic fixtures. [Provenance](../site/assets/PROVENANCE.md) records their origin and hashes. Existing personal CAD files, chats and images must not be used for publicity.
+Demo media uses synthetic fixtures or captures explicitly supplied and approved by the owner for the README. Provenance records cover the [synthetic fixture captures](../site/assets/PROVENANCE.md) and the [author-supplied pen plotter captures](demo-media.md). The approved pen plotter captures do not authorize publishing other personal CAD files, chats or images.
 
 ## Checks and historical limits
 
