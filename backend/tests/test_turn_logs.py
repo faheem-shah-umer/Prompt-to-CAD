@@ -124,6 +124,22 @@ class TurnLogTests(unittest.TestCase):
         with self.assertRaises(WorkspaceError):
             record_folder(self.project, {"turn_log": "../summary.json"})
 
+    def test_phase_timings_are_local_and_privacy_safe(self):
+        self.log.phase("provider_ai_wait", 1.25)
+        self.log.phase(
+            "assembly_verification",
+            0.5,
+            candidate_pairs=12,
+            skipped_pairs=10,
+            exact_intersections_checked=2,
+        )
+        self.log.finish({"status": "completed", "message": "done"})
+        summary = self.summary()
+        self.assertEqual(summary["phase_timings"]["assembly_verification"]["candidate_pairs"], 12)
+        self.assertEqual(summary["phase_timings"]["assembly_verification"]["skipped_pairs"], 10)
+        self.assertNotIn(str(self.project), json.dumps(summary))
+        self.assertTrue((self.log.folder / "events.jsonl").is_file())
+
     def test_conversation_purge_removes_its_log_files(self):
         projects = Projects(self.project / "collection")
         project = projects.create("Synthetic audit project")

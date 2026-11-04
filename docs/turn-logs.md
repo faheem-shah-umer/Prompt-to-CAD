@@ -12,7 +12,7 @@ New AI turns keep diagnostic files **inside the owning project folder**:
         events.jsonl
 ```
 
-Open `summary.md` first. It contains the request, timestamps/status, concise stated decisions, alternatives, cq_warehouse counters, final outcome and tool calls. `summary.json` contains structured versions of those fields. `events.jsonl` records timestamped tool starts, bounded arguments/results, errors and decision updates as the turn runs. The corresponding `tasks/<task_id>.json` contains a relative `turn_log` link. The project's folder path is available in the app's project information.
+Open `summary.md` first. It contains the request, timestamps/status, concise stated decisions, phase timings/counters, cq_warehouse counters, final outcome and tool calls. `summary.json` contains structured versions of those fields. `events.jsonl` records timestamped tool starts, bounded arguments/results, errors, phase durations and decision updates as the turn runs. Phase records distinguish provider/AI wait, catalog search/import, geometry-worker time, script execution, assembly verification and final validation; failed attempts are counted without exposing hidden reasoning or source payloads. The corresponding `tasks/<task_id>.json` contains a relative `turn_log` link. The project's folder path is available in the app's project information.
 
 `backend_runtime_verified` and `mcp_tools_delivered` events also identify the loaded source, instruction hash and actual MCP registry. See [runtime consistency](runtime-consistency.md) for diagnosing a source/runtime mismatch. These events distinguish the running contract from whatever files happen to be on disk later.
 
