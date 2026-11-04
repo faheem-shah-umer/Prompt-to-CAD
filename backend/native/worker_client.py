@@ -86,7 +86,12 @@ class GeometryWorker:
                 self.runtime_identity.verify_peer(reply.get("runtime_identity", {}), "geometry")
                 if "error" in reply:
                     error = reply["error"]
-                    raise WorkspaceError(error["message"], error.get("data", {}).get("code", "geometry_failed"))
+                    data = error.get("data", {})
+                    raise WorkspaceError(
+                        error["message"],
+                        data.get("code", "geometry_failed"),
+                        {key: value for key, value in data.items() if key != "code"},
+                    )
                 return reply["result"]
         except (BrokenPipeError, OSError) as error:
             self.close()

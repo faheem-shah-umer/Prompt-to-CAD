@@ -782,13 +782,6 @@ class WorkspaceV2(Workspace):
             self.project_id,
             task["task_id"],
         )
-        self.notify({
-            "stage": "budget",
-            "message": "CAD operation budget: 0/32 used (32 remaining).",
-            "operations_used": 0,
-            "operations_limit": 32,
-            "operations_remaining": 32,
-        })
         from .turn_logs import TurnLog
         turn_log = TurnLog(self.projects.project_path(self.project_id), task, self.project_id,
             notify=lambda message: self.notify({"stage": "logging", "message": message}))
@@ -819,6 +812,13 @@ class WorkspaceV2(Workspace):
         self.projects.save_conversation(self.project_id, conversation)
         self.projects.task(self.project_id, task)
         self.active_task = task
+        self.notify({
+            "stage": "budget",
+            "message": "CAD operation budget: 0/32 used (32 remaining).",
+            "operations_used": 0,
+            "operations_limit": 32,
+            "operations_remaining": 32,
+        })
         bridge = None
         self.task_deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
         self.document.journal(
@@ -931,9 +931,15 @@ class WorkspaceV2(Workspace):
                     turn_options=turn_options,
                 )
             except Exception:
-                turn_log.phase("provider_ai_wait", time.monotonic() - provider_started, failed=True)
+                total_elapsed = time.monotonic() - provider_started
+                tool_elapsed = turn_log.tool_elapsed()
+                turn_log.phase("provider_turn", total_elapsed, failed=True)
+                turn_log.phase("provider_transport_wait", max(0, total_elapsed - tool_elapsed), failed=True)
                 raise
-            turn_log.phase("provider_ai_wait", time.monotonic() - provider_started)
+            total_elapsed = time.monotonic() - provider_started
+            tool_elapsed = turn_log.tool_elapsed()
+            turn_log.phase("provider_turn", total_elapsed)
+            turn_log.phase("provider_transport_wait", max(0, total_elapsed - tool_elapsed))
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
             if tools.commands:

@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import math
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -214,7 +215,7 @@ def import_step(path, folder, *, self_contained=False):
             "warnings": warnings}
 
 
-def append_catalog_step(folder, snapshot, path, provenance, placement):
+def append_catalog_step(folder, snapshot, path, provenance, placement, stats=None):
     staging = Path(path).parent
     imported = import_step(path, staging, self_contained=True)
     components, nodes = imported["components"], imported["assembly_nodes"]
@@ -242,7 +243,9 @@ def append_catalog_step(folder, snapshot, path, provenance, placement):
     }
     added = set(created)
     check_new_intersections(folder, snapshot, candidate, {"type": "catalog_insert"},
-                            shape_for=lambda part: world_shape(staging if part["instance_id"] in added else folder, part))
+                            shape_for=lambda part: world_shape(staging if part["instance_id"] in added else folder, part),
+                            stats=stats)
+    candidate["_intersection_stats"] = stats or {}
     return candidate
 
 
@@ -559,7 +562,10 @@ def verify_export(folder, snapshot, path):
             "solid_count": sum(len(load_shape(folder, p).Solids()) for p in expected), "names_colors_placements": True}
 
 
-def check_new_intersections(folder, before, after, command, *, shape_for=None):
+def check_new_intersections(folder, before, after, command, *, shape_for=None, stats=None):
+    started = time.perf_counter()
+    counters = stats if stats is not None else {}
+    counters.update(candidate_pairs=0, skipped_pairs=0, exact_intersections_checked=0)
     previous = {p["instance_id"]: p for p in before["components"]}
     changed = {p["instance_id"] for p in after["components"] if
                p["instance_id"] not in previous or
@@ -583,27 +589,39 @@ def check_new_intersections(folder, before, after, command, *, shape_for=None):
         if key not in cache:
             cache[key] = shape_for(part) if shape_for else world_shape(folder, part)
         return cache[key]
-    for i, a in enumerate(after["components"]):
-        for b in after["components"][i + 1:]:
-            if a.get("representation") == "mesh" or b.get("representation") == "mesh":
-                continue
-            ids = {a["instance_id"], b["instance_id"]}
-            if not ids.intersection(changed):
-                continue
-            if command["type"] == "boolean" and ids == {command["instance_id"], command["tool_instance_id"]}:
-                continue
-            first, second = shape(a), shape(b)
-            box_a, box_b = first.BoundingBox(), second.BoundingBox()
-            if any(min(getattr(box_a, axis + "max"), getattr(box_b, axis + "max")) -
-                   max(getattr(box_a, axis + "min"), getattr(box_b, axis + "min")) <= 1e-6 for axis in "xyz"):
-                continue
-            overlap = first.intersect(second).Volume()
-            if overlap <= 1e-5:
-                continue
-            old_a, old_b = ancestors(a), ancestors(b)
-            old_overlap = old_shape(old_a).intersect(old_shape(old_b)).Volume() if old_a and old_b and not old_a.intersection(old_b) else 0
-            if overlap > old_overlap + 1e-5:
-                raise WorkspaceError(f"The edit introduces an unexpected intersection between '{a['name']}' and '{b['name']}'.")
+    try:
+        for i, a in enumerate(after["components"]):
+            for b in after["components"][i + 1:]:
+                if a.get("representation") == "mesh" or b.get("representation") == "mesh":
+                    continue
+                ids = {a["instance_id"], b["instance_id"]}
+                if not ids.intersection(changed):
+                    continue
+                counters["candidate_pairs"] += 1
+                if command["type"] == "boolean" and ids == {command["instance_id"], command["tool_instance_id"]}:
+                    continue
+                first, second = shape(a), shape(b)
+                box_a, box_b = first.BoundingBox(), second.BoundingBox()
+                if any(min(getattr(box_a, axis + "max"), getattr(box_b, axis + "max")) -
+                       max(getattr(box_a, axis + "min"), getattr(box_b, axis + "min")) <= 1e-6 for axis in "xyz"):
+                    counters["skipped_pairs"] += 1
+                    continue
+                counters["exact_intersections_checked"] += 1
+                overlap = first.intersect(second).Volume()
+                if overlap <= 1e-5:
+                    continue
+                old_a, old_b = ancestors(a), ancestors(b)
+                old_overlap = old_shape(old_a).intersect(old_shape(old_b)).Volume() if old_a and old_b and not old_a.intersection(old_b) else 0
+                if overlap > old_overlap + 1e-5:
+                    raise WorkspaceError(
+                        f"The edit introduces an unexpected intersection between '{a['name']}' and '{b['name']}'.",
+                        details={"intersection": counters},
+                    )
+    except WorkspaceError as error:
+        error.details.setdefault("intersection", counters)
+        raise
+    finally:
+        counters["elapsed_seconds"] = max(0, time.perf_counter() - started)
 
 
 def measure_entities(folder, snapshot, first, second):
@@ -630,7 +648,7 @@ def measure_entities(folder, snapshot, first, second):
             "coordinates": "assembly world", "units": "mm"}
 
 
-def apply_face_batch(folder, snapshot, values):
+def apply_face_batch(folder, snapshot, values, intersection_stats=None):
     if not isinstance(values, list) or not 1 <= len(values) <= 32:
         raise WorkspaceError("Use a batch of 1–32 face commands.")
     commands = [COMMAND.validate_python(value) for value in values]
@@ -683,5 +701,6 @@ def apply_face_batch(folder, snapshot, values):
         part.update(store_shape(folder, body, allow_compound=part.get("shape_kind") == "compound"))
         part["definition_id"] = str(uuid4())
     candidate["direct_edits"] = True
-    check_new_intersections(folder, snapshot, candidate, {"type": "batch"})
+    check_new_intersections(folder, snapshot, candidate, {"type": "batch"}, stats=intersection_stats)
+    candidate["_intersection_stats"] = intersection_stats or {}
     return candidate

@@ -125,7 +125,7 @@ class TurnLogTests(unittest.TestCase):
             record_folder(self.project, {"turn_log": "../summary.json"})
 
     def test_phase_timings_are_local_and_privacy_safe(self):
-        self.log.phase("provider_ai_wait", 1.25)
+        self.log.phase("provider_transport_wait", 1.25)
         self.log.phase(
             "assembly_verification",
             0.5,
@@ -139,6 +139,21 @@ class TurnLogTests(unittest.TestCase):
         self.assertEqual(summary["phase_timings"]["assembly_verification"]["skipped_pairs"], 10)
         self.assertNotIn(str(self.project), json.dumps(summary))
         self.assertTrue((self.log.folder / "events.jsonl").is_file())
+
+    def test_provider_turn_and_transport_wait_are_distinct_diagnostic_phases(self):
+        call = self.log.tool_started("cad_script", {"source": "private"})
+        self.log.tool_finished(call, {"candidate_id": "candidate"})
+        self.log.phase("provider_turn", 4.0)
+        self.log.phase("provider_transport_wait", 3.0)
+        self.log.finish({"status": "completed", "message": "done"})
+        summary = self.summary()
+        self.assertEqual(summary["phase_timings"]["provider_turn"]["elapsed_seconds"], 4.0)
+        self.assertEqual(summary["phase_timings"]["provider_transport_wait"]["elapsed_seconds"], 3.0)
+        self.assertAlmostEqual(
+            self.log.tool_elapsed(),
+            summary["phase_timings"]["script_execution"]["elapsed_seconds"],
+            places=5,
+        )
 
     def test_conversation_purge_removes_its_log_files(self):
         projects = Projects(self.project / "collection")

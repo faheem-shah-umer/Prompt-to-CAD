@@ -132,6 +132,7 @@ Command = Annotated[Hole | EdgeTreatment | Extrusion | FaceOffset | FaceHoles | 
 
 
 class WorkspaceError(Exception):
-    def __init__(self, message, code="invalid_operation"):
+    def __init__(self, message, code="invalid_operation", details=None):
         super().__init__(message)
         self.code = code
+        self.details = details or {}

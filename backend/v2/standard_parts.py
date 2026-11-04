@@ -202,7 +202,7 @@ def checked_parameters(identity, values):
     return result
 
 
-def generate(folder, snapshot, request):
+def generate(folder, snapshot, request, intersection_stats=None):
     candidate = copy.deepcopy(snapshot)
     target = request.get("instance_id")
     part = next((p for p in candidate["components"] if p["instance_id"] == target), None) if target else None
@@ -256,5 +256,9 @@ def generate(folder, snapshot, request):
     candidate["_component_transaction"] = {"operation": "standard_part", "consumed": consumed,
         "outputs": [part["instance_id"]], "mapping": {target: [target]} if target else {}}
     candidate["warnings"] = list(dict.fromkeys([*candidate.get("warnings", []), *[str(w.message) for w in caught]]))
-    geometry.check_new_intersections(folder, snapshot, candidate, {"type": "standard_part"})
+    geometry.check_new_intersections(
+        folder, snapshot, candidate, {"type": "standard_part"},
+        stats=intersection_stats,
+    )
+    candidate["_intersection_stats"] = intersection_stats or {}
     return candidate

@@ -145,7 +145,7 @@ TOOLS.append(
                 "commands": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 64,
+                    "maxItems": 32,
                     "items": inline_schema(
                         TypeAdapter(FaceOffset | FaceHoles).json_schema()
                     ),
@@ -292,7 +292,9 @@ class TaskTools:
 
     def geometry(self, method, **params):
         scripted = method == "script" or (method == "restructure" and params.get("request", {}).get("operation") == "replace" and "source" in params.get("request", {}))
-        return self.workspace.geometry(
+        started = time.monotonic()
+        try:
+            result = self.workspace.geometry(
             method,
             {
                 "project_dir": str(self.document.folder),
@@ -300,7 +302,22 @@ class TaskTools:
                 **params,
             },
             timeout=45 if scripted else None,
-        )
+            )
+        except WorkspaceError as error:
+            stats = getattr(error, "details", {}).get("intersection")
+            if stats and self.turn_log is not None:
+                self.turn_log.phase("active_intersection_check", stats.get("elapsed_seconds", time.monotonic() - started),
+                                    failed=True, candidate_pairs=stats.get("candidate_pairs", 0),
+                                    skipped_pairs=stats.get("skipped_pairs", 0),
+                                    exact_intersections_checked=stats.get("exact_intersections_checked", 0))
+            raise
+        stats = result.pop("_intersection_stats", None) if isinstance(result, dict) else None
+        if stats and self.turn_log is not None:
+            self.turn_log.phase("active_intersection_check", stats.get("elapsed_seconds", time.monotonic() - started),
+                                candidate_pairs=stats.get("candidate_pairs", 0),
+                                skipped_pairs=stats.get("skipped_pairs", 0),
+                                exact_intersections_checked=stats.get("exact_intersections_checked", 0))
+        return result
 
     def write_selection(self):
         if not self.selection:
@@ -668,17 +685,19 @@ class TaskTools:
             if len(self.commands) >= self.operation_limit:
                 raise WorkspaceError(
                     f"The task reached its {self.operation_limit}-operation budget. "
-                    "The saved design is unchanged; continue from this candidate in a new turn.",
+                    "The in-memory candidate is not saved. Validate and accept this stage "
+                    "before continuing from the accepted revision in a new turn.",
                     "operation_limit",
                 )
             commands = params.get("commands", []) if name == "cad_apply_batch" else [params["command"]] if name == "cad_apply" else []
-            if name == "cad_apply_batch" and not 1 <= len(commands) <= self.operation_limit:
-                raise WorkspaceError(f"Use a batch of 1–{self.operation_limit} supported face operations.", "operation_limit")
+            if name == "cad_apply_batch" and not 1 <= len(commands) <= 32:
+                raise WorkspaceError("Use a batch of 1–32 supported face operations; complex mode raises the total turn budget only.", "operation_limit")
             if len(self.commands) + max(1, len(commands)) > self.operation_limit:
                 raise WorkspaceError(
                     f"This mutation needs {max(1, len(commands))} operations but only "
                     f"{self.operation_limit - len(self.commands)} remain. "
-                    "The saved design is unchanged; continue in a new turn.",
+                    "The in-memory candidate is not saved. Validate and accept this stage "
+                    "before continuing from the accepted revision in a new turn.",
                     "operation_limit",
                 )
             for command in commands:
@@ -837,6 +856,14 @@ class TaskTools:
                 "operations_used": len(self.commands),
                 "operations_limit": self.operation_limit,
                 "operations_remaining": self.operation_limit - len(self.commands)})
+            self.workspace.notify({
+                "stage": "budget",
+                "message": f"CAD operations: {len(self.commands)}/{self.operation_limit} used "
+                           f"({self.operation_limit - len(self.commands)} remaining).",
+                "operations_used": len(self.commands),
+                "operations_limit": self.operation_limit,
+                "operations_remaining": self.operation_limit - len(self.commands),
+            })
             return {"candidate_id": self.candidate_id, "changes": len(self.commands),
                     "operation_budget": {"used": len(self.commands), "limit": self.operation_limit, "remaining": self.operation_limit - len(self.commands)},
                     "component_transaction": transaction, "definition_id": record.get("definition_id"),

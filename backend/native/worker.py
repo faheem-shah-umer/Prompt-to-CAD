@@ -14,6 +14,19 @@ from .runtime_identity import RuntimeIdentity
 
 RUNTIME_IDENTITY = RuntimeIdentity("geometry")
 
+def checked_intersections(folder, before, after, command, **kwargs):
+    stats = {}
+    try:
+        geometry.check_new_intersections(folder, before, after, command, stats=stats, **kwargs)
+    except WorkspaceError as error:
+        error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+        raise
+    except Exception as error:
+        error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+        raise
+    after["_intersection_stats"] = stats
+    return after
+
 
 def emit(method, params):
     protocol.write(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}, allow_nan=False) + "\n")
@@ -30,15 +43,33 @@ def dispatch(method, params):
         from backend.v2.process_limits import constrain_worker
         constrain_worker()
         from backend.v2.standard_parts import catalog, generate
-        return catalog(params.get("request", {})) if method == "standard_parts" else generate(folder, params["snapshot"], params["request"])
+        if method == "standard_parts":
+            return catalog(params.get("request", {}))
+        stats = {}
+        try:
+            return generate(folder, params["snapshot"], params["request"], intersection_stats=stats)
+        except WorkspaceError as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
+        except Exception as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
     if method == "import_step":
         return geometry.import_step(params["path"], folder)
     if method == "catalog_insert":
         from backend.v2.process_limits import constrain_worker
 
         constrain_worker()
-        return geometry.append_catalog_step(folder, params["snapshot"], params["path"],
-                                            params["provenance"], params["placement"])
+        stats = {}
+        try:
+            return geometry.append_catalog_step(folder, params["snapshot"], params["path"],
+                                                params["provenance"], params["placement"], stats)
+        except WorkspaceError as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
+        except Exception as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
     if method == "scale_mesh_scene":
         from backend.v2.meshes import load as load_mesh, store as store_mesh
         import copy
@@ -72,17 +103,23 @@ def dispatch(method, params):
         from backend.v2.process_limits import constrain_worker
         constrain_worker()
         candidate = execute(folder, params["snapshot"], params["source"], params.get("parameters", {}), params.get("instance_id"), params.get("source_instance_ids"))
-        geometry.check_new_intersections(folder, params["snapshot"], candidate, {"type": "script"})
-        return candidate
+        return checked_intersections(folder, params["snapshot"], candidate, {"type": "script"})
     if method == "restructure":
         from backend.v2.component_edits import restructure
         from backend.v2.process_limits import constrain_worker
         constrain_worker()
         candidate = restructure(folder, params["snapshot"], params["request"])
-        geometry.check_new_intersections(folder, params["snapshot"], candidate, {"type": "restructure"})
-        return candidate
+        return checked_intersections(folder, params["snapshot"], candidate, {"type": "restructure"})
     if method == "apply_batch":
-        return geometry.apply_face_batch(folder, params["snapshot"], params["commands"])
+        stats = {}
+        try:
+            return geometry.apply_face_batch(folder, params["snapshot"], params["commands"], stats)
+        except WorkspaceError as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
+        except Exception as error:
+            error.details = {**getattr(error, "details", {}), "intersection": dict(stats)}
+            raise
     if method == "apply":
         if params["command"].get("type") == "parameters" and any(
                 p.get("standard_part") and p["instance_id"] == params["command"].get("instance_id")
@@ -90,8 +127,7 @@ def dispatch(method, params):
             from backend.v2.process_limits import constrain_worker
             constrain_worker()
         candidate = geometry.apply_command(folder, params["snapshot"], params["command"])
-        geometry.check_new_intersections(folder, params["snapshot"], candidate, params["command"])
-        return candidate
+        return checked_intersections(folder, params["snapshot"], candidate, params["command"])
     if method == "verify":
         snapshot = params["snapshot"]
         from backend.v2.meshes import verify as verify_meshes
@@ -171,7 +207,8 @@ def main():
         except Exception as error:
             response = {"jsonrpc": "2.0", "id": request.get("id") if isinstance(request, dict) else None,
                         "error": {"code": -32000, "message": str(error),
-                                  "data": {"code": getattr(error, "code", "geometry_failed")}}}
+                                  "data": {"code": getattr(error, "code", "geometry_failed"),
+                                           **getattr(error, "details", {})}}}
         response["runtime_identity"] = RUNTIME_IDENTITY.report()
         protocol.write(json.dumps(response, allow_nan=False) + "\n")
 

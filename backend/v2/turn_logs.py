@@ -185,6 +185,13 @@ class TurnLog:
             self.event("phase_finished", {"phase": name, **phase})
             self.checkpoint()
 
+    def tool_elapsed(self):
+        return sum(
+            call.get("elapsed_seconds", 0)
+            for call in self.data.get("tools", [])
+            if call.get("status") in ("succeeded", "failed")
+        )
+
     def decision(self, value):
         with self.lock:
             self.data["decisions"].append(safe(value))

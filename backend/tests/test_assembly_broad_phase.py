@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import cadquery as cq
 
+from backend.native.geometry import check_new_intersections
 from backend.native.modelling import verify_assembly
 
 
@@ -40,6 +41,40 @@ class AssemblyBroadPhaseTests(unittest.TestCase):
         report = verify_assembly(self.builder(), [self.component("a", 0, uncertain), self.component("b", 3)])
         self.assertEqual(report["verification_timing"]["skipped_pairs"], 0)
         self.assertEqual(report["verification_timing"]["exact_intersections_checked"], 1)
+
+    def test_active_intersection_stats_are_available_on_failure(self):
+        first = self.component("a", 0)
+        second = self.component("b", 0)
+        before = {
+            "components": [
+                {"instance_id": "a", "asset_hash": "old-a", "matrix": []},
+                {"instance_id": "b", "asset_hash": "old-b", "matrix": []},
+            ]
+        }
+        after = {
+            "components": [
+                {"instance_id": "a", "name": "a", "asset_hash": "new-a", "matrix": []},
+                {"instance_id": "b", "name": "b", "asset_hash": "old-b", "matrix": []},
+            ]
+        }
+        stats = {}
+        with self.assertRaises(Exception) as error:
+            check_new_intersections(
+                ".",
+                before,
+                after,
+                {"type": "script"},
+                shape_for=lambda part: (
+                    first.shape if part["instance_id"] == "a" and part["asset_hash"] == "new-a"
+                    else cq.Workplane("XY").box(1, 1, 1).translate((3, 0, 0)).val()
+                    if part["instance_id"] == "a"
+                    else second.shape
+                ),
+                stats=stats,
+            )
+        self.assertEqual(error.exception.details["intersection"], stats)
+        self.assertEqual(stats["exact_intersections_checked"], 1)
+        self.assertIn("elapsed_seconds", stats)
 
 
 if __name__ == "__main__":

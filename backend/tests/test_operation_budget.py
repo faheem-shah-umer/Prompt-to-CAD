@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.native.contracts import WorkspaceError
-from backend.v2.cad_tools import TaskTools
+from backend.v2.cad_tools import TOOLS, TaskTools
 
 
 class OperationBudgetTests(unittest.TestCase):
@@ -51,6 +51,14 @@ class OperationBudgetTests(unittest.TestCase):
         self.assertEqual(result["limits"]["operations"], 64)
         self.assertEqual(result["operation_budget"]["remaining"], 64)
 
+    def test_batch_schema_and_worker_policy_remain_32(self):
+        batch = next(tool for tool in TOOLS if tool["name"] == "cad_apply_batch")
+        self.assertEqual(batch["inputSchema"]["properties"]["commands"]["maxItems"], 32)
+        with patch("backend.native.geometry.COMMAND.validate_python"), self.assertRaises(WorkspaceError) as error:
+            from backend.native.geometry import apply_face_batch
+            apply_face_batch(".", {}, [{}] * 33)
+        self.assertIn("1–32", str(error.exception))
+
     def test_batch_accounts_each_contained_edit_and_failed_mutation_rolls_back(self):
         batch = [{"type": "offset_face", "instance_id": "part", "face_index": 1, "distance": 1}] * 3
         with patch("backend.v2.cad_tools.check_command"), patch.object(self.tools, "geometry", return_value=self.fake_write()):
@@ -80,7 +88,8 @@ class OperationBudgetTests(unittest.TestCase):
                 "command": {"type": "transform", "instance_id": "part"},
             })
         self.assertEqual(error.exception.code, "operation_limit")
-        self.assertIn("saved design", str(error.exception))
+        self.assertIn("in-memory candidate is not saved", str(error.exception))
+        self.assertIn("Validate and accept", str(error.exception))
         self.tools.call("cad_capabilities", {"complex_design": True})
         with patch("backend.v2.cad_tools.check_command"), patch.object(self.tools, "geometry", return_value=self.fake_write("continued")):
             result = self.tools.call("cad_apply", {

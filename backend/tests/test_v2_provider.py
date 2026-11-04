@@ -22,6 +22,8 @@ class ProviderProtocolTests(unittest.TestCase):
             self.assertEqual(payload["developerInstructions"], instructions)
             self.assertIn("cq_warehouse", payload["developerInstructions"])
             self.assertIn("cad_standard_part", payload["developerInstructions"])
+            self.assertIn("only an accepted revision is available", payload["developerInstructions"])
+            self.assertIn("maximum of 32 edits per batch", payload["developerInstructions"])
 
     def runtime(self, events):
         runtime = CodexAppServer.__new__(CodexAppServer)
