@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from backend.native.contracts import WorkspaceError
+from backend.native.contracts import CAD_TURN_TIMEOUT_MESSAGE, CAD_TURN_TIMEOUT_SECONDS, WorkspaceError
 
 from .process_limits import ProcessTree
 
@@ -288,7 +288,7 @@ class CodexAppServer:
                 raise
             return None  # Older runtimes do not expose provider capability bounds.
 
-    def run(self, text, model, cancelled, notify, images=(), timeout=600, turn_options=None):
+    def run(self, text, model, cancelled, notify, images=(), timeout=CAD_TURN_TIMEOUT_SECONDS, turn_options=None):
         if cancelled.is_set():
             raise WorkspaceError("Task cancelled before inference.", "cancelled")
         inputs = [{"type": "text", "text": text}]
@@ -308,12 +308,18 @@ class CodexAppServer:
         )
         deadline = time.monotonic() + timeout
         interrupted_at = None
+        interrupt_error = None
         messages = {}
         phases = {}
         while True:
             if (
                 cancelled.is_set() or time.monotonic() >= deadline
             ) and interrupted_at is None:
+                interrupt_error = (
+                    WorkspaceError("Task cancelled; unaccepted changes were discarded.", "cancelled")
+                    if cancelled.is_set()
+                    else WorkspaceError(CAD_TURN_TIMEOUT_MESSAGE, "runtime_timeout")
+                )
                 self.sequence += 1
                 self.send(
                     {
@@ -323,11 +329,8 @@ class CodexAppServer:
                     }
                 )
                 interrupted_at = time.monotonic()
-            if interrupted_at and time.monotonic() - interrupted_at > 5:
-                raise WorkspaceError(
-                    "Task stopped; candidate changes were discarded.",
-                    "cancelled" if cancelled.is_set() else "runtime_timeout",
-                )
+            if interrupted_at is not None and time.monotonic() - interrupted_at > 5:
+                raise interrupt_error
             event = self.events.get() if not self.events.empty() else self.receive()
             method, params = event.get("method"), event.get("params", {})
             if params.get("threadId", self.thread_id) != self.thread_id:
@@ -417,21 +420,17 @@ class CodexAppServer:
                 )
             elif method == "turn/completed":
                 turn = params["turn"]
-                if interrupted_at or turn["status"] != "completed":
+                if interrupt_error is not None:
+                    raise interrupt_error
+                if turn["status"] != "completed":
                     error = turn.get("error") or {}
                     message, failure_code = provider_failure(error)
                     if cancelled.is_set() or turn["status"] == "interrupted":
                         message = "Task cancelled; unaccepted changes were discarded."
+                        failure_code = "cancelled"
                     if self.secret:
                         message = message.replace(self.secret, "[credential]")
-                    raise WorkspaceError(
-                        message,
-                        ("cancelled" if cancelled.is_set() else "runtime_timeout")
-                        if interrupted_at
-                        else "cancelled"
-                        if turn["status"] == "interrupted"
-                        else failure_code,
-                    )
+                    raise WorkspaceError(message, failure_code)
                 return "\n\n".join(
                     text
                     for key, text in messages.items()

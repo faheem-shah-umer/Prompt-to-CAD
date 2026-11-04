@@ -1,4 +1,5 @@
 import math
+import time
 from dataclasses import dataclass
 
 import cadquery as cq
@@ -559,6 +560,7 @@ class Builder:
 
 
 def verify_assembly(builder: Builder, components: list[BuiltComponent]):
+    verification_started = time.perf_counter()
     lookup = {part.component.id: part for part in components}
     relations, attachments, failures = [], [], []
 
@@ -660,9 +662,44 @@ def verify_assembly(builder: Builder, components: list[BuiltComponent]):
             )
     allowed = {frozenset(pair) for pair in builder.design.allowed_intersections}
     interferences = []
+    candidate_pairs = 0
+    skipped_pairs = 0
+    exact_intersections_checked = 0
+    broad_phase_started = time.perf_counter()
+    exact_intersection_seconds = 0.0
+
+    def definitely_separated(first, second):
+        first_bounds = first.validation.get("bounds_mm")
+        second_bounds = second.validation.get("bounds_mm")
+        if not (isinstance(first_bounds, list) and isinstance(second_bounds, list)
+                and len(first_bounds) == len(second_bounds) == 2):
+            return False
+        try:
+            values = [*first_bounds[0], *first_bounds[1], *second_bounds[0], *second_bounds[1]]
+            if len(values) != 12 or not all(math.isfinite(value) for value in values):
+                return False
+            # A gap strictly larger than the modelling tolerance is required.
+            # Touching or uncertain bounds must reach the exact OCC check.
+            return any(
+                first_bounds[1][axis] < second_bounds[0][axis] - TOLERANCE
+                or second_bounds[1][axis] < first_bounds[0][axis] - TOLERANCE
+                for axis in range(3)
+            )
+        except (TypeError, ValueError):
+            return False
+
     for index, a in enumerate(components):
         for b in components[index + 1 :]:
-            overlap = a.shape.intersect(b.shape).Volume()
+            candidate_pairs += 1
+            if definitely_separated(a, b):
+                skipped_pairs += 1
+                continue
+            exact_intersections_checked += 1
+            exact_started = time.perf_counter()
+            try:
+                overlap = a.shape.intersect(b.shape).Volume()
+            finally:
+                exact_intersection_seconds += time.perf_counter() - exact_started
             significant = overlap > max(
                 1e-4, min(a.shape.Volume(), b.shape.Volume()) * 1e-7
             )
@@ -691,6 +728,15 @@ def verify_assembly(builder: Builder, components: list[BuiltComponent]):
         raise DesignError("\n".join(failures))
     compound = cq.Compound.makeCompound([part.shape for part in components])
     report = measure(compound)
+    pair_scan_seconds = max(0, time.perf_counter() - broad_phase_started)
+    report["verification_timing"] = {
+        "total_seconds": max(0, time.perf_counter() - verification_started),
+        "broad_phase_seconds": max(0, pair_scan_seconds - exact_intersection_seconds),
+        "exact_intersection_seconds": max(0, exact_intersection_seconds),
+        "candidate_pairs": candidate_pairs,
+        "skipped_pairs": skipped_pairs,
+        "exact_intersections_checked": exact_intersections_checked,
+    }
     report.update(
         passed=True,
         checks={

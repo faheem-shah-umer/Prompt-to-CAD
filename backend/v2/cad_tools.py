@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from backend.native.contracts import Command, FaceOffset, FaceHoles, WorkspaceError
+from backend.native.contracts import CAD_TURN_TIMEOUT_SECONDS, Command, FaceOffset, FaceHoles, WorkspaceError
 from backend.native.documents import asset_path
 from .selection import normalize, check_command
 from .step_catalog import CATALOG_TOOLS, CHOICES, StepCatalog, digest
@@ -145,7 +145,7 @@ TOOLS.append(
                 "commands": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 32,
+                    "maxItems": 64,
                     "items": inline_schema(
                         TypeAdapter(FaceOffset | FaceHoles).json_schema()
                     ),
@@ -187,7 +187,7 @@ TOOLS.extend([
          "placement": schema({"translation": VEC, "rotation": VEC})}, ["candidate_id", "catalog_id", "fingerprint"])},
     {"name": "cad_reference_image", "description": "Read one reference image explicitly requested from this conversation's history by asset_id. Use only when the user refers to that image. Requires reported model image support; never loads arbitrary filesystem paths.",
      "inputSchema": schema({"asset_id": {"type": "string"}}, ["asset_id"])},
-    {"name": "cad_capabilities", "description": "Read actual CAD operations, scripting bounds, scope rules and known limitations. Use before declaring an operation unsupported.", "inputSchema": schema()},
+    {"name": "cad_capabilities", "description": "Read actual CAD operations, scripting bounds, scope rules and known limitations. Use before declaring an operation unsupported. Set complex_design=true only when the requested design genuinely needs a larger bounded operation budget.", "inputSchema": schema({"complex_design": {"type": "boolean"}})},
     {"name": "cad_restructure", "description": "Atomically split one solid by a source-local plane or cutting component, merge connected selected solids consuming them, or replace selected bodies with scripted outputs. Returns source/output mapping. inputs[id] and selected are source-local for one source; multiple inputs and results use assembly/world coordinates. All consumed bodies must be selected. Partial face selection cannot authorize whole-body reconstruction.",
      "inputSchema": schema({"candidate_id": TOKEN, "operation": {"enum": ["split", "merge", "replace"]},
         "source_instance_ids": SOURCE_IDS, "plane": schema({"origin": VEC, "normal": VEC}, ["origin", "normal"]),
@@ -265,6 +265,7 @@ class TaskTools:
         self.project_id, self.task_id = project_id, task_id
         self.candidate_id = uuid4().hex
         self.commands = []
+        self.operation_limit = 32
         self.lock = threading.RLock()
         self.closed = False
         self.created = set()
@@ -377,7 +378,29 @@ class TaskTools:
                     raise WorkspaceError("A retained geometry asset changed.", "asset_integrity")
             report = {"passed": True, "mode": "unchanged_geometry", "asset_integrity": True}
         else:
-            report = self.geometry("verify")
+            started = time.monotonic()
+            try:
+                report = self.geometry("verify")
+            finally:
+                if self.turn_log is not None:
+                    self.turn_log.phase("geometry_worker", time.monotonic() - started,
+                                        failed=not bool(locals().get("report", {}).get("passed")))
+            if self.turn_log is not None and report.get("verification_timing"):
+                timing = report["verification_timing"]
+                self.workspace.notify({
+                    "stage": "verifying",
+                    "message": "Assembly verification checked "
+                    f"{timing.get('exact_intersections_checked', 0)} exact pairs "
+                    f"and skipped {timing.get('skipped_pairs', 0)} separated pairs.",
+                })
+                self.turn_log.phase(
+                    "assembly_verification",
+                    timing.get("total_seconds", 0),
+                    candidate_pairs=timing.get("candidate_pairs", 0),
+                    skipped_pairs=timing.get("skipped_pairs", 0),
+                    exact_intersections_checked=timing.get("exact_intersections_checked", 0),
+                    exact_intersection_seconds=timing.get("exact_intersection_seconds", 0),
+                )
             if not report.get("passed"):
                 raise WorkspaceError("Candidate geometry did not pass verification.", "verification_failed")
         return {"geometry": report, "engineering": engineering, "scope": self.scope_check(self.candidate), "candidate_id": self.candidate_id}
@@ -418,6 +441,12 @@ class TaskTools:
             ],
             "engineering": self.candidate.get("engineering", []),
             "component_transactions": self.transactions,
+            "operation_budget": {
+                "used": len(self.commands),
+                "limit": self.operation_limit,
+                "remaining": self.operation_limit - len(self.commands),
+                "mode": "complex" if self.operation_limit == 64 else "normal",
+            },
             "reference_images": self.reference_context(),
             "units": "mm",
             "rules": "Selection is frozen for this task. Reinspect after every successful write. Failed tools leave candidate unchanged. Changes are accepted only after final verification and successful provider completion.",
@@ -490,6 +519,16 @@ class TaskTools:
             if name == "cad_standard_parts":
                 return self.geometry("standard_parts", request=params)
             if name == "cad_capabilities":
+                if params.get("complex_design"):
+                    if self.operation_limit != 64:
+                        self.operation_limit = 64
+                        self.workspace.notify({
+                            "stage": "budget",
+                            "message": "Complex design mode enabled; up to 64 CAD operations are available for this turn.",
+                            "operations_used": len(self.commands),
+                            "operations_limit": self.operation_limit,
+                            "operations_remaining": self.operation_limit - len(self.commands),
+                        })
                 return {"tools": [t["name"] for t in TOOLS],
                     "application_runtime": runtime.report() if runtime is not None else None,
                     "script_language": self.geometry("capabilities"),
@@ -500,7 +539,8 @@ class TaskTools:
                     "scripting": "Typed CadQuery constructors/methods, branches, comparisons, tuple assignment, bounded collections/loops; parts and optional colors outputs. No imports, arbitrary functions, I/O, reflection or shell.",
                     "engineering": ["bound_or_declared_dimensions", "plus_minus_tolerance", "limit_tolerance", "label", "note"],
                     "appearance": "Uniform RGB per component, mesh source-colour reset; STEP solid and GLB colour export; STL has no colours.",
-                    "limits": {"operations": 32, "task_seconds": 600, "script_seconds": 45, "script_outputs": 100, "restructure_sources": 100, "selected_entities": 256, "engineering_records": 1000},
+                    "limits": {"operations": self.operation_limit, "operation_default": 32, "operation_complex_max": 64, "task_seconds": CAD_TURN_TIMEOUT_SECONDS, "script_seconds": 45, "script_outputs": 100, "restructure_sources": 100, "selected_entities": 256, "engineering_records": 1000},
+                    "operation_budget": {"used": len(self.commands), "limit": self.operation_limit, "remaining": self.operation_limit - len(self.commands), "mode": "complex" if self.operation_limit == 64 else "normal"},
                     "unavailable": ["full_GD&T", "STEP_PMI_export", "original_imported_feature_history", "arbitrary_mesh_to_solid", "image_to_3D_generation_service"],
                     "scope": "Body restructuring needs selected bodies; face/edge scope is never widened. All component outputs have trusted transaction lineage. Images provide references, not exact hidden geometry."}
             if params.get("candidate_id") != self.candidate_id:
@@ -625,13 +665,22 @@ class TaskTools:
                         "source": definitions.read(self.document.folder, definition)}
             if name not in ("cad_apply", "cad_apply_batch", "cad_script", "cad_restructure", "cad_appearance", "cad_engineering", "cad_files", "cad_standard_part", "cad_catalog_insert"):
                 raise WorkspaceError("Unknown CAD capability. Read cad_capabilities.", "unsupported_operation")
-            if len(self.commands) >= 32:
-                raise WorkspaceError("The task reached its 32-operation budget. Continue in a new turn.", "operation_limit")
+            if len(self.commands) >= self.operation_limit:
+                raise WorkspaceError(
+                    f"The task reached its {self.operation_limit}-operation budget. "
+                    "The saved design is unchanged; continue from this candidate in a new turn.",
+                    "operation_limit",
+                )
             commands = params.get("commands", []) if name == "cad_apply_batch" else [params["command"]] if name == "cad_apply" else []
-            if name == "cad_apply_batch" and not 1 <= len(commands) <= 32:
-                raise WorkspaceError("Use a batch of 1–32 supported face operations.", "operation_limit")
-            if len(self.commands) + max(1, len(commands)) > 32:
-                raise WorkspaceError("The task reached its operation budget.", "operation_limit")
+            if name == "cad_apply_batch" and not 1 <= len(commands) <= self.operation_limit:
+                raise WorkspaceError(f"Use a batch of 1–{self.operation_limit} supported face operations.", "operation_limit")
+            if len(self.commands) + max(1, len(commands)) > self.operation_limit:
+                raise WorkspaceError(
+                    f"This mutation needs {max(1, len(commands))} operations but only "
+                    f"{self.operation_limit - len(self.commands)} remain. "
+                    "The saved design is unchanged; continue in a new turn.",
+                    "operation_limit",
+                )
             for command in commands:
                 check_command(self.write_selection(), self.candidate, command=command)
             self.workspace.notify({"stage": "modelling", "message": {
@@ -784,8 +833,12 @@ class TaskTools:
             self.commands.extend(commands if name == "cad_apply_batch" else [record])
             self.workspace.notify({"stage": "candidate", "message": "Candidate updated; validating before acceptance.",
                 "document": {**updated, "project_dir": str(self.document.folder), "revision_id": self.original.get("revision_id")},
-                "candidate_id": self.candidate_id})
+                "candidate_id": self.candidate_id,
+                "operations_used": len(self.commands),
+                "operations_limit": self.operation_limit,
+                "operations_remaining": self.operation_limit - len(self.commands)})
             return {"candidate_id": self.candidate_id, "changes": len(self.commands),
+                    "operation_budget": {"used": len(self.commands), "limit": self.operation_limit, "remaining": self.operation_limit - len(self.commands)},
                     "component_transaction": transaction, "definition_id": record.get("definition_id"),
                     **({"catalog_id": params["catalog_id"], "fingerprint": params["fingerprint"],
                         "created_component_ids": transaction["outputs"], "warnings": updated["warnings"]}

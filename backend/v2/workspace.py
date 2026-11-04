@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from backend.native.project_lock import revision_lock
 from backend.native.project_lock import RevisionConflict
-from backend.native.contracts import WorkspaceError
+from backend.native.contracts import CAD_TURN_TIMEOUT_SECONDS, WorkspaceError
 from backend.native.documents import Document, write_json
 from backend.native.workspace import Workspace
 from backend.native.runtime_identity import RuntimeIdentity
@@ -98,6 +98,10 @@ class WorkspaceV2(Workspace):
             self.task_state = event["state"]
         if self.active_task:
             task = self.active_task
+            event.setdefault(
+                "elapsed_seconds",
+                max(0, time.time() - task["started_at"]),
+            )
             event.update(
                 task_id=task["task_id"],
                 conversation_id=task["conversation_id"],
@@ -111,7 +115,10 @@ class WorkspaceV2(Workspace):
                 "usage",
             ):
                 task.setdefault("activity", []).append(
-                    {k: event[k] for k in ("stage", "state", "message") if k in event}
+                    {k: event[k] for k in (
+                        "stage", "state", "message", "elapsed_seconds",
+                        "operations_used", "operations_limit", "operations_remaining",
+                    ) if k in event}
                 )
         self.output(event)
 
@@ -775,6 +782,13 @@ class WorkspaceV2(Workspace):
             self.project_id,
             task["task_id"],
         )
+        self.notify({
+            "stage": "budget",
+            "message": "CAD operation budget: 0/32 used (32 remaining).",
+            "operations_used": 0,
+            "operations_limit": 32,
+            "operations_remaining": 32,
+        })
         from .turn_logs import TurnLog
         turn_log = TurnLog(self.projects.project_path(self.project_id), task, self.project_id,
             notify=lambda message: self.notify({"stage": "logging", "message": message}))
@@ -806,7 +820,7 @@ class WorkspaceV2(Workspace):
         self.projects.task(self.project_id, task)
         self.active_task = task
         bridge = None
-        self.task_deadline = time.monotonic() + 600
+        self.task_deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
         self.document.journal(
             "running",
             action="codex",
@@ -904,16 +918,22 @@ class WorkspaceV2(Workspace):
                     turn_log.catalog_evidence("context_submitted", context_data["step_catalog"])
                 self.notify(event)
 
-            message = self.runtime.run(
-                text,
-                model,
-                self.cancelled,
-                turn_notify,
-                [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
-                    and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
-                timeout=max(1, self.task_deadline - time.monotonic()),
-                turn_options=turn_options,
-            )
+            provider_started = time.monotonic()
+            try:
+                message = self.runtime.run(
+                    text,
+                    model,
+                    self.cancelled,
+                    turn_notify,
+                    [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
+                        and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
+                    timeout=max(1, self.task_deadline - time.monotonic()),
+                    turn_options=turn_options,
+                )
+            except Exception:
+                turn_log.phase("provider_ai_wait", time.monotonic() - provider_started, failed=True)
+                raise
+            turn_log.phase("provider_ai_wait", time.monotonic() - provider_started)
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
             if tools.commands:

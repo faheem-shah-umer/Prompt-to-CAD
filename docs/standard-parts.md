@@ -54,7 +54,7 @@ Use the source setup in [setup.md](setup.md). Both requirements files pin cq_war
 
 All library operations run in disposable geometry processes because upstream extends CadQuery classes globally. Ordinary CAD workers do not import these extensions. The adapter avoids duplicate washer profile wires on CadQuery 2.7, copies native topology without the incompatible pickle path, and retains bearing members instead of fusing them. It does not alter installed upstream source or expose arbitrary Python imports/execution to the agent.
 
-Current cancellation, 120-second default geometry timeout, two-GiB worker memory cap, 32-operation budget and ten-minute task limit remain in force. Large detailed models may hit those limits. Upstream dimensions/models and internal contacts are not engineering certification, clearance/load verification or manufacturing guarantees. Chain closure warnings are retained in the project.
+Large detailed models may hit the 120-second default geometry timeout, two-GiB worker memory cap, 32-operation budget or 45-minute turn deadline. Upstream dimensions/models and internal contacts are not engineering certification, clearance/load verification or manufacturing guarantees. Chain closure warnings are retained in the project.
 
 ## Focused synthetic checks
 

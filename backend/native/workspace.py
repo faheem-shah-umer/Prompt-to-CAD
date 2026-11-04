@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from .contracts import Selection, WorkspaceError
+from .contracts import CAD_TURN_TIMEOUT_MESSAGE, Selection, WorkspaceError
 from .documents import Document
 from .worker_client import GeometryWorker
 
@@ -30,9 +30,7 @@ class Workspace:
         if self.task_deadline is not None:
             remaining = self.task_deadline - time.monotonic()
             if remaining <= 0:
-                raise WorkspaceError(
-                    "The agent reached its ten-minute task limit.", "timeout"
-                )
+                raise WorkspaceError(CAD_TURN_TIMEOUT_MESSAGE, "timeout")
             timeout = min(
                 timeout if timeout is not None else self.worker.timeout, remaining
             )

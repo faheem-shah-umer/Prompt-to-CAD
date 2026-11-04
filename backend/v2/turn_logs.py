@@ -92,6 +92,7 @@ class TurnLog:
         self.data = safe({"schema_version": 1, "project_id": project_id,
             **{key: task.get(key) for key in ("task_id", "document_id", "conversation_id", "base_revision_id", "started_at", "model")},
             "request": task.get("prompt", ""), "status": "running", "decisions": [], "tools": [],
+            "phase_timings": {},
             "application_runtime": task.get("application_runtime"),
             "catalog_evidence": {},
             "evidence": "Observed tool calls and concise assistant-stated reasons; not hidden reasoning or proof that a stated reason is correct."})
@@ -136,6 +137,15 @@ class TurnLog:
     def tool_finished(self, call, result=None, error=None):
         with self.lock:
             call.update(status="failed" if error is not None else "succeeded", elapsed_seconds=max(0, time.time() - call["started_at"]))
+            phase = {
+                "cad_catalog": "catalog_search",
+                "cad_catalog_insert": "catalog_import",
+                "cad_script": "script_execution",
+                "cad_restructure": "script_execution",
+                "cad_validate": "final_validation",
+            }.get(call["name"], "geometry_worker" if call["name"] in ("cad_apply", "cad_apply_batch", "cad_standard_part", "cad_appearance", "cad_engineering") else None)
+            if phase:
+                self.phase_finished(phase, call["elapsed_seconds"], failed=error is not None)
             if error is not None:
                 call["error"] = safe({"code": getattr(error, "code", "tool_failed"), "message": str(error)})
             elif call["name"] == "cad_catalog_insert":
@@ -143,6 +153,36 @@ class TurnLog:
             elif call["name"] == "cad_catalog" and call["catalog_request"].get("action") == "search":
                 call["result_ids"] = [entry["catalog_id"] for entry in result["results"]]
             self.event("tool_" + call["status"], {**call, **({"result": result} if error is None else {})})
+            self.checkpoint()
+
+    def phase_started(self, name):
+        with self.lock:
+            phase = self.data.setdefault("phase_timings", {}).setdefault(name, {
+                "elapsed_seconds": 0.0, "calls": 0, "failed_calls": 0, "failed_elapsed_seconds": 0.0
+            })
+            phase["_started_at"] = time.time()
+
+    def phase_finished(self, name, elapsed_seconds, failed=False):
+        phase = self.data.setdefault("phase_timings", {}).setdefault(name, {
+            "elapsed_seconds": 0.0, "calls": 0, "failed_calls": 0, "failed_elapsed_seconds": 0.0
+        })
+        elapsed_seconds = max(0, elapsed_seconds)
+        phase["elapsed_seconds"] = round(phase.get("elapsed_seconds", 0.0) + elapsed_seconds, 6)
+        phase["calls"] = phase.get("calls", 0) + 1
+        phase["failed_calls"] = phase.get("failed_calls", 0) + int(failed)
+        if failed:
+            phase["failed_elapsed_seconds"] = round(
+                phase.get("failed_elapsed_seconds", 0.0) + elapsed_seconds, 6
+            )
+        phase.pop("_started_at", None)
+
+    def phase(self, name, elapsed_seconds, failed=False, **counts):
+        with self.lock:
+            self.phase_finished(name, elapsed_seconds, failed=failed)
+            phase = self.data["phase_timings"][name]
+            for key, value in counts.items():
+                phase[key] = phase.get(key, 0) + value
+            self.event("phase_finished", {"phase": name, **phase})
             self.checkpoint()
 
     def decision(self, value):
@@ -199,6 +239,7 @@ class TurnLog:
                 "Status: " + self.data["status"], "", "## Request", "", text_block(self.data["request"]),
                 "", "## cq_warehouse: observed use", "", text_block(json.dumps(self.data["cq_warehouse"], indent=2)),
                 "", "## STEP catalog: observed access and use", "", text_block(json.dumps(self.data["step_catalog"], indent=2)),
+                "", "## Phase timings", "", text_block(json.dumps(self.data.get("phase_timings", {}), indent=2)),
                 "", "## Stated decisions", "", self.data["evidence"], ""]
             for decision in self.data["decisions"]:
                 lines.extend(["### Approach", "", text_block(decision["summary"]),

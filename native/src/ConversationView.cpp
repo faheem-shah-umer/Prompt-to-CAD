@@ -31,9 +31,22 @@ QString duration(double seconds) {
 }
 QString activityText(const QJsonArray &events) {
     QStringList log;
+    QString previous;
     for (const auto &event : events) {
-        const auto text = event.toObject().value("message").toString();
-        if (!text.isEmpty()) log << text;
+        const auto item = event.toObject();
+        const auto text = item.value("message").toString();
+        if (!text.isEmpty() && text != previous) {
+            QString line = text;
+            if (item.contains("operations_used")) {
+                line += "\nOperations: " +
+                    QString::number(item.value("operations_used").toInt()) + "/" +
+                    QString::number(item.value("operations_limit").toInt()) +
+                    " (" + QString::number(item.value("operations_remaining").toInt()) +
+                    " remaining)";
+            }
+            log << line;
+            previous = text;
+        }
     }
     return log.join("\n\n");
 }

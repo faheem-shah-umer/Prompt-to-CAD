@@ -3,6 +3,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+CAD_TURN_TIMEOUT_SECONDS = 45 * 60
+CAD_TURN_TIMEOUT_MESSAGE = (
+    f"The CAD turn reached its {CAD_TURN_TIMEOUT_SECONDS // 60}-minute time limit. "
+    "Unaccepted changes were discarded."
+)
+
+
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
