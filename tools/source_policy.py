@@ -6,7 +6,9 @@ ROOT_FILES = {".gitattributes", ".gitignore", "LICENSE", "README.md", "VERSION",
     "THIRD_PARTY_NOTICES.md", "Prompt to CAD.vbs", "Run-PromptToCAD.cmd", "requirements.txt", "requirements-dev.txt", "requirements-runtime-lock.txt"}
 BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "assets/app-icon.ico"}
 SITE_FILES = {"site/index.html", "site/styles.css", "site/main.js", "site/assets/app-icon.svg",
-    "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md"}
+    "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/workspace-demo.gif",
+    "site/assets/workspace-plotter.png",
+    "site/assets/PROVENANCE.md"}
 
 
 def is_public_source(relative):
