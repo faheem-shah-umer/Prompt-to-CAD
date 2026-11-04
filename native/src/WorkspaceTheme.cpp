@@ -97,10 +97,24 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton:checked, QToolButton:checked { background:@selected@; }
         QPushButton:focus[keyboardFocus="true"], QToolButton:focus[keyboardFocus="true"] { border-color:@focus@; }
         QPushButton:disabled, QToolButton:disabled { color:@disabled@; background:transparent; border-color:transparent; }
-        QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect { color:@onAction@; background:@action@; font-weight:600; }
-        QPushButton#primaryButton:hover:enabled, QPushButton#connectChatGPT:hover:enabled, QPushButton#onboardingConnect:hover:enabled { background:@actionHover@; }
-        QPushButton#primaryButton:pressed:enabled, QPushButton#connectChatGPT:pressed:enabled, QPushButton#onboardingConnect:pressed:enabled { background:@actionPressed@; }
-        QPushButton#primaryButton:disabled, QPushButton#connectChatGPT:disabled, QPushButton#onboardingConnect:disabled { color:@disabled@; background:@selected@; }
+        QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect, QPushButton#onboardingNext, QPushButton#onboardingClaudeConnect, QPushButton#claudeConnect { color:@onAction@; background:@action@; font-weight:600; }
+        QPushButton#primaryButton:hover:enabled, QPushButton#connectChatGPT:hover:enabled, QPushButton#onboardingConnect:hover:enabled, QPushButton#onboardingNext:hover:enabled, QPushButton#onboardingClaudeConnect:hover:enabled, QPushButton#claudeConnect:hover:enabled { background:@actionHover@; }
+        QPushButton#primaryButton:pressed:enabled, QPushButton#connectChatGPT:pressed:enabled, QPushButton#onboardingConnect:pressed:enabled, QPushButton#onboardingNext:pressed:enabled, QPushButton#onboardingClaudeConnect:pressed:enabled, QPushButton#claudeConnect:pressed:enabled { background:@actionPressed@; }
+        QPushButton#primaryButton:disabled, QPushButton#connectChatGPT:disabled, QPushButton#onboardingConnect:disabled, QPushButton#onboardingNext:disabled, QPushButton#onboardingClaudeConnect:disabled, QPushButton#claudeConnect:disabled { color:@disabled@; background:@selected@; }
+        QPushButton#providerCard { background:@raised@; border:1px solid @border@; border-radius:@popupRadius@px; padding:0; text-align:left; }
+        QPushButton#providerCard:hover:enabled { background:@hover@; }
+        QPushButton#providerCard:pressed:enabled { background:@pressed@; }
+        QPushButton#providerCard:checked { background:@selected@; border:2px solid @focus@; }
+        QPushButton#providerCard:focus[keyboardFocus="true"] { border-color:@focus@; }
+        QPushButton#providerCard:disabled { background:@base@; border-color:@border@; }
+        QLabel#providerName { font-size:17px; font-weight:600; }
+        QLabel#providerTagline { color:@text@; }
+        QLabel#providerDetail { color:@secondary@; font-size:12px; }
+        QLabel#providerBadge { color:@link@; font-size:12px; font-weight:600; }
+        QLabel#onboardingDot { background:@border@; border-radius:4px; min-width:8px; max-width:8px; min-height:8px; max-height:8px; }
+        QLabel#onboardingDot[active="true"] { background:@action@; min-width:24px; max-width:24px; }
+        QLabel#onboardingStatus, QLabel#onboardingClaudeRuntime { color:@secondary@; }
+        QLabel#onboardingClaudeRuntime { font-size:12px; }
         QPushButton#commandSearchButton { padding:4px; }
         QPushButton#quietButton { color:@secondary@; }
         QPushButton#quietButton:disabled { color:@disabled@; }

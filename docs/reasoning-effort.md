@@ -1,6 +1,6 @@
 # Reasoning effort
 
-The composer shows the selected model and its reasoning effort together in one compact control. Clicking it opens an effort popover; the model name inside opens the searchable model list. Options, labels, descriptions and defaults come from provider metadata. They are not a universal scale or a token/time budget. Only Codex is integrated; no Claude login, runtime or effort mapping has been added.
+The composer shows the selected model and its reasoning effort together in one compact control. Clicking it opens an effort popover; the model name inside opens the searchable model list. Options, labels, descriptions and defaults come from provider metadata. They are not a universal scale or a token/time budget. Codex and Claude are integrated; each supplies its own adapter (see [Claude integration](claude-integration.md)).
 
 ## Shared adapter contract
 

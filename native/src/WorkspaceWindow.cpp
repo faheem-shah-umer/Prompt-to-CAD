@@ -43,6 +43,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStackedWidget>
+#include <QAbstractAnimation>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
@@ -1685,10 +1686,26 @@ void WorkspaceWindow::smokeCheck() {
         if (!startupEmpty) { showError("Normal startup restored a previous project."); return; }
         QSettings().setValue("v2/onboardingDone", false);
         for (int click = 0; click < 25; ++click) showOnboarding();
-        if (!onboardingDialog || findChildren<QDialog *>("codexOnboarding").size() != 1) {
+        if (!onboardingDialog || findChildren<QDialog *>("providerOnboarding").size() != 1) {
             showError("Onboarding singleton regression failed."); return;
         }
         onboardingDialog->grab().save(workspace + "/tmp/native-onboarding.png");
+        {
+            const auto cards = onboardingDialog->findChildren<QPushButton *>("providerCard");
+            auto *slides = onboardingDialog->findChild<QStackedWidget *>("onboardingSlides");
+            auto *pages = onboardingDialog->findChild<QStackedWidget *>("onboardingConnectPages");
+            QPushButton *claudeCard = nullptr;
+            for (auto *card : cards) if (card->property("providerId") == "claude") claudeCard = card;
+            if (cards.size() != 2 || !claudeCard || !slides || !pages) { showError("Onboarding must offer Codex and Claude."); return; }
+            claudeCard->click();
+            onboardingDialog->findChild<QPushButton *>("onboardingNext")->click();
+            if (slides->currentIndex() != 1 || pages->currentIndex() != 1) { showError("Onboarding did not open the Claude slide."); return; }
+            for (auto *motion : slides->currentWidget()->findChildren<QAbstractAnimation *>(Qt::FindDirectChildrenOnly))
+                motion->setCurrentTime(motion->totalDuration());
+            onboardingDialog->grab().save(workspace + "/tmp/native-onboarding-claude.png");
+            onboardingDialog->findChild<QPushButton *>("onboardingBack")->click();
+            if (slides->currentIndex() != 0) { showError("Onboarding Back did not return to provider choice."); return; }
+        }
         onboardingDialog->findChild<QPushButton *>("onboardingSkip")->click();
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         showOnboarding();
@@ -1852,6 +1869,10 @@ void WorkspaceWindow::smokeCheck() {
                 showError("Expected exactly two AI connections.");
                 return;
             }
+            if (settingsDialog->findChildren<QPushButton *>("providerCard").size() != 2) {
+                showError("Expected Codex and Claude provider choices in Settings.");
+                return;
+            }
             auto before = QSettings().value("v2/edges", true).toBool();
             settingsDialog->findChild<QCheckBox *>("showEdges")->setChecked(!before);
             settingsDialog->reject();
@@ -1877,6 +1898,16 @@ void WorkspaceWindow::smokeCheck() {
             });
         });
         dialog->grab().save(workspace + "/tmp/native-settings.png");
+        for (auto *card : dialog->findChildren<QPushButton *>("providerCard"))
+            if (card->property("providerId") == "claude") {
+                card->click();
+                auto *panel = dialog->findChild<QWidget *>("claudePanel");
+                if (!panel || !panel->isVisible()) { showError("Choosing Claude did not show its connection panel."); return; }
+                for (int pass = 0; pass < 3; ++pass) QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 25);
+                dialog->grab().save(workspace + "/tmp/native-settings-claude.png");
+                dialog->setProperty("providerShown", QVariant());
+                refreshConnectionControls();
+            }
         if (auto *pages = dialog->findChild<QListWidget *>("settingsNavigation")) {
             pages->setCurrentRow(1);
             dialog->grab().save(workspace + "/tmp/native-appearance.png");
