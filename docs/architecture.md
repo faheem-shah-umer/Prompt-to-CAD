@@ -5,8 +5,10 @@ C++ / Qt CAD workspace
     │ private JSON-RPC process channel
 backend.v2.service / WorkspaceV2
     ├── Projects, documents, conversations, tasks and revisions
-    ├── Protected ChatGPT / API-key connections
-    └── Codex App Server adapter
+    ├── Protected ChatGPT / OpenAI / Anthropic API-key connections
+    └── Agent adapter (one active provider)
+        ├── Codex App Server
+        └── Claude Code (print mode, Anthropic API key)
             │ nine scoped CAD MCP tools
             └── Candidate geometry operations
                     │ private geometry worker

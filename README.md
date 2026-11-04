@@ -93,7 +93,7 @@ Setup downloads pinned **Qt 6.9.0** and **OpenCascade 7.8.1** SDKs; Anaconda is 
 
 After the first build, double-click `Run-PromptToCAD.cmd` or run it again to launch. The launcher also works from another directory. Rebuild explicitly after changing C++ source; launching does not install dependencies or compile the app.
 
-**Using AI:** Install a Codex executable with App Server support separately, then connect your own eligible account or API key in the app. No credentials or model weights are included. Viewing, import/export, measurement and supported direct tools work without AI.
+**Using AI:** Choose Codex or Claude on first launch (or later in Settings → AI connection). Codex needs a Codex executable with App Server support and your own eligible ChatGPT plan or OpenAI API key. Claude needs Claude Code installed and your own Anthropic API key; see [Claude integration](docs/claude-integration.md). No credentials or model weights are included. Viewing, import/export, measurement and supported direct tools work without AI.
 
 ## Documentation
 

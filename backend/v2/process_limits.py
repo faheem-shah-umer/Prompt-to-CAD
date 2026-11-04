@@ -120,7 +120,7 @@ class ProcessTree:
                 or not kernel.AssignProcessToJobObject(handle, child)
             ):
                 raise WorkspaceError(
-                    "Cannot own the Codex process tree. Restart the application before retrying.",
+                    "Cannot own the agent runtime process tree. Restart the application before retrying.",
                     "runtime_process_control",
                 )
             self.handle = handle

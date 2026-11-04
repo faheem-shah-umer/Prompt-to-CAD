@@ -3,7 +3,11 @@
 #include <QApplication>
 #include <QPixmap>
 #include <QAction>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QGraphicsOpacityEffect>
+#include <QParallelAnimationGroup>
+#include <QPropertyAnimation>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDialog>
@@ -56,6 +60,64 @@ QVBoxLayout *card(QVBoxLayout *parent, const QString &title) {
     parent->addWidget(frame);
     return layout;
 }
+void repolish(QWidget *widget) {
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+}
+struct ProviderCopy { const char *id, *name, *tagline, *detail; };
+const ProviderCopy providerCopy[] = {
+    {"codex", "Codex", "OpenAI · Sign in with ChatGPT",
+     "Uses your ChatGPT plan allowance. Requires the Codex CLI on this PC."},
+    {"claude", "Claude", "Anthropic · API key",
+     "Billed per token by Anthropic. Requires Claude Code on this PC."},
+};
+// A selectable card: labels ignore the mouse so the whole surface acts as one button.
+QPushButton *providerCard(const ProviderCopy &copy, QButtonGroup *group) {
+    auto *button = new QPushButton;
+    button->setObjectName("providerCard");
+    button->setProperty("providerId", copy.id);
+    button->setCheckable(true);
+    button->setAccessibleName(QString(copy.name) + " · " + copy.tagline);
+    button->setMinimumHeight(128);
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *layout = new QVBoxLayout(button);
+    layout->setContentsMargins(18, 16, 18, 16);
+    layout->setSpacing(6);
+    auto *header = new QHBoxLayout;
+    auto *name = label(copy.name, "providerName");
+    header->addWidget(name, 1);
+    auto *badge = label({}, "providerBadge");
+    badge->setWordWrap(false);
+    header->addWidget(badge);
+    layout->addLayout(header);
+    layout->addWidget(label(copy.tagline, "providerTagline"));
+    layout->addStretch();
+    layout->addWidget(label(copy.detail, "providerDetail"));
+    for (auto *child : button->findChildren<QLabel *>()) child->setAttribute(Qt::WA_TransparentForMouseEvents);
+    group->addButton(button);
+    return button;
+}
+void setProviderBadge(QWidget *scope, const QString &provider, const QString &text) {
+    for (auto *card : scope->findChildren<QPushButton *>("providerCard"))
+        if (card->property("providerId").toString() == provider)
+            if (auto *badge = card->findChild<QLabel *>("providerBadge")) badge->setText(text);
+}
+// Entering a slide: brief fade with a short horizontal travel in the direction of navigation.
+void revealPage(QWidget *page, int direction) {
+    auto *effect = new QGraphicsOpacityEffect(page);
+    page->setGraphicsEffect(effect);
+    auto *motion = new QParallelAnimationGroup(page);
+    auto *fade = new QPropertyAnimation(effect, "opacity", motion);
+    fade->setDuration(220); fade->setStartValue(0.0); fade->setEndValue(1.0);
+    fade->setEasingCurve(QEasingCurve::OutCubic);
+    auto *travel = new QPropertyAnimation(page, "pos", motion);
+    const auto end = page->pos();
+    travel->setDuration(220); travel->setStartValue(end + QPoint(24 * direction, 0)); travel->setEndValue(end);
+    travel->setEasingCurve(QEasingCurve::OutCubic);
+    motion->addAnimation(fade); motion->addAnimation(travel);
+    QObject::connect(motion, &QAbstractAnimation::finished, page, [page, end] { page->move(end); page->setGraphicsEffect(nullptr); });
+    motion->start(QAbstractAnimation::DeleteWhenStopped);
+}
 } // namespace
 
 void WorkspaceWindow::refreshConnectionControls() {
@@ -65,14 +127,59 @@ void WorkspaceWindow::refreshConnectionControls() {
     auto active = connection.value("active").toObject();
     const bool ready = connection.value("state") == "ready";
     const bool signingIn = connection.value("signing_in").toBool();
+    const auto providerId = connection.value("provider_id").toString("codex");
+    const auto providers = connection.value("providers").toObject();
+    const bool codexReady = ready && providerId == "codex";
+    const bool claudeReady = ready && providerId == "claude";
+    const auto claudeExecutable = state.value("runtime").toObject().value("executables").toObject().value("claude").toString();
+    const auto claudeRuntimeText = claudeExecutable.isEmpty()
+        ? QString("Not found yet. Install it, or set its path in Settings → Advanced.")
+        : "Detected · " + QDir::toNativeSeparators(claudeExecutable);
     if (onboardingDialog) {
         if (auto *start = onboardingDialog->findChild<QPushButton *>("onboardingConnect")) start->setEnabled(!busy && !signingIn);
+        if (auto *start = onboardingDialog->findChild<QPushButton *>("onboardingClaudeConnect")) start->setEnabled(!busy && !signingIn);
+        if (auto *runtime = onboardingDialog->findChild<QLabel *>("onboardingClaudeRuntime")) runtime->setText(claudeRuntimeText);
         if (auto *status = onboardingDialog->findChild<QLabel *>("onboardingStatus")) status->setText(signingIn ? "Finish authorization in your browser." : connection.value("error").toString());
         if (ready) onboardingDialog->accept();
     }
     const bool canRefresh = ready && !busy && !loading && !modelsLoading && !imagePreflight;
     if (auto *refresh = findChild<QAction *>("refreshModelsAction")) refresh->setEnabled(canRefresh);
     if (!settingsDialog) return;
+    auto shown = settingsDialog->property("providerShown").toString();
+    if (shown.isEmpty()) shown = providerId;
+    for (auto *card : settingsDialog->findChildren<QPushButton *>("providerCard")) {
+        const auto id = card->property("providerId").toString();
+        QSignalBlocker block(card);
+        card->setChecked(id == shown);
+        card->setEnabled(!busy || id == shown);
+        const bool hasSaved = providers.value(id).toObject().value("saved").toBool();
+        setProviderBadge(settingsDialog, id, id == providerId && ready ? "●  Active"
+                                           : id == providerId ? "Selected · not connected"
+                                           : hasSaved ? "Saved" : "Not connected");
+    }
+    if (auto *panel = settingsDialog->findChild<QWidget *>("codexPanel")) panel->setVisible(shown == "codex");
+    if (auto *panel = settingsDialog->findChild<QWidget *>("claudePanel")) panel->setVisible(shown == "claude");
+    if (auto *info = settingsDialog->findChild<QLabel *>("claudeInfo")) {
+        const bool hasSaved = providers.value("claude").toObject().value("saved").toBool();
+        info->setText(claudeReady ? "✓  Connected" : hasSaved ? "Saved · select to use" : "Not connected");
+        info->setStyleSheet("color:" + (claudeReady ? workspaceColors().success : workspaceColors().secondary).name());
+    }
+    if (auto *keyState = settingsDialog->findChild<QLabel *>("claudeKeyState")) {
+        QString text = "Not added";
+        for (const auto &value : connection.value("accounts").toArray()) {
+            const auto item = value.toObject();
+            if (item.value("connection") == "anthropic" && item.value("connected").toBool())
+                text = (claudeReady && item.value("id") == active.value("id") ? "In use · " : "Saved · ") + item.value("label").toString();
+        }
+        keyState->setText(text);
+    }
+    if (auto *runtimeState = settingsDialog->findChild<QLabel *>("claudeRuntimeState")) runtimeState->setText(claudeRuntimeText);
+    if (auto *billing = settingsDialog->findChild<QLabel *>("claudeBilling"))
+        billing->setText("Anthropic API · per token, separate from any ChatGPT or Claude.ai plan");
+    if (auto *entry = settingsDialog->findChild<QWidget *>("claudeKeyEntry")) entry->setVisible(!claudeReady);
+    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeConnect")) button->setEnabled(!busy);
+    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeDisconnect")) button->setVisible(claudeReady);
+    if (auto *button = settingsDialog->findChild<QPushButton *>("installClaude")) button->setVisible(claudeExecutable.isEmpty());
     if (auto *refresh = settingsDialog->findChild<QPushButton *>("refreshModelsButton")) {
         refresh->setEnabled(canRefresh);
         refresh->setText(modelsLoading ? "Loading models…" : "Refresh models");
@@ -81,15 +188,16 @@ void WorkspaceWindow::refreshConnectionControls() {
     }
     if (auto *create = settingsDialog->findChild<QPushButton *>("newChatGPTRegistration"))create->setEnabled(!busy&&!signingIn);
     if (auto *start = settingsDialog->findChild<QPushButton *>("connectChatGPT")) {
-        start->setVisible(!ready || active.value("connection") != "chatgpt");
-        start->setText(active.value("connection") == "chatgpt" ? "Reconnect ChatGPT" : "Continue with ChatGPT");
+        start->setVisible(!codexReady || active.value("connection") != "chatgpt");
+        start->setText(codexReady && active.value("connection") == "chatgpt" ? "Reconnect ChatGPT" : "Continue with ChatGPT");
         start->setEnabled(!busy && !signingIn);
     }
     if (auto *info = settingsDialog->findChild<QLabel *>("connectionInfo")) {
         QString text = signingIn ? "Waiting for browser authorization"
-                       : ready   ? "✓  Connected"
+                       : codexReady ? "✓  Connected"
+                       : providerId != "codex" && providers.value("codex").toObject().value("saved").toBool() ? "Saved · select to use"
                        : connection.value("error").toString().isEmpty() ? "Not connected" : "Reconnect needed";
-        const auto tint = ready ? workspaceColors().success : connection.value("error").toString().isEmpty()
+        const auto tint = codexReady ? workspaceColors().success : connection.value("error").toString().isEmpty()
             ? workspaceColors().secondary : workspaceColors().danger;
         info->setStyleSheet("color:" + tint.name());
         info->setText(text);
@@ -100,7 +208,7 @@ void WorkspaceWindow::refreshConnectionControls() {
         error->setVisible(!message.isEmpty());
     }
     if (auto *guidance = settingsDialog->findChild<QLabel *>("connectionGuidance"))
-        guidance->setVisible(!ready && connection.value("error").toString().isEmpty());
+        guidance->setVisible(!codexReady && connection.value("error").toString().isEmpty());
     auto setDetail = [this](const QString &name, const QString &value) {
         if (auto *item = settingsDialog->findChild<QLabel *>(name)) item->setText(value);
     };
@@ -110,7 +218,7 @@ void WorkspaceWindow::refreshConnectionControls() {
     setDetail("connectionWorkspace", workspaceName.isEmpty() || workspaceName.startsWith("Workspace name not reported")
         ? "Not reported by provider" : workspaceName);
     setDetail("connectionBilling", connection.value("billing").toString("No billing connection"));
-    if (auto *identity = settingsDialog->findChild<QWidget *>("connectionIdentity")) identity->setVisible(ready);
+    if (auto *identity = settingsDialog->findChild<QWidget *>("connectionIdentity")) identity->setVisible(codexReady);
     if (auto *summary = settingsDialog->findChild<QLabel *>("catalogueSummary")) {
         const auto failure = models->property("effortCatalogueFailure").toString();
         summary->setText(modelsLoading ? "Loading model catalogue…"
@@ -148,7 +256,7 @@ void WorkspaceWindow::refreshConnectionControls() {
     if (auto *cancel = settingsDialog->findChild<QPushButton *>("cancelSignIn"))
         cancel->setVisible(signingIn);
     if (auto *disconnect = settingsDialog->findChild<QPushButton *>("disconnectAccount"))
-        disconnect->setVisible(active.value("connected").toBool());
+        disconnect->setVisible(codexReady && active.value("connected").toBool());
     if(auto *panel=settingsDialog->findChild<QWidget *>("previousRegistrations")) {
         const auto signature=QJsonDocument(connection).toJson(QJsonDocument::Compact);
         if(panel->property("signature").toByteArray()!=signature) {
@@ -240,7 +348,104 @@ void WorkspaceWindow::account() {
         return layout;
     };
     auto connection = state.value("provider").toObject();
-    auto *ai = page("AI connection", "Connect your own account to work with the CAD agent.");
+    auto *ai = page("AI connection", "Choose the agent that models with you, then connect your own account. "
+                                     "Each provider keeps its saved connection, so you can switch back at any time.");
+    auto *providerGroup = new QButtonGroup(dialog);
+    providerGroup->setExclusive(true);
+    auto *chooser = new QHBoxLayout;
+    chooser->setSpacing(16);
+    for (const auto &copy : providerCopy) chooser->addWidget(providerCard(copy, providerGroup));
+    ai->addSpacing(8);
+    ai->addLayout(chooser);
+    dialog->setProperty("providerShown", connection.value("provider_id").toString("codex"));
+    connect(providerGroup, &QButtonGroup::buttonClicked, dialog, [this, dialog](QAbstractButton *button) {
+        const auto provider = button->property("providerId").toString();
+        dialog->setProperty("providerShown", provider);
+        const auto current = state.value("provider").toObject();
+        const bool saved = current.value("providers").toObject().value(provider).toObject().value("saved").toBool();
+        if (!busy && saved && provider != current.value("provider_id").toString())
+            call("provider.use", {{"provider_id", provider}}, [this](auto) { call("v2.state"); });
+        refreshConnectionControls();
+    });
+    auto *codexPanel = new QWidget;
+    codexPanel->setObjectName("codexPanel");
+    auto *codexLayout = new QVBoxLayout(codexPanel);
+    codexLayout->setContentsMargins(0, 0, 0, 0);
+    codexLayout->setSpacing(12);
+    ai->addWidget(codexPanel);
+    auto *claudePanel = new QWidget;
+    claudePanel->setObjectName("claudePanel");
+    auto *claudeLayout = new QVBoxLayout(claudePanel);
+    claudeLayout->setContentsMargins(0, 32, 0, 24);
+    claudeLayout->setSpacing(20);
+    ai->addWidget(claudePanel);
+    {
+        auto *claudeHeader = new QHBoxLayout;
+        claudeHeader->addWidget(label("Claude", "settingsCardTitle"), 1);
+        auto *status = label({}, "claudeInfo");
+        status->setWordWrap(false);
+        claudeHeader->addWidget(status);
+        claudeLayout->addLayout(claudeHeader);
+        claudeLayout->addWidget(label("Runs through Claude Code on this PC with your own Anthropic API key. Usage is billed "
+                                      "per token by Anthropic; a Claude.ai subscription is not used."));
+        auto *divider = new QFrame;
+        divider->setObjectName("sectionRule");
+        divider->setFrameShape(QFrame::HLine);
+        claudeLayout->addWidget(divider);
+        auto *facts = new QFormLayout;
+        facts->setContentsMargins(0, 0, 0, 0);
+        facts->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        facts->setVerticalSpacing(20);
+        facts->setHorizontalSpacing(24);
+        for (const auto &row : {qMakePair("API key", "claudeKeyState"), qMakePair("Claude Code", "claudeRuntimeState"),
+                                qMakePair("Billing", "claudeBilling")}) {
+            auto *caption = label(row.first);
+            caption->setMinimumWidth(144);
+            auto *value = label({}, row.second);
+            value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            facts->addRow(caption, value);
+        }
+        claudeLayout->addLayout(facts);
+        auto *entry = new QWidget;
+        entry->setObjectName("claudeKeyEntry");
+        auto *entryLayout = new QVBoxLayout(entry);
+        entryLayout->setContentsMargins(0, 0, 0, 0);
+        entryLayout->setSpacing(12);
+        auto *claudeKey = new QLineEdit;
+        claudeKey->setObjectName("claudeKey");
+        claudeKey->setEchoMode(QLineEdit::Password);
+        claudeKey->setPlaceholderText("sk-ant-…");
+        claudeKey->setAccessibleName("Anthropic API key");
+        entryLayout->addWidget(claudeKey);
+        auto *entryRow = new QHBoxLayout;
+        auto *validate = action("Validate and connect", entryRow, [this, claudeKey, dialog] {
+            const auto value = claudeKey->text().trimmed();
+            if (value.isEmpty()) { claudeKey->setFocus(); return; }
+            claudeKey->clear();
+            dialog->setProperty("providerShown", "claude");
+            call("provider.anthropic_key", {{"key", value}}, [this](auto) { call("v2.state"); });
+        });
+        validate->setObjectName("claudeConnect");
+        connect(claudeKey, &QLineEdit::returnPressed, validate, &QPushButton::click);
+        action("Get an API key ↗", entryRow, [] { QDesktopServices::openUrl(QUrl("https://console.anthropic.com/settings/keys")); })
+            ->setObjectName("quietButton");
+        entryRow->addStretch();
+        entryLayout->addLayout(entryRow);
+        entryLayout->addWidget(label("The key is checked without running a model and stored in Windows-protected storage, "
+                                     "outside your projects."));
+        claudeLayout->addWidget(entry);
+        auto *claudeActions = new QHBoxLayout;
+        action("Install Claude Code ↗", claudeActions, [] { QDesktopServices::openUrl(QUrl("https://code.claude.com/docs/en/setup")); })
+            ->setObjectName("installClaude");
+        action("Disconnect", claudeActions, [this] {
+            call("provider.disconnect", {}, [this](auto r) {
+                const auto message = r.value("message").toString();
+                call("v2.state", {}, [this, message](auto) { activity->setText(message); });
+            });
+        })->setObjectName("claudeDisconnect");
+        claudeActions->addStretch();
+        claudeLayout->addLayout(claudeActions);
+    }
     auto *mode = new QComboBox(dialog);
     mode->setObjectName("connectionMode");
     mode->addItem("ChatGPT plan · Codex", "chatgpt");
@@ -250,7 +455,7 @@ void WorkspaceWindow::account() {
     auto *accountCard = new QVBoxLayout(connectionSection);
     accountCard->setContentsMargins(0, 32, 0, 24);
     accountCard->setSpacing(20);
-    ai->addWidget(connectionSection);
+    codexLayout->addWidget(connectionSection);
     auto *connectionHeader = new QHBoxLayout;
     connectionHeader->addWidget(label("Codex", "settingsCardTitle"), 1);
     auto *info = label({}, "connectionInfo");
@@ -335,7 +540,7 @@ void WorkspaceWindow::account() {
     apiDisclosure->setText("API access · separately billed"); apiDisclosure->setCheckable(true);
     apiDisclosure->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); apiDisclosure->setArrowType(Qt::RightArrow);
     apiDisclosure->setObjectName("apiAccessDisclosure");
-    auto *apiSection = new QFrame(ai->parentWidget()); apiSection->setObjectName("settingsCard");
+    auto *apiSection = new QFrame(codexPanel); apiSection->setObjectName("settingsCard");
     auto *apiSectionLayout = new QVBoxLayout(apiSection); apiSectionLayout->addWidget(api);
     connect(apiDisclosure, &QToolButton::toggled, dialog, [mode, apiDisclosure](bool open) {
         apiDisclosure->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); mode->setCurrentIndex(open ? 1 : 0);
@@ -366,8 +571,7 @@ void WorkspaceWindow::account() {
     reportedLayout->setRowWrapPolicy(QFormLayout::WrapLongRows); usage->addWidget(reportedRows);
     usage->addWidget(label("Reported tokens are separate from provider allowance and API cost."));
     action("Manage provider usage ↗", usageHeader, [this] {
-        QDesktopServices::openUrl(QUrl(state.value("provider").toObject().value("active").toObject().value("connection") != "api" ? "https://chatgpt.com/settings/usage"
-                                                                 : "https://platform.openai.com/usage"));
+        QDesktopServices::openUrl(QUrl(state.value("provider").toObject().value("usage_url").toString("https://chatgpt.com/settings/usage")));
     });
     auto *modelRow = new QHBoxLayout;
     auto *modelDescription = new QVBoxLayout;
@@ -379,8 +583,8 @@ void WorkspaceWindow::account() {
     ai->addWidget(
         label("Tasks consume allowance or API credits. Long tasks can use more. A limit stops the request; "
               "billing never switches automatically. Connection actions take effect immediately."));
-    ai->addWidget(apiDisclosure);
-    ai->addWidget(apiSection);
+    codexLayout->addWidget(apiDisclosure);
+    codexLayout->addWidget(apiSection);
     ai->addStretch();
     QSettings prefs;
     auto *appearance = page("Appearance", "Choose a comfortable workspace for inspecting your models.");
@@ -439,7 +643,8 @@ void WorkspaceWindow::account() {
     display->addStretch();
     auto *advanced = page("Advanced", "Local agent runtime and connection diagnostics.");
     auto *runtimeCard = card(advanced, "Codex App Server");
-    auto *runtime = new QLineEdit(state.value("runtime").toObject().value("executable").toString());
+    const auto executables = state.value("runtime").toObject().value("executables").toObject();
+    auto *runtime = new QLineEdit(executables.value("codex").toString());
     runtime->setPlaceholderText("Automatic executable discovery");
     auto *runtimeRow = new QHBoxLayout;
     runtimeRow->addWidget(runtime, 1);
@@ -454,13 +659,35 @@ void WorkspaceWindow::account() {
     QPointer<QLabel> probeLabel(probeInfo);
     auto *probeRow = new QHBoxLayout;
     action("Check runtime", probeRow, [this, probeLabel] {
-        call("provider.probe", {}, [probeLabel](auto r) {
+        call("provider.probe", {{"provider_id", "codex"}}, [probeLabel](auto r) {
             if (probeLabel)
                 probeLabel->setText(r.value("message").toString());
         });
     });
     probeRow->addStretch();
     runtimeCard->addLayout(probeRow);
+    auto *claudeCard = card(advanced, "Claude Code");
+    auto *claudeRuntime = new QLineEdit(executables.value("claude").toString());
+    claudeRuntime->setObjectName("claudeRuntimePath");
+    claudeRuntime->setPlaceholderText("Automatic executable discovery");
+    auto *claudeRuntimeRow = new QHBoxLayout;
+    claudeRuntimeRow->addWidget(claudeRuntime, 1);
+    action("Browse…", claudeRuntimeRow, [this, claudeRuntime] {
+        auto path = QFileDialog::getOpenFileName(this, "Claude Code executable", {}, "Claude Code (claude.exe claude.cmd)");
+        if (!path.isEmpty()) claudeRuntime->setText(path);
+    });
+    claudeCard->addLayout(claudeRuntimeRow);
+    auto *claudeProbeInfo = label("Checks that Claude Code starts. It does not run a model or use your API key.");
+    claudeCard->addWidget(claudeProbeInfo);
+    QPointer<QLabel> claudeProbeLabel(claudeProbeInfo);
+    auto *claudeProbeRow = new QHBoxLayout;
+    action("Check runtime", claudeProbeRow, [this, claudeProbeLabel] {
+        call("provider.probe", {{"provider_id", "claude"}}, [claudeProbeLabel](auto r) {
+            if (claudeProbeLabel) claudeProbeLabel->setText(r.value("message").toString());
+        });
+    });
+    claudeProbeRow->addStretch();
+    claudeCard->addLayout(claudeProbeRow);
     auto *registrations = card(advanced, "Previous account registrations");
     registrations->addWidget(label("Older sign-ins are kept separately to protect their credentials. Reconnecting reuses the primary registration. Revoking a session does not delete the app registration in ChatGPT."));
     auto *previous = new QWidget;
@@ -481,7 +708,7 @@ void WorkspaceWindow::account() {
     outer->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, dialog,
-            [this, dialog, buttons, runtime, theme, textSize, navVisible, modelVisible, edges] {
+            [this, dialog, buttons, runtime, claudeRuntime, theme, textSize, navVisible, modelVisible, edges] {
                 if (busy)
                     return;
                 busy = true;
@@ -494,7 +721,7 @@ void WorkspaceWindow::account() {
                 const bool showNav = navVisible->isChecked(), showModel = modelVisible->isChecked(),
                            showEdges = edges->isChecked();
                 rpc->call(
-                    "provider.configure", {{"codex_path", runtime->text()}},
+                    "provider.configure", {{"codex_path", runtime->text()}, {"claude_path", claudeRuntime->text()}},
                     [this, guard, choice, size, showNav, showModel, showEdges](auto r, auto e) {
                         busy = false;
                         updateSendControl();
@@ -559,27 +786,167 @@ void WorkspaceWindow::showOnboarding() {
     if (onboardingDialog) { onboardingDialog->raise(); return; }
     auto *dialog = new QDialog(this);
     onboardingDialog = dialog;
-    dialog->setObjectName("codexOnboarding");
+    dialog->setObjectName("providerOnboarding");
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowModality(Qt::WindowModal);
     dialog->setWindowTitle("Welcome to Prompt to CAD");
-    dialog->resize(540, 440);
+    dialog->resize(640, 560);
+    dialog->setMinimumSize(560, 520);
     auto *layout = new QVBoxLayout(dialog);
-    layout->setContentsMargins(28, 26, 28, 24);
-    layout->setSpacing(18);
-    layout->addWidget(label("Your CAD workspace, with Codex", "pageTitle"));
-    layout->addWidget(label("Codex is OpenAI’s coding agent. In Prompt to CAD it inspects your document and uses CAD tools to create and refine designs. Connect your own eligible ChatGPT plan in your browser."));
-    auto *details = card(layout, "Your account and usage");
-    details->addWidget(label("Agent tasks consume your plan allowance or authorized credits. Longer tasks may use more. Limits stop the task; the app never switches billing automatically."));
-    details->addWidget(label("Credentials stay in Windows-protected local storage, outside your projects. Optional API keys are available in Settings and are billed separately by OpenAI."));
-    details->addWidget(label("You can skip setup to inspect and edit local CAD files. Connect later from Settings → AI connection to use the agent."));
-    layout->addWidget(label({}, "onboardingStatus"));
-    auto *actions = new QHBoxLayout;
-    action("Skip for now", actions, [dialog] { dialog->reject(); })->setObjectName("onboardingSkip");
-    actions->addStretch();
-    auto *start = action("Continue with ChatGPT", actions, [this] { beginSignIn(); });
+    layout->setContentsMargins(32, 28, 32, 24);
+    layout->setSpacing(20);
+    auto *slides = new QStackedWidget;
+    slides->setObjectName("onboardingSlides");
+    layout->addWidget(slides, 1);
+
+    // Slide 1 · choose the agent.
+    auto *welcome = new QWidget;
+    auto *welcomeLayout = new QVBoxLayout(welcome);
+    welcomeLayout->setContentsMargins(0, 0, 0, 0);
+    welcomeLayout->setSpacing(16);
+    auto *brandRow = new QHBoxLayout;
+    auto *brand = new QLabel;
+    brand->setPixmap(QPixmap(":/brand/app-icon.png").scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    brand->setAccessibleName("Prompt to CAD logo");
+    brandRow->addWidget(brand);
+    brandRow->addWidget(label("Prompt to CAD", "settingsAccountName"), 1);
+    welcomeLayout->addLayout(brandRow);
+    welcomeLayout->addWidget(label("Choose your CAD agent", "pageTitle"));
+    welcomeLayout->addWidget(label("The agent inspects your document and uses CAD tools to create and refine designs. "
+                                   "Pick the one you have an account for. You can switch any time in Settings → AI connection."));
+    auto *choices = new QButtonGroup(dialog);
+    choices->setExclusive(true);
+    auto *cards = new QHBoxLayout;
+    cards->setSpacing(16);
+    for (const auto &copy : providerCopy) cards->addWidget(providerCard(copy, choices));
+    welcomeLayout->addSpacing(4);
+    welcomeLayout->addLayout(cards);
+    welcomeLayout->addStretch();
+    welcomeLayout->addWidget(label("You can also skip setup to inspect and edit local CAD files without an agent."));
+    slides->addWidget(welcome);
+
+    // Slide 2 · connect the chosen agent.
+    auto *connectPages = new QStackedWidget;
+    connectPages->setObjectName("onboardingConnectPages");
+    auto *codex = new QWidget;
+    auto *codexLayout = new QVBoxLayout(codex);
+    codexLayout->setContentsMargins(0, 0, 0, 0);
+    codexLayout->setSpacing(16);
+    codexLayout->addWidget(label("Connect Codex", "pageTitle"));
+    codexLayout->addWidget(label("Codex is OpenAI’s coding agent. Authorize your own eligible ChatGPT plan in your browser; "
+                                 "Prompt to CAD never sees your password."));
+    auto *codexDetails = card(codexLayout, "What you need");
+    codexDetails->addWidget(label("1   A ChatGPT plan that includes Codex. Tasks use its allowance or authorized credits."));
+    codexDetails->addWidget(label("2   The Codex CLI installed on this PC. Prompt to CAD finds it automatically."));
+    codexDetails->addWidget(label("Credentials stay in Windows-protected storage, outside your projects. "
+                                  "OpenAI API keys, billed separately, are available in Settings."));
+    codexLayout->addStretch();
+    auto *codexRow = new QHBoxLayout;
+    auto *start = action("Continue with ChatGPT", codexRow, [this] { beginSignIn(); });
     start->setObjectName("onboardingConnect");
-    layout->addLayout(actions);
+    codexRow->addStretch();
+    codexLayout->addLayout(codexRow);
+    connectPages->addWidget(codex);
+
+    auto *claude = new QWidget;
+    auto *claudeLayout = new QVBoxLayout(claude);
+    claudeLayout->setContentsMargins(0, 0, 0, 0);
+    claudeLayout->setSpacing(16);
+    claudeLayout->addWidget(label("Connect Claude", "pageTitle"));
+    claudeLayout->addWidget(label("Claude works through Claude Code on this PC, using your own Anthropic API key. "
+                                  "Usage is billed per token by Anthropic; a Claude.ai subscription is not used."));
+    auto *claudeDetails = card(claudeLayout, "What you need");
+    auto *keyNeed = new QHBoxLayout;
+    keyNeed->addWidget(label("1   An Anthropic API key with credits."), 1);
+    action("Get a key ↗", keyNeed, [] { QDesktopServices::openUrl(QUrl("https://console.anthropic.com/settings/keys")); })
+        ->setObjectName("quietButton");
+    claudeDetails->addLayout(keyNeed);
+    auto *runtimeNeed = new QHBoxLayout;
+    runtimeNeed->addWidget(label("2   Claude Code installed on this PC."), 1);
+    action("Install guide ↗", runtimeNeed, [] { QDesktopServices::openUrl(QUrl("https://code.claude.com/docs/en/setup")); })
+        ->setObjectName("quietButton");
+    claudeDetails->addLayout(runtimeNeed);
+    auto *runtimeState = label({}, "onboardingClaudeRuntime");
+    runtimeState->setContentsMargins(22, 0, 0, 0);
+    claudeDetails->addWidget(runtimeState);
+    auto *key = new QLineEdit;
+    key->setObjectName("onboardingClaudeKey");
+    key->setEchoMode(QLineEdit::Password);
+    key->setPlaceholderText("Paste your API key (sk-ant-…)");
+    key->setAccessibleName("Anthropic API key");
+    claudeLayout->addWidget(key);
+    claudeLayout->addWidget(label("The key is checked without running a model and stored in Windows-protected storage."));
+    claudeLayout->addStretch();
+    auto *claudeRow = new QHBoxLayout;
+    auto *validate = action("Validate and connect", claudeRow, [this, key] {
+        const auto value = key->text().trimmed();
+        if (value.isEmpty()) { key->setFocus(); return; }
+        key->clear();
+        if (auto *status = onboardingDialog ? onboardingDialog->findChild<QLabel *>("onboardingStatus") : nullptr)
+            status->setText("Checking the key with Anthropic…");
+        call("provider.anthropic_key", {{"key", value}}, [this](auto) { call("v2.state"); });
+    });
+    validate->setObjectName("onboardingClaudeConnect");
+    connect(key, &QLineEdit::returnPressed, validate, &QPushButton::click);
+    claudeRow->addStretch();
+    claudeLayout->addLayout(claudeRow);
+    connectPages->addWidget(claude);
+    slides->addWidget(connectPages);
+
+    auto *status = label({}, "onboardingStatus");
+    layout->addWidget(status);
+
+    // Footer · back, progress dots, skip and continue.
+    auto *footer = new QHBoxLayout;
+    footer->setSpacing(12);
+    auto *back = action("Back", footer, [] {});
+    back->setObjectName("onboardingBack");
+    footer->addStretch();
+    QList<QLabel *> dots;
+    for (int index = 0; index < 2; ++index) {
+        auto *dot = new QLabel;
+        dot->setObjectName("onboardingDot");
+        dot->setAccessibleName(QString("Step %1 of 2").arg(index + 1));
+        footer->addWidget(dot, 0, Qt::AlignVCenter);
+        dots << dot;
+    }
+    footer->addStretch();
+    action("Skip for now", footer, [dialog] { dialog->reject(); })->setObjectName("onboardingSkip");
+    auto *next = action("Continue", footer, [] {});
+    next->setObjectName("onboardingNext");
+    next->setDefault(true);
+    for (auto *button : {back, next}) {  // Keep the progress dots still while buttons swap.
+        auto policy = button->sizePolicy();
+        policy.setRetainSizeWhenHidden(true);
+        button->setSizePolicy(policy);
+    }
+    layout->addLayout(footer);
+
+    auto show = [slides, connectPages, back, next, dots, choices, key, start, status](int index) {
+        const int direction = index > slides->currentIndex() ? 1 : -1;
+        const bool changed = index != slides->currentIndex();
+        const auto chosen = choices->checkedButton() ? choices->checkedButton()->property("providerId").toString() : QString("codex");
+        connectPages->setCurrentIndex(chosen == "claude" ? 1 : 0);
+        slides->setCurrentIndex(index);
+        back->setVisible(index == 1);
+        next->setVisible(index == 0);
+        next->setEnabled(choices->checkedButton());
+        status->clear();
+        for (int dot = 0; dot < dots.size(); ++dot) {
+            dots[dot]->setProperty("active", dot == index);
+            repolish(dots[dot]);
+        }
+        if (changed) revealPage(slides->currentWidget(), direction);
+        if (index == 1) (chosen == "claude" ? static_cast<QWidget *>(key) : start)->setFocus();
+    };
+    connect(next, &QPushButton::clicked, dialog, [show] { show(1); });
+    connect(back, &QPushButton::clicked, dialog, [show] { show(0); });
+    connect(choices, &QButtonGroup::buttonClicked, dialog, [next](QAbstractButton *) { next->setEnabled(true); });
+    // Preselect the provider already chosen in this installation, otherwise Codex.
+    const auto preferred = state.value("provider").toObject().value("provider_id").toString("codex");
+    for (auto *button : choices->buttons())
+        if (button->property("providerId").toString() == preferred) button->setChecked(true);
+    show(0);
     connect(dialog, &QDialog::finished, this, [](int) { QSettings().setValue("v2/onboardingDone", true); });
     refreshConnectionControls();
     dialog->show();

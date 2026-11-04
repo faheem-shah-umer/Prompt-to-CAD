@@ -24,6 +24,18 @@ APP_NAME = "Prompt to CAD"
 AUTH = "https://auth.openai.com"
 RESOURCE = "https://api.openai.com/v1"
 SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
+ANTHROPIC = "https://api.anthropic.com/v1"
+ANTHROPIC_VERSION = "2023-06-01"
+CLAUDE_USAGE_URL = "https://console.anthropic.com/settings/usage"
+PROVIDERS = {"codex": ("chatgpt", "api"), "claude": ("anthropic",)}
+
+
+def provider_of(mode):
+    return "claude" if mode == "anthropic" else "codex"
+
+
+def anthropic_headers(key):
+    return {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION}
 
 
 def request_json(method, url, **kwargs):
@@ -67,6 +79,11 @@ def request_json(method, url, **kwargs):
                 "subscription_sharing_user_unavailable",
                 "chatpass_v2_scope_not_authorized",
                 "chatpass_v2_invalid_authorization_context",
+                "permission_error",
+                "not_found_error",
+                "rate_limit_error",
+                "overloaded_error",
+                "billing_error",
             }
             label = (
                 code
@@ -200,17 +217,20 @@ class Connections:
         accounts = [
             {
                 "id": key,
-                "label": a.get("email", "API key") + " · " + key[-6:],
-                "email": a.get("email", "API key"),
+                "label": a.get("email", "Claude API key" if a["mode"] == "anthropic" else "API key") + " · " + key[-6:],
+                "email": a.get("email", "Claude API key" if a["mode"] == "anthropic" else "API key"),
                 "name": a.get("name", ""),
                 "workspace": a.get("workspace", "Workspace not reported"),
                 "connection": a["mode"],
+                "provider_id": provider_of(a["mode"]),
                 "connected": bool(a.get("access_token") or a.get("api_key")),
                 "plan_enabled": "chatgpt.tokens.use.direct" in a.get("scopes", []),
             }
             for key, a in data["accounts"].items()
         ]
-        selected = data.get("active") or data.get("preferred")
+        selected = data.get("active") or (
+            data.get("preferred") if data.get("provider", "codex") == "codex" else None
+        )
         active = next((dict(a) for a in accounts if a["id"] == selected), None)
         if active and not data.get("active"):
             active["connected"] = False
@@ -222,29 +242,48 @@ class Connections:
                     if active["plan_enabled"]
                     else "Identity connected · plan permission disabled"
                 )
+            elif active["connection"] == "anthropic":
+                billing = "Anthropic API billing (separate)"
             else:
                 billing = "API billing (separate)"
         elif active:
             billing = "Disconnected · reconnect required"
+        provider_id = provider_of(active["connection"]) if active else data.get("provider", "codex")
+        saved = {
+            name: any(a["connected"] and a["connection"] in modes for a in accounts)
+            for name, modes in PROVIDERS.items()
+        }
+        claude = provider_id == "claude"
         return {
             "accounts": accounts,
             "preferred": data.get("preferred"),
             "active": active,
+            "provider_id": provider_id,
+            "providers": {
+                "codex": {"id": "codex", "display_name": "Codex", "saved": saved["codex"]},
+                "claude": {"id": "claude", "display_name": "Claude", "saved": saved["claude"]},
+            },
             "signing_in": self.pending is not None,
             "state": "connecting"
             if self.pending
             else "ready"
             if active
             and active["connected"]
-            and (active["connection"] == "api" or active["plan_enabled"])
+            and (active["connection"] in ("api", "anthropic") or active["plan_enabled"])
             else "disconnected",
             "error": self.last_error,
             "billing": billing,
             "usage": {
                 "available": False,
-                "message": "Allowance unavailable from this connection. Manage usage in ChatGPT Settings.",
+                "message": "Anthropic API usage is billed per token. View costs in the Claude Console."
+                if claude
+                else "Allowance unavailable from this connection. Manage usage in ChatGPT Settings.",
             },
-            "usage_url": "https://chatgpt.com/settings/usage",
+            "usage_url": CLAUDE_USAGE_URL
+            if claude
+            else "https://platform.openai.com/usage"
+            if active and active["connection"] == "api"
+            else "https://chatgpt.com/settings/usage",
         }
 
     def begin(self, account_id=None, new_registration=False):
@@ -513,12 +552,60 @@ class Connections:
             self.vault.write(data)
         return self.status()
 
+    def anthropic_key(self, key):
+        key = key.strip() if isinstance(key, str) else ""
+        if len(key) < 20 or not key.startswith("sk-ant-"):
+            raise WorkspaceError("Enter an Anthropic API key. Claude Console keys start with \u201csk-ant-\u201d.")
+        if key.startswith("sk-ant-admin"):
+            raise WorkspaceError("Admin keys cannot run models. Create a standard API key in the Claude Console.")
+        # Listing models validates the key without inference or spending tokens.
+        request_json("GET", ANTHROPIC + "/models", params={"limit": 1}, headers=anthropic_headers(key))
+        with self.vault.lock, revision_lock(self.vault.folder):
+            data = self.vault.read()
+            key_id = "claude-" + hashlib.sha256(key.encode()).hexdigest()[:12]
+            data["accounts"][key_id] = {
+                "mode": "anthropic",
+                "api_key": key,
+                "email": "Claude API key",
+                "name": "Anthropic API",
+                "workspace": "Claude Console workspace associated with this key",
+            }
+            data["active"] = key_id
+            data["provider"] = "claude"
+            self.vault.write(data)
+            self.model_cache.pop(key_id, None)
+        return self.status()
+
+    def use_provider(self, provider_id):
+        """Switch the active connection to the most recent saved credential for a provider."""
+        if provider_id not in PROVIDERS:
+            raise WorkspaceError("Choose Codex or Claude.")
+        with self.vault.lock, revision_lock(self.vault.folder):
+            data = self.vault.read()
+            accounts = data["accounts"]
+
+            def usable(key):
+                account = accounts.get(key) if key else None
+                return bool(account and account["mode"] in PROVIDERS[provider_id]
+                            and (account.get("access_token") or account.get("api_key")))
+
+            choice = data.get("active") if usable(data.get("active")) else None
+            if not choice and provider_id == "codex" and usable(data.get("preferred")):
+                choice = data["preferred"]
+            if not choice:
+                choice = next((key for key in reversed(list(accounts)) if usable(key)), None)
+            data["provider"] = provider_id
+            data["active"] = choice
+            self.vault.write(data)
+        return self.status()
+
     def select(self, key_id):
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
             if key_id not in data["accounts"]:
                 raise WorkspaceError("Unknown account registration.")
             data["active"] = key_id
+            data["provider"] = provider_of(data["accounts"][key_id]["mode"])
             if data["accounts"][key_id]["mode"] == "chatgpt":
                 data["preferred"] = key_id
             self.vault.write(data)
@@ -532,7 +619,7 @@ class Connections:
                 account.get("access_token") or account.get("api_key")
             ):
                 raise WorkspaceError(
-                    "Connect your own ChatGPT plan or API key in Account settings.",
+                    "Connect Codex or Claude in Settings \u2192 AI connection.",
                     "not_connected",
                 )
             if account[
@@ -604,6 +691,10 @@ class Connections:
                 (not refresh and requested - cached[0] < 600) or cached[0] >= requested
             ):
                 return copy.deepcopy(cached[1])
+            if account["mode"] == "anthropic":
+                result = {"models": self.anthropic_models(account["api_key"]), "billing": self.status()["billing"]}
+                self.model_cache[key] = (time.perf_counter(), result)
+                return copy.deepcopy(result)
             response = request_json(
                 "GET",
                 RESOURCE + "/models",
@@ -636,6 +727,27 @@ class Connections:
             result = {"models": models, "billing": self.status()["billing"]}
             self.model_cache[key] = (time.perf_counter(), result)
             return copy.deepcopy(result)
+
+    @staticmethod
+    def anthropic_models(key):
+        models, after = [], None
+        for _ in range(10):
+            params = {"limit": 100}
+            if after:
+                params["after_id"] = after
+            response = request_json("GET", ANTHROPIC + "/models", params=params, headers=anthropic_headers(key))
+            for m in response.get("data", []):
+                if isinstance(m.get("id"), str):
+                    models.append({
+                        "id": m["id"],
+                        "name": m.get("display_name") or m["id"],
+                        "access": "Catalogue entry; inference not verified",
+                        "inputModalities": ["text", "image"],
+                    })
+            after = response.get("last_id")
+            if not response.get("has_more") or not after:
+                break
+        return models
 
     def disconnect(self, account_id=None):
         confirmed = True
@@ -688,7 +800,9 @@ class Connections:
         return {
             **self.status(),
             "remote_revocation_confirmed": confirmed,
-            "message": "Disconnected."
+            "message": "Disconnected. The key was removed from this computer; revoke it in the Claude Console if it is no longer needed."
+            if account and account["mode"] == "anthropic"
+            else "Disconnected."
             if confirmed
             else "Disconnected locally. Remote revocation was not confirmed; manage access in ChatGPT Settings.",
         }

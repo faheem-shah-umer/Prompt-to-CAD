@@ -67,6 +67,6 @@ For synthetic README/site media, `python -m tools.create_demo` uses isolated ses
 - Qt plugin error: use `tools.run_native` so runtime paths are configured.
 - Shader/OpenGL error: check the driver and SDK shader resources.
 - Locked executable: finish its current task and close that copy before moving it.
-- AI unavailable: install Codex separately and authorize your own account/key. Offline CAD tools do not need AI.
+- AI unavailable: install Codex or Claude Code separately and connect your own account/key in Settings → AI connection. Offline CAD tools do not need AI.
 
 See [architecture](architecture.md), [capabilities](agentic-cad.md), [privacy](privacy.md) and [dependency notices](../THIRD_PARTY_NOTICES.md).

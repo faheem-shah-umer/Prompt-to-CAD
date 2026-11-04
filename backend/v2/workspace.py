@@ -14,7 +14,8 @@ from backend.native.documents import Document, write_json
 from backend.native.workspace import Workspace
 from backend.native.runtime_identity import RuntimeIdentity
 
-from .auth import Connections
+from .auth import Connections, provider_of
+from .claude_provider import CLAUDE_AGENT, ClaudeCodeRuntime, ClaudeProviderOptions, describe, discover_claude
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
 from .provider import CODEX_AGENT, CodexAppServer, CodexProviderOptions, discover_executable
@@ -47,7 +48,10 @@ class WorkspaceV2(Workspace):
         self.usage_account = None
         self.token_usage = {}
         self.capability_cache = {}
-        self.provider_options: ProviderOptions = CodexProviderOptions()
+        self.provider_adapters: dict[str, ProviderOptions] = {
+            "codex": CodexProviderOptions(),
+            "claude": ClaudeProviderOptions(),
+        }
         self.image_bounds = {}
         self.connections = Connections(
             Path(identity_home) if identity_home else self.home / "identity", self.emit
@@ -65,11 +69,35 @@ class WorkspaceV2(Workspace):
         write_json(self.home / "runtime" / ("backend-" + str(os.getpid()) + ".json"),
                    self.application_runtime.report(private=True))
 
+    @property
+    def provider_id(self):
+        return self.connections.status().get("provider_id", "codex")
+
+    @property
+    def provider_options(self) -> ProviderOptions:
+        return self.provider_adapters.get(self.provider_id, self.provider_adapters["codex"])
+
+    def executable_for(self, provider_id):
+        if provider_id == "claude":
+            return describe(discover_claude(self.configuration.get("claude_path")))
+        return discover_executable(self.configuration.get("codex_path")) or ""
+
+    def make_runtime(self, home, account=None, mcp=None, provider_id=None):
+        provider_id = provider_id or (provider_of(account["mode"]) if account else self.provider_id)
+        token = account.get("access_token", account.get("api_key")) if account else None
+        if provider_id == "claude":
+            return ClaudeCodeRuntime(home, self.configuration.get("claude_path") or None, token, "anthropic", mcp)
+        return CodexAppServer(home, self.configuration.get("codex_path") or None, token,
+                              account["mode"] if account else "chatgpt", mcp)
+
     def emit(self, event):
         event = dict(event)
         if event.get("stage") == "usage":
             if event.get("kind") == "tokens":
-                self.token_usage = tokens(event.get("observation", {}))
+                observed = tokens(event.get("observation", {}))
+                if event.get("observation", {}).get("increment"):
+                    observed = {key: self.token_usage.get(key, 0) + value for key, value in observed.items()}
+                self.token_usage = observed
                 event["tokens"] = self.token_usage
             elif event.get("kind") == "allowance":
                 self.provider_usage = merge_allowance(
@@ -194,10 +222,13 @@ class WorkspaceV2(Workspace):
             )
             else self.connections.status()["state"],
             "runtime": {
-                "executable": discover_executable(self.configuration.get("codex_path"))
-                or "",
-                "provider": "Codex App Server",
-                "agent": copy.deepcopy(self.provider_options.identity),
+                "executable": self.executable_for(provider["provider_id"]),
+                "provider": "Claude Code" if provider["provider_id"] == "claude" else "Codex App Server",
+                "agent": copy.deepcopy(self.provider_adapters[provider["provider_id"]].identity),
+                "executables": {
+                    "codex": self.executable_for("codex"),
+                    "claude": self.executable_for("claude"),
+                },
             },
         }
         if self.project_id and result.get("conversation"):
@@ -209,9 +240,10 @@ class WorkspaceV2(Workspace):
         return result
 
     def capability_key(self, account_id):
-        executable = discover_executable(self.configuration.get("codex_path"))
-        stamp = Path(executable).stat().st_mtime_ns if executable else 0
-        return self.provider_options.identity["id"], account_id, executable, stamp
+        provider_id = self.provider_id
+        executable = self.executable_for(provider_id)
+        stamp = Path(executable).stat().st_mtime_ns if executable and Path(executable).is_file() else 0
+        return provider_id, account_id, executable, stamp
 
     def discover_models(self, refresh=False):
         account_id, account = self.connections.credential()
@@ -223,15 +255,20 @@ class WorkspaceV2(Workspace):
         result["provider_id"] = self.provider_options.identity["id"]
         result["connection_id"] = account_id
         runtime, reported = None, {}
-        try:
-            runtime = CodexAppServer(self.home / "runtime" / account_id, self.configuration.get("codex_path") or None,
-                                     account.get("access_token", account.get("api_key")), account["mode"])
-            reported = {m.get("model", m.get("id")): m for m in runtime.model_catalogue()}
-        except WorkspaceError as error:
-            result["capability_diagnostic"] = str(error)
-        finally:
-            if runtime:
-                runtime.close()
+        if result["provider_id"] == "claude":
+            # The Anthropic catalogue is authoritative; Claude Code needs no model handshake.
+            reported = {m["id"]: m for m in result["models"]}
+            if not self.executable_for("claude"):
+                result["capability_diagnostic"] = "Install Claude Code to run Claude tasks. Models are listed from your API key."
+        else:
+            try:
+                runtime = self.make_runtime(self.home / "runtime" / account_id, account)
+                reported = {m.get("model", m.get("id")): m for m in runtime.model_catalogue()}
+            except WorkspaceError as error:
+                result["capability_diagnostic"] = str(error)
+            finally:
+                if runtime:
+                    runtime.close()
         for model in result["models"]:
             model["provider_id"] = result["provider_id"]
             model["connection_id"] = account_id
@@ -260,8 +297,10 @@ class WorkspaceV2(Workspace):
             if not cached[1]:
                 raise WorkspaceError("The configured provider excludes image input for this model.", "image_unsupported")
             return entry
-        runtime = CodexAppServer(self.home / "runtime" / account_id, self.configuration.get("codex_path") or None,
-                                 account.get("access_token", account.get("api_key")), account["mode"])
+        if provider_of(account["mode"]) == "claude":
+            self.image_bounds[key] = time.monotonic(), True
+            return entry
+        runtime = self.make_runtime(self.home / "runtime" / account_id, account)
         try:
             bounds = runtime.input_bounds(model)
         finally:
@@ -485,6 +524,10 @@ class WorkspaceV2(Workspace):
             return self.connections.forget(params["account_id"])
         if method == "provider.api_key":
             return self.connections.api_key(params["key"])
+        if method == "provider.anthropic_key":
+            return self.connections.anthropic_key(params["key"])
+        if method == "provider.use":
+            return self.connections.use_provider(str(params.get("provider_id", "")))
         if method == "provider.select":
             return self.connections.select(params["account_id"])
         if method == "provider.disconnect":
@@ -502,18 +545,27 @@ class WorkspaceV2(Workspace):
         if method == "provider.usage":
             return self.read_usage()
         if method == "provider.configure":
-            path = str(params.get("codex_path", "")).strip()
-            if path and not Path(path).is_file():
-                raise WorkspaceError("Select the installed Codex executable.")
-            self.configuration["codex_path"] = path
+            for key, name in (("codex_path", "Codex"), ("claude_path", "Claude Code")):
+                if key not in params:
+                    continue
+                path = str(params.get(key, "")).strip()
+                if path and not Path(path).is_file():
+                    raise WorkspaceError("Select the installed " + name + " executable.")
+                self.configuration[key] = path
             write_json(self.configuration_path, self.configuration)
             return self.state()
         if method == "provider.probe":
-            runtime = CodexAppServer(
-                self.home / "runtime" / "probe",
-                executable=self.configuration.get("codex_path") or None,
-            )
+            provider_id = str(params.get("provider_id") or self.provider_id)
+            runtime = self.make_runtime(self.home / "runtime" / "probe", provider_id=provider_id)
             try:
+                if provider_id == "claude":
+                    version = runtime.version()
+                    return {
+                        "connected": True,
+                        "server": {**runtime.info, "version": version},
+                        "authenticated": False,
+                        "message": "Claude Code " + version + " started. API key and model inference remain unverified.",
+                    }
                 return {
                     "connected": True,
                     "server": runtime.info,
@@ -823,7 +875,7 @@ class WorkspaceV2(Workspace):
         self.task_deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
         self.document.journal(
             "running",
-            action="codex",
+            action=provider_id,
             task_id=task["task_id"],
             base_revision_id=original.get("revision_id"),
         )
@@ -859,7 +911,9 @@ class WorkspaceV2(Workspace):
             self.notify(
                 {
                     "stage": "connecting",
-                    "message": "Starting Codex App Server · "
+                    "message": "Starting Claude Code · Anthropic API billing"
+                    if provider_id == "claude"
+                    else "Starting Codex App Server · "
                     + (
                         "ChatGPT plan"
                         if account["mode"] == "chatgpt"
@@ -867,13 +921,7 @@ class WorkspaceV2(Workspace):
                     ),
                 }
             )
-            self.runtime = CodexAppServer(
-                self.home / "runtime" / account_id,
-                self.configuration.get("codex_path") or None,
-                account.get("access_token", account.get("api_key")),
-                account["mode"],
-                mcp,
-            )
+            self.runtime = self.make_runtime(self.home / "runtime" / account_id, account, mcp)
             session = (
                 conversation.get("provider_session")
                 if conversation.get("provider_account") == account_id
@@ -965,7 +1013,7 @@ class WorkspaceV2(Workspace):
                     self.document.commit(
                         tools.candidate,
                         original.get("revision_id"),
-                        summary=message[:3000] or "Codex CAD task",
+                        summary=message[:3000] or task["agent"]["display_name"] + " CAD task",
                         commands=tools.commands,
                     )
                 task.update(
@@ -1080,15 +1128,15 @@ class WorkspaceV2(Workspace):
             "available": False,
             "message": "API billing is separate. View costs in the API usage dashboard.",
         }
+        if account["mode"] == "anthropic":
+            usage = {
+                "available": False,
+                "message": "Anthropic API billing is separate. View costs in the Claude Console.",
+            }
         if account["mode"] == "chatgpt":
             runtime = None
             try:
-                runtime = CodexAppServer(
-                    self.home / "runtime/usage",
-                    self.configuration.get("codex_path") or None,
-                    account.get("access_token"),
-                    account["mode"],
-                )
+                runtime = self.make_runtime(self.home / "runtime/usage", account)
                 usage = allowance(
                     runtime.request("account/rateLimits/read", {}, timeout=15)
                 )
