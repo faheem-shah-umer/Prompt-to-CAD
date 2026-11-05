@@ -68,8 +68,8 @@ struct ProviderCopy { const char *id, *name, *tagline, *detail; };
 const ProviderCopy providerCopy[] = {
     {"codex", "Codex", "OpenAI · Sign in with ChatGPT",
      "Uses your ChatGPT plan allowance. Requires the Codex CLI on this PC."},
-    {"claude", "Claude", "Anthropic · API key",
-     "Billed per token by Anthropic. Requires Claude Code on this PC."},
+    {"claude", "Claude", "Anthropic · Claude plan or API key",
+     "Uses your Claude Code sign-in or an Anthropic API key. Requires Claude Code on this PC."},
 };
 // A selectable card: labels ignore the mouse so the whole surface acts as one button.
 QPushButton *providerCard(const ProviderCopy &copy, QButtonGroup *group) {
@@ -131,6 +131,10 @@ void WorkspaceWindow::refreshConnectionControls() {
     const auto providers = connection.value("providers").toObject();
     const bool codexReady = ready && providerId == "codex";
     const bool claudeReady = ready && providerId == "claude";
+    const auto activeConnection = active.value("connection").toString();
+    const bool keyReady = claudeReady && activeConnection == "anthropic";
+    const bool codeChosen = providerId == "claude" && activeConnection == "claude_code" && active.value("connected").toBool();
+    const auto codeReport = connection.value("claude_code").toObject();
     const auto claudeExecutable = state.value("runtime").toObject().value("executables").toObject().value("claude").toString();
     const auto claudeRuntimeText = claudeExecutable.isEmpty()
         ? QString("Not found yet. Install it, or set its path in Settings → Advanced.")
@@ -138,6 +142,8 @@ void WorkspaceWindow::refreshConnectionControls() {
     if (onboardingDialog) {
         if (auto *start = onboardingDialog->findChild<QPushButton *>("onboardingConnect")) start->setEnabled(!busy && !signingIn);
         if (auto *start = onboardingDialog->findChild<QPushButton *>("onboardingClaudeConnect")) start->setEnabled(!busy && !signingIn);
+        for (const auto *name : {"onboardingClaudeCodeUse", "onboardingClaudeCodeSignIn"})
+            if (auto *button = onboardingDialog->findChild<QPushButton *>(name)) button->setEnabled(!busy && !claudeExecutable.isEmpty());
         if (auto *runtime = onboardingDialog->findChild<QLabel *>("onboardingClaudeRuntime")) runtime->setText(claudeRuntimeText);
         if (auto *status = onboardingDialog->findChild<QLabel *>("onboardingStatus")) status->setText(signingIn ? "Finish authorization in your browser." : connection.value("error").toString());
         if (ready) onboardingDialog->accept();
@@ -161,7 +167,8 @@ void WorkspaceWindow::refreshConnectionControls() {
     if (auto *panel = settingsDialog->findChild<QWidget *>("claudePanel")) panel->setVisible(shown == "claude");
     if (auto *info = settingsDialog->findChild<QLabel *>("claudeInfo")) {
         const bool hasSaved = providers.value("claude").toObject().value("saved").toBool();
-        info->setText(claudeReady ? "✓  Connected" : hasSaved ? "Saved · select to use" : "Not connected");
+        info->setText(claudeReady ? (keyReady ? "✓  Connected · API key" : "✓  Connected · Claude Code sign-in")
+                      : codeChosen ? "Claude Code not signed in" : hasSaved ? "Saved · select to use" : "Not connected");
         info->setStyleSheet("color:" + (claudeReady ? workspaceColors().success : workspaceColors().secondary).name());
     }
     if (auto *keyState = settingsDialog->findChild<QLabel *>("claudeKeyState")) {
@@ -169,16 +176,42 @@ void WorkspaceWindow::refreshConnectionControls() {
         for (const auto &value : connection.value("accounts").toArray()) {
             const auto item = value.toObject();
             if (item.value("connection") == "anthropic" && item.value("connected").toBool())
-                text = (claudeReady && item.value("id") == active.value("id") ? "In use · " : "Saved · ") + item.value("label").toString();
+                text = (keyReady && item.value("id") == active.value("id") ? "In use · " : "Saved · ") + item.value("label").toString();
         }
         keyState->setText(text);
     }
     if (auto *runtimeState = settingsDialog->findChild<QLabel *>("claudeRuntimeState")) runtimeState->setText(claudeRuntimeText);
     if (auto *billing = settingsDialog->findChild<QLabel *>("claudeBilling"))
         billing->setText("Anthropic API · per token, separate from any ChatGPT or Claude.ai plan");
-    if (auto *entry = settingsDialog->findChild<QWidget *>("claudeKeyEntry")) entry->setVisible(!claudeReady);
+    if (auto *entry = settingsDialog->findChild<QWidget *>("claudeKeyEntry")) entry->setVisible(!keyReady);
     if (auto *button = settingsDialog->findChild<QPushButton *>("claudeConnect")) button->setEnabled(!busy);
-    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeDisconnect")) button->setVisible(claudeReady);
+    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeDisconnect")) button->setVisible(keyReady);
+    auto method = settingsDialog->property("claudeMethodShown").toString();
+    if (method.isEmpty()) method = activeConnection == "anthropic" ? "anthropic" : "claude_code";
+    for (auto *button : settingsDialog->findChildren<QPushButton *>("claudeMethod")) {
+        QSignalBlocker block(button);
+        button->setChecked(button->property("method").toString() == method);
+    }
+    if (auto *section = settingsDialog->findChild<QWidget *>("claudeCodeSection")) section->setVisible(method == "claude_code");
+    if (auto *section = settingsDialog->findChild<QWidget *>("claudeKeySection")) section->setVisible(method == "anthropic");
+    if (auto *signIn = settingsDialog->findChild<QLabel *>("claudeCodeSignIn")) {
+        QString text = claudeExecutable.isEmpty() ? QString("Install Claude Code first")
+            : codeReport.isEmpty() ? QString("Not checked yet · select Check again")
+            : !codeReport.value("signed_in").toBool() ? QString("Not signed in")
+            : "Signed in · " + codeReport.value("method").toString()
+                + (codeReport.value("email").toString().isEmpty() ? QString() : " · " + codeReport.value("email").toString());
+        if (codeChosen && claudeReady) text = "In use · " + text;
+        signIn->setText(text);
+    }
+    if (auto *billing = settingsDialog->findChild<QLabel *>("claudeCodeBilling"))
+        billing->setText("Your Claude plan, or the account or key Claude Code is signed in with");
+    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeCodeUse")) {
+        button->setVisible(!codeChosen);
+        button->setEnabled(!busy && !claudeExecutable.isEmpty());
+    }
+    for (const auto *name : {"claudeCodeSignInButton", "claudeCodeCheck"})
+        if (auto *button = settingsDialog->findChild<QPushButton *>(name)) button->setEnabled(!busy && !claudeExecutable.isEmpty());
+    if (auto *button = settingsDialog->findChild<QPushButton *>("claudeCodeStop")) button->setVisible(codeChosen);
     if (auto *button = settingsDialog->findChild<QPushButton *>("installClaude")) button->setVisible(claudeExecutable.isEmpty());
     if (auto *refresh = settingsDialog->findChild<QPushButton *>("refreshModelsButton")) {
         refresh->setEnabled(canRefresh);
@@ -386,26 +419,84 @@ void WorkspaceWindow::account() {
         status->setWordWrap(false);
         claudeHeader->addWidget(status);
         claudeLayout->addLayout(claudeHeader);
-        claudeLayout->addWidget(label("Runs through Claude Code on this PC with your own Anthropic API key. Usage is billed "
-                                      "per token by Anthropic; a Claude.ai subscription is not used."));
+        claudeLayout->addWidget(label("Runs through Claude Code on this PC. Choose how it is paid for: your own Claude Code "
+                                      "sign-in, or an Anthropic API key."));
         auto *divider = new QFrame;
         divider->setObjectName("sectionRule");
         divider->setFrameShape(QFrame::HLine);
         claudeLayout->addWidget(divider);
-        auto *facts = new QFormLayout;
-        facts->setContentsMargins(0, 0, 0, 0);
-        facts->setRowWrapPolicy(QFormLayout::WrapLongRows);
-        facts->setVerticalSpacing(20);
-        facts->setHorizontalSpacing(24);
-        for (const auto &row : {qMakePair("API key", "claudeKeyState"), qMakePair("Claude Code", "claudeRuntimeState"),
-                                qMakePair("Billing", "claudeBilling")}) {
-            auto *caption = label(row.first);
-            caption->setMinimumWidth(144);
-            auto *value = label({}, row.second);
-            value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-            facts->addRow(caption, value);
+        auto *methodGroup = new QButtonGroup(dialog);
+        methodGroup->setExclusive(true);
+        auto *methodRow = new QHBoxLayout;
+        methodRow->setSpacing(8);
+        for (const auto &choice : {qMakePair("claude_code", "Use my Claude Code sign-in"), qMakePair("anthropic", "Anthropic API key")}) {
+            auto *button = new QPushButton(choice.second);
+            button->setObjectName("claudeMethod");
+            button->setProperty("method", choice.first);
+            button->setCheckable(true);
+            methodGroup->addButton(button);
+            methodRow->addWidget(button);
         }
-        claudeLayout->addLayout(facts);
+        methodRow->addStretch();
+        claudeLayout->addLayout(methodRow);
+        connect(methodGroup, &QButtonGroup::buttonClicked, dialog, [this, dialog](QAbstractButton *button) {
+            dialog->setProperty("claudeMethodShown", button->property("method"));
+            refreshConnectionControls();
+        });
+        auto factRows = [](QVBoxLayout *into, std::initializer_list<QPair<const char *, const char *>> rows) {
+            auto *facts = new QFormLayout;
+            facts->setContentsMargins(0, 0, 0, 0);
+            facts->setRowWrapPolicy(QFormLayout::WrapLongRows);
+            facts->setVerticalSpacing(20);
+            facts->setHorizontalSpacing(24);
+            for (const auto &row : rows) {
+                auto *caption = label(row.first);
+                caption->setMinimumWidth(144);
+                auto *value = label({}, row.second);
+                value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+                facts->addRow(caption, value);
+            }
+            into->addLayout(facts);
+        };
+        factRows(claudeLayout, {qMakePair("Claude Code", "claudeRuntimeState")});
+
+        // Option 1 · the user's own Claude Code sign-in. The app stores nothing and never reads credentials.
+        auto *codeSection = new QWidget;
+        codeSection->setObjectName("claudeCodeSection");
+        auto *codeLayout = new QVBoxLayout(codeSection);
+        codeLayout->setContentsMargins(0, 0, 0, 0);
+        codeLayout->setSpacing(16);
+        factRows(codeLayout, {qMakePair("Sign-in", "claudeCodeSignIn"), qMakePair("Billing", "claudeCodeBilling")});
+        auto *codeRow = new QHBoxLayout;
+        action("Use my Claude Code sign-in", codeRow, [this, dialog] {
+            dialog->setProperty("providerShown", "claude");
+            call("provider.claude_code");
+        })->setObjectName("claudeCodeUse");
+        action("Sign in to Claude Code…", codeRow, [this] {
+            call("provider.claude_code_sign_in", {}, [this](auto) {
+                activity->setText("Finish signing in in the Claude Code window, then select Check again.");
+            });
+        })->setObjectName("claudeCodeSignInButton");
+        action("Check again", codeRow, [this] { call("provider.claude_code_status"); })->setObjectName("claudeCodeCheck");
+        action("Stop using", codeRow, [this] {
+            call("provider.disconnect", {}, [this](auto r) {
+                const auto message = r.value("message").toString();
+                call("v2.state", {}, [this, message](auto) { activity->setText(message); });
+            });
+        })->setObjectName("claudeCodeStop");
+        codeRow->addStretch();
+        codeLayout->addLayout(codeRow);
+        codeLayout->addWidget(label("Prompt to CAD runs your installed Claude Code exactly as you set it up and never sees "
+                                    "your Claude credentials. Sign-in happens in Claude Code's own window."));
+        claudeLayout->addWidget(codeSection);
+
+        // Option 2 · an Anthropic API key kept in Windows-protected storage.
+        auto *keySection = new QWidget;
+        keySection->setObjectName("claudeKeySection");
+        auto *keyLayout = new QVBoxLayout(keySection);
+        keyLayout->setContentsMargins(0, 0, 0, 0);
+        keyLayout->setSpacing(16);
+        factRows(keyLayout, {qMakePair("API key", "claudeKeyState"), qMakePair("Billing", "claudeBilling")});
         auto *entry = new QWidget;
         entry->setObjectName("claudeKeyEntry");
         auto *entryLayout = new QVBoxLayout(entry);
@@ -433,16 +524,21 @@ void WorkspaceWindow::account() {
         entryLayout->addLayout(entryRow);
         entryLayout->addWidget(label("The key is checked without running a model and stored in Windows-protected storage, "
                                      "outside your projects."));
-        claudeLayout->addWidget(entry);
-        auto *claudeActions = new QHBoxLayout;
-        action("Install Claude Code ↗", claudeActions, [] { QDesktopServices::openUrl(QUrl("https://code.claude.com/docs/en/setup")); })
-            ->setObjectName("installClaude");
-        action("Disconnect", claudeActions, [this] {
+        keyLayout->addWidget(entry);
+        auto *keyActions = new QHBoxLayout;
+        action("Disconnect", keyActions, [this] {
             call("provider.disconnect", {}, [this](auto r) {
                 const auto message = r.value("message").toString();
                 call("v2.state", {}, [this, message](auto) { activity->setText(message); });
             });
         })->setObjectName("claudeDisconnect");
+        keyActions->addStretch();
+        keyLayout->addLayout(keyActions);
+        claudeLayout->addWidget(keySection);
+
+        auto *claudeActions = new QHBoxLayout;
+        action("Install Claude Code ↗", claudeActions, [] { QDesktopServices::openUrl(QUrl("https://code.claude.com/docs/en/setup")); })
+            ->setObjectName("installClaude");
         claudeActions->addStretch();
         claudeLayout->addLayout(claudeActions);
     }
@@ -790,8 +886,8 @@ void WorkspaceWindow::showOnboarding() {
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowModality(Qt::WindowModal);
     dialog->setWindowTitle("Welcome to Prompt to CAD");
-    dialog->resize(640, 560);
-    dialog->setMinimumSize(560, 520);
+    dialog->resize(660, 640);
+    dialog->setMinimumSize(580, 600);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(32, 28, 32, 24);
     layout->setSpacing(20);
@@ -851,34 +947,46 @@ void WorkspaceWindow::showOnboarding() {
     auto *claude = new QWidget;
     auto *claudeLayout = new QVBoxLayout(claude);
     claudeLayout->setContentsMargins(0, 0, 0, 0);
-    claudeLayout->setSpacing(16);
+    claudeLayout->setSpacing(14);
     claudeLayout->addWidget(label("Connect Claude", "pageTitle"));
-    claudeLayout->addWidget(label("Claude works through Claude Code on this PC, using your own Anthropic API key. "
-                                  "Usage is billed per token by Anthropic; a Claude.ai subscription is not used."));
-    auto *claudeDetails = card(claudeLayout, "What you need");
-    auto *keyNeed = new QHBoxLayout;
-    keyNeed->addWidget(label("1   An Anthropic API key with credits."), 1);
-    action("Get a key ↗", keyNeed, [] { QDesktopServices::openUrl(QUrl("https://console.anthropic.com/settings/keys")); })
-        ->setObjectName("quietButton");
-    claudeDetails->addLayout(keyNeed);
     auto *runtimeNeed = new QHBoxLayout;
-    runtimeNeed->addWidget(label("2   Claude Code installed on this PC."), 1);
+    auto *runtimeText = new QVBoxLayout;
+    runtimeText->setSpacing(2);
+    runtimeText->addWidget(label("Claude runs through Claude Code installed on this PC."));
+    auto *runtimeState = label({}, "onboardingClaudeRuntime");
+    runtimeText->addWidget(runtimeState);
+    runtimeNeed->addLayout(runtimeText, 1);
     action("Install guide ↗", runtimeNeed, [] { QDesktopServices::openUrl(QUrl("https://code.claude.com/docs/en/setup")); })
         ->setObjectName("quietButton");
-    claudeDetails->addLayout(runtimeNeed);
-    auto *runtimeState = label({}, "onboardingClaudeRuntime");
-    runtimeState->setContentsMargins(22, 0, 0, 0);
-    claudeDetails->addWidget(runtimeState);
+    claudeLayout->addLayout(runtimeNeed);
+
+    auto *planCard = card(claudeLayout, "Use my Claude Code sign-in");
+    planCard->addWidget(label("Uses your Claude Pro or Max plan, or whatever Claude Code is signed in with. Sign-in happens "
+                              "in Claude Code's own window; Prompt to CAD never sees your credentials."));
+    auto *planRow = new QHBoxLayout;
+    action("Use my Claude Code sign-in", planRow, [this] {
+        if (auto *status = onboardingDialog ? onboardingDialog->findChild<QLabel *>("onboardingStatus") : nullptr)
+            status->setText("Checking Claude Code…");
+        call("provider.claude_code");
+    })->setObjectName("onboardingClaudeCodeUse");
+    action("Sign in to Claude Code…", planRow, [this] {
+        call("provider.claude_code_sign_in", {}, [this](auto) {
+            if (auto *status = onboardingDialog ? onboardingDialog->findChild<QLabel *>("onboardingStatus") : nullptr)
+                status->setText("Finish signing in in the Claude Code window, then select Use my Claude Code sign-in.");
+        });
+    })->setObjectName("onboardingClaudeCodeSignIn");
+    planRow->addStretch();
+    planCard->addLayout(planRow);
+
+    auto *keyCard = card(claudeLayout, "Or use an Anthropic API key");
     auto *key = new QLineEdit;
     key->setObjectName("onboardingClaudeKey");
     key->setEchoMode(QLineEdit::Password);
     key->setPlaceholderText("Paste your API key (sk-ant-…)");
     key->setAccessibleName("Anthropic API key");
-    claudeLayout->addWidget(key);
-    claudeLayout->addWidget(label("The key is checked without running a model and stored in Windows-protected storage."));
-    claudeLayout->addStretch();
-    auto *claudeRow = new QHBoxLayout;
-    auto *validate = action("Validate and connect", claudeRow, [this, key] {
+    auto *keyRow = new QHBoxLayout;
+    keyRow->addWidget(key, 1);
+    auto *validate = action("Validate and connect", keyRow, [this, key] {
         const auto value = key->text().trimmed();
         if (value.isEmpty()) { key->setFocus(); return; }
         key->clear();
@@ -888,8 +996,13 @@ void WorkspaceWindow::showOnboarding() {
     });
     validate->setObjectName("onboardingClaudeConnect");
     connect(key, &QLineEdit::returnPressed, validate, &QPushButton::click);
-    claudeRow->addStretch();
-    claudeLayout->addLayout(claudeRow);
+    keyCard->addLayout(keyRow);
+    auto *keyHelp = new QHBoxLayout;
+    keyHelp->addWidget(label("Billed per token by Anthropic. Checked without running a model."), 1);
+    action("Get a key ↗", keyHelp, [] { QDesktopServices::openUrl(QUrl("https://console.anthropic.com/settings/keys")); })
+        ->setObjectName("quietButton");
+    keyCard->addLayout(keyHelp);
+    claudeLayout->addStretch();
     connectPages->addWidget(claude);
     slides->addWidget(connectPages);
 

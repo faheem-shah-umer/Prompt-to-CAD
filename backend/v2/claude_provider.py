@@ -70,6 +70,11 @@ def _npm_command(script):
     return [str(native)] if native.is_file() else None
 
 
+def desktop_bundled(path):
+    parts = [part.lower() for part in Path(path).parts]
+    return "claude-code" in parts and "claude" in parts
+
+
 def discover_claude(configured=None):
     """Return the command list that starts Claude Code, or None when it is not installed."""
     def command(path):
@@ -84,7 +89,10 @@ def discover_claude(configured=None):
         return [str(path)]
 
     if configured:
-        return command(configured)
+        resolved = command(configured)
+        if resolved or not desktop_bundled(configured):
+            return resolved
+        # A saved desktop-app copy disappears when the app updates; find the current one instead.
     explicit = os.getenv("PROMPTCAD_CLAUDE")
     if explicit:
         return command(explicit)
@@ -98,6 +106,10 @@ def discover_claude(configured=None):
                    home / ".claude" / "local" / ("claude.exe" if os.name == "nt" else "claude")]
     if os.name == "nt" and os.getenv("APPDATA"):
         candidates.append(Path(os.environ["APPDATA"]) / "npm" / "claude.cmd")
+        # Last resort: the unmodified Claude Code that the Claude desktop app keeps up to date.
+        bundled = Path(os.environ["APPDATA"]) / "Claude" / "claude-code"
+        if bundled.is_dir():
+            candidates += sorted(bundled.glob("*/*/claude.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
     for candidate in candidates:
         resolved = command(candidate)
         if resolved:
@@ -109,8 +121,73 @@ def describe(command):
     return command[-1] if command else ""
 
 
-def provider_failure(text, subtype=""):
+AUTH_METHODS = {
+    "claude.ai": "Claude plan sign-in",
+    "oauth_token": "Claude OAuth token",
+    "api_key": "API key",
+    "api_key_helper": "API key helper",
+    "third_party": "Cloud provider",
+}
+
+
+def user_environment():
+    """The user's own environment, untouched apart from unrelated OpenAI/Codex variables."""
+    return {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI_", "CODEX_"))}
+
+
+def auth_status(command, timeout=20):
+    """Ask the installed Claude Code which sign-in it would use. Credentials stay inside Claude Code."""
+    if not command:
+        return {"installed": False, "signed_in": False, "method": "", "message": "Claude Code is not installed."}
+    try:
+        result = subprocess.run(
+            command + ["auth", "status"], capture_output=True, text=True, timeout=timeout,
+            env=user_environment(), encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"installed": True, "signed_in": False, "method": "",
+                "message": "Claude Code did not answer. Check the installation."}
+    try:
+        report = json.loads(result.stdout or "{}")
+    except ValueError:
+        report = {}
+    report = report if isinstance(report, dict) else {}
+    method = str(report.get("authMethod") or "")
+    signed_in = result.returncode == 0 and method not in ("", "none")
+    account = report.get("account") if isinstance(report.get("account"), dict) else {}
+    email = report.get("email") or account.get("email") or ""
+    return {
+        "installed": True,
+        "signed_in": signed_in,
+        "method": AUTH_METHODS.get(method, method.replace("_", " ")) if signed_in else "",
+        "email": email if isinstance(email, str) else "",
+        "message": "" if signed_in else "Claude Code is not signed in. Use Sign in, finish in the Claude Code window, then Check again.",
+    }
+
+
+def open_sign_in(command):
+    """Open Claude Code's own sign-in in a console window; the app never sees the credentials."""
+    if not command:
+        raise WorkspaceError("Install Claude Code first.", "runtime_missing")
+    flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+    try:
+        subprocess.Popen(command + ["auth", "login"], env=user_environment(), creationflags=flags,
+                         stdin=None, stdout=None, stderr=None, close_fds=True)
+    except OSError:
+        raise WorkspaceError("Claude Code could not start its sign-in. Run “claude auth login” in a terminal.",
+                             "runtime_missing") from None
+
+
+def provider_failure(text, subtype="", mode="anthropic"):
     lowered = (text or "").lower()
+    if mode == "claude_code":
+        if "not logged in" in lowered or "/login" in lowered or "login expired" in lowered or "please run" in lowered:
+            return ("Claude Code is not signed in, or its sign-in expired. Sign in again in Settings → AI connection.",
+                    "reauthorization_required")
+        if "usage limit" in lowered or "limit reached" in lowered or "rate limit" in lowered or "429" in lowered:
+            return ("The usage limit of the account Claude Code is signed in with was reached. Try again after it resets. "
+                    "Billing was not changed.", "usage_limit")
     if "credit balance" in lowered or "billing" in lowered or "quota" in lowered:
         return ("The Anthropic account has insufficient API credits. Add credits in the Claude Console, then retry. "
                 "Billing was not changed.", "usage_limit")
@@ -147,8 +224,10 @@ class ClaudeCodeRuntime:
         self.home.mkdir(parents=True, exist_ok=True)
         self.cwd = self.home / "workspace"
         self.cwd.mkdir(exist_ok=True)
+        self.mode = mode
         self.config_dir = self.home / "claude-config"
-        self.config_dir.mkdir(exist_ok=True)
+        if mode != "claude_code":
+            self.config_dir.mkdir(exist_ok=True)
         self.command = discover_claude(executable)
         if not self.command:
             raise WorkspaceError(
@@ -170,13 +249,18 @@ class ClaudeCodeRuntime:
 
     # Environment ---------------------------------------------------------------------------
     def environment(self):
+        startup = int((self.mcp or {}).get("startup_timeout_sec", 30)) * 1000
+        tool = int((self.mcp or {}).get("tool_timeout_sec", 660)) * 1000
+        if self.mode == "claude_code":
+            # Run as the user set Claude Code up: their config folder, sign-in and auth settings.
+            env = user_environment()
+            env.update(MCP_TIMEOUT=str(startup), MCP_TOOL_TIMEOUT=str(tool))
+            return env
         keep = ("CLAUDE_CODE_GIT_BASH_PATH",)
         env = {
             k: v for k, v in os.environ.items()
             if k in keep or not k.startswith(("OPENAI_", "CODEX_", "ANTHROPIC_", "CLAUDE_", "LLM_"))
         }
-        startup = int((self.mcp or {}).get("startup_timeout_sec", 30)) * 1000
-        tool = int((self.mcp or {}).get("tool_timeout_sec", 660)) * 1000
         env.update(
             ANTHROPIC_API_KEY=self.secret or "not-connected",
             CLAUDE_CONFIG_DIR=str(self.config_dir),
@@ -329,7 +413,7 @@ class ClaudeCodeRuntime:
                 continue
             if event is None:
                 detail = self.scrub(" ".join(self.stderr_tail[-3:]).strip())
-                message, code = provider_failure(detail) if detail else (
+                message, code = provider_failure(detail, mode=self.mode) if detail else (
                     "Claude Code stopped before finishing. Unaccepted changes were discarded.", "runtime_disconnected")
                 raise WorkspaceError(message, code)
             if event.get("parent_tool_use_id"):
@@ -388,7 +472,7 @@ class ClaudeCodeRuntime:
                     self.session_id = event["session_id"]
                 if event.get("is_error") or event.get("subtype") != "success":
                     detail = self.scrub(str(event.get("result") or " ".join(event.get("errors", []) or [])))
-                    message, code = provider_failure(detail, event.get("subtype", ""))
+                    message, code = provider_failure(detail, event.get("subtype", ""), self.mode)
                     raise WorkspaceError(self.scrub(message), code)
                 finals = [key for key in order if key not in tool_messages and texts[key].strip()]
                 for key in finals:
