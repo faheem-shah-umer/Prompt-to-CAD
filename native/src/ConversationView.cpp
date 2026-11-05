@@ -1,6 +1,7 @@
 #include "ConversationView.h"
 #include "WorkspaceTheme.h"
 #include "WorkspaceIcons.h"
+#include "LoadingIndicator.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
@@ -332,6 +333,7 @@ void ConversationView::rebuild() {
     int index = -1;
     for (auto value : messages) {
         ++index;
+        LoadingIndicator::keepAlive();
         const auto message = value.toObject();
         if (message.value("role") != "user" && message.value("role") != "assistant") continue;
         const bool user = message.value("role") == "user";
@@ -482,6 +484,47 @@ void ConversationView::rebuild() {
             cardLayout->addWidget(links);
             body->addWidget(card);
         }
+        // Notes belong to the response that wrote them, so they read as part of that answer.
+        const auto notes = message.value("design_notes").toArray();
+        if (!user && !notes.isEmpty()) {
+            QSet<QString> editable;
+            for (const auto &current : designNotes) editable.insert(current.toObject().value("id").toString());
+            auto *card = new QFrame(bubble);
+            card->setObjectName("designNotesCard");
+            auto *cardLayout = new QVBoxLayout(card);
+            cardLayout->setSpacing(6);
+            auto *heading = new QLabel(notes.size() == 1 ? "Saved design note" : "Saved design notes", card);
+            heading->setObjectName("designNotesHeading");
+            cardLayout->addWidget(heading);
+            for (const auto &noteValue : notes) {
+                const auto record = noteValue.toObject();
+                const auto instance = record.value("instance_id").toString();
+                auto ownerName = componentNames.value(instance, record.value("component_name").toString("Removed component"));
+                if (record.value("status") == "stale") ownerName += " · Stale anchor";
+                auto *owner = new QLabel(ownerName, card);
+                owner->setObjectName("designNoteOwner");
+                owner->setTextFormat(Qt::PlainText);
+                owner->setWordWrap(true);
+                cardLayout->addWidget(owner);
+                auto *noteText = new QLabel(record.value("text").toString(), card);
+                noteText->setTextFormat(Qt::PlainText);
+                noteText->setWordWrap(true);
+                noteText->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+                cardLayout->addWidget(noteText);
+                const auto identity = record.value("id").toString();
+                if (editable.contains(identity)) {
+                    auto *edit = new QToolButton(card);
+                    edit->setObjectName("designNoteEdit");
+                    edit->setText("Edit note");
+                    edit->setAccessibleName("Edit saved design note for " + ownerName);
+                    connect(edit, &QToolButton::clicked, this, [this, identity] {
+                        Q_EMIT anchorClicked(QUrl("engineering:" + QString::fromLatin1(QUrl::toPercentEncoding(identity))));
+                    });
+                    cardLayout->addWidget(edit, 0, Qt::AlignLeft);
+                }
+            }
+            body->addWidget(card);
+        }
         if (!text.isEmpty() || message.value("working").toBool()) {
             const auto copyKey = context + "/" + message.value("task_id").toString(QString::number(index)) +
                                  "/" + message.value("role").toString();
@@ -516,36 +559,6 @@ void ConversationView::rebuild() {
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);
-    }
-    if (!designNotes.isEmpty()) {
-        auto *notes = new QWidget(content);
-        notes->setObjectName("savedDesignNotes");
-        auto *notesLayout = new QVBoxLayout(notes);
-        notesLayout->setContentsMargins(0, 0, 10, 0);
-        auto *heading = new QLabel("Saved design notes", notes);
-        notesLayout->addWidget(heading);
-        for (const auto &value : designNotes) {
-            const auto record = value.toObject();
-            auto *owner = new QLabel(componentNames.value(record.value("instance_id").toString(), "Removed component"), notes);
-            owner->setTextFormat(Qt::PlainText);
-            if (record.value("status") == "stale") owner->setText(owner->text() + " · Stale anchor");
-            owner->setWordWrap(true);
-            notesLayout->addWidget(owner);
-            auto *text = new QLabel(record.value("text").toString(), notes);
-            text->setTextFormat(Qt::PlainText);
-            text->setWordWrap(true);
-            text->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-            notesLayout->addWidget(text);
-            auto *edit = new QToolButton(notes);
-            edit->setText("Edit note");
-            edit->setAccessibleName("Edit saved design note for " + owner->text());
-            const auto identity = record.value("id").toString();
-            connect(edit, &QToolButton::clicked, this, [this, identity] {
-                Q_EMIT anchorClicked(QUrl("engineering:" + QString::fromLatin1(QUrl::toPercentEncoding(identity))));
-            });
-            notesLayout->addWidget(edit, 0, Qt::AlignLeft);
-        }
-        stack->addWidget(notes);
     }
     stack->addStretch(1);
     // setWidget deletes the previous contents without detaching a native widget.

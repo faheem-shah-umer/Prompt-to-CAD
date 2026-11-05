@@ -6,9 +6,14 @@
 class LoadingIndicator : public QWidget {
   public:
     explicit LoadingIndicator(QWidget *parent, bool floatingBadge = false);
-    void begin(const QString &message);
-    void finish();
+    ~LoadingIndicator() override;
+    // Returns a token; finish(token) ignores a token superseded by a later begin().
+    int begin(const QString &message);
+    void finish(int token = -1);
     QSize sizeHint() const override;
+    // Paint the next spinner frame while the UI thread runs long synchronous work.
+    // Repaints only these widgets and processes no events, so callers cannot re-enter.
+    static void keepAlive();
 
   protected:
     void paintEvent(QPaintEvent *) override;
@@ -18,8 +23,10 @@ class LoadingIndicator : public QWidget {
 
   private:
     void positionBadge();
+    void reveal();
     QTimer delay, pulse;
-    QElapsedTimer clock;
+    QElapsedTimer clock, requested, lastFrame;
     QString label;
+    int generation = 0;
     bool floating, pending = false, animate = true;
 };

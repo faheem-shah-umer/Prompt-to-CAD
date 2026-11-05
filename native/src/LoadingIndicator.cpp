@@ -4,6 +4,7 @@
 #include <QEvent>
 #include <QPainter>
 #include <QShowEvent>
+#include <QSet>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -16,6 +17,12 @@ bool animationsEnabled() {
 #endif
     return true;
 }
+QSet<LoadingIndicator *> &indicators() {
+    static QSet<LoadingIndicator *> live;
+    return live;
+}
+constexpr int RevealDelay = 200;
+constexpr int FrameInterval = 33;
 }
 
 LoadingIndicator::LoadingIndicator(QWidget *parent, bool floatingBadge)
@@ -28,31 +35,55 @@ LoadingIndicator::LoadingIndicator(QWidget *parent, bool floatingBadge)
     delay.setSingleShot(true);
     delay.setInterval(200);
     pulse.setInterval(35);
-    connect(&delay, &QTimer::timeout, this, [this] {
-        if (!pending) return;
-        positionBadge();
-        show();
-        raise();
-    });
+    connect(&delay, &QTimer::timeout, this, [this] { if (pending) reveal(); });
     connect(&pulse, &QTimer::timeout, this, [this] {
         // The text and surrounding workspace never need a per-frame redraw.
         update(QRect(8, (height() - 18) / 2, 20, 18));
     });
     if (floating) parent->installEventFilter(this);
+    indicators().insert(this);
     hide();
 }
 
-void LoadingIndicator::begin(const QString &message) {
+LoadingIndicator::~LoadingIndicator() { indicators().remove(this); }
+
+void LoadingIndicator::reveal() {
+    positionBadge();
+    show();
+    raise();
+}
+
+int LoadingIndicator::begin(const QString &message) {
     label = message;
     setAccessibleName(message);
     setToolTip(message);
     pending = true;
+    requested.start();
     positionBadge();
-    if (!isHidden()) { update(); return; }
+    if (!isHidden()) { update(); return ++generation; }
     delay.start();
+    return ++generation;
 }
 
-void LoadingIndicator::finish() {
+void LoadingIndicator::keepAlive() {
+    for (auto *indicator : indicators()) {
+        if (!indicator->pending || !indicator->parentWidget() || !indicator->parentWidget()->isVisible()) continue;
+        if (indicator->isHidden()) {
+            // The reveal timer cannot fire while the UI thread is busy, so honour it here.
+            if (!indicator->requested.isValid() || indicator->requested.elapsed() < RevealDelay) continue;
+            indicator->delay.stop();
+            indicator->reveal();
+            indicator->repaint();
+            continue;
+        }
+        if (!indicator->animate || (indicator->lastFrame.isValid() && indicator->lastFrame.elapsed() < FrameInterval)) continue;
+        indicator->raise();
+        indicator->repaint(QRect(8, (indicator->height() - 18) / 2, 20, 18));
+    }
+}
+
+void LoadingIndicator::finish(int token) {
+    if (token >= 0 && token != generation) return;
     pending = false;
     delay.stop();
     pulse.stop();
@@ -90,6 +121,7 @@ void LoadingIndicator::hideEvent(QHideEvent *event) {
 }
 
 void LoadingIndicator::paintEvent(QPaintEvent *) {
+    lastFrame.start();
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const auto colors = workspaceColors();

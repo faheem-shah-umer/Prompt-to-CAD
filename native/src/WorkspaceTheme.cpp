@@ -152,7 +152,10 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QToolButton#workDisclosure { padding:3px 0; color:@secondary@; }
         QLabel#activitySummary, QLabel#livePhase { color:@secondary@; }
         QScrollArea#workActivityScroll, QScrollArea#workActivityScroll > QWidget { background:transparent; border:0; padding:0; }
-        QFrame#changeCard { background:transparent; border:0; border-top:1px solid @border@; border-radius:0; padding:4px; }
+        QFrame#changeCard, QFrame#designNotesCard { background:transparent; border:0; border-top:1px solid @border@; border-radius:0; padding:4px; }
+        QLabel#designNotesHeading { font-weight:600; }
+        QLabel#designNoteOwner { color:@secondary@; font-size:12px; padding-top:4px; }
+        QToolButton#designNoteEdit { color:@link@; padding:2px 0; }
         QFrame#notificationHost { background:transparent; }
         QFrame#notificationCard[severity="error"] { border-left:2px solid @danger@; }
         QFrame#notificationCard[severity="warning"] { border-left:2px solid @warning@; }
