@@ -67,11 +67,20 @@ int main(int argc, char **argv) {
         if (demoCapture) settings.setValue("v2/onboardingDone", true);
     }
     auto workspace = parser.value("workspace");
+    auto python = parser.value("python");
+    // Installed layout: <install>/app/PromptToCAD.exe beside <install>/python and <install>/backend.
+    // Lets the exe start without the shortcut's --workspace/--python arguments.
+    const QDir installRoot(QCoreApplication::applicationDirPath() + "/..");
+    const auto bundledPython = installRoot.filePath("python/python.exe");
+    if (workspace.isEmpty() && python.isEmpty() && QFileInfo::exists(bundledPython) &&
+        QFileInfo::exists(installRoot.filePath("backend/v2/service.py"))) {
+        workspace = installRoot.absolutePath();
+        python = QDir::cleanPath(bundledPython);
+    }
     if (workspace.isEmpty()) workspace = QDir::currentPath();
     workspace = QDir(workspace).absolutePath();
     const auto shaders = QDir(QCoreApplication::applicationDirPath()).filePath("resources/Shaders");
     if (QFileInfo::exists(shaders)) qputenv("CSF_ShadersDirectory", shaders.toUtf8());
-    auto python = parser.value("python");
     if (python.isEmpty()) python = QDir(workspace).filePath(".venv/Scripts/python.exe");
     app.setStyle("Fusion");
     if ((parser.isSet("smoke-test") || demoCapture) && qEnvironmentVariableIsSet("CAD_UI_THEME"))

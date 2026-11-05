@@ -1012,6 +1012,10 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         chatLoading->finish();
         Q_EMIT workspaceReady();
         showError(error);
+        if (!smoke)
+            QMessageBox::critical(this, "Prompt to CAD",
+                                  error + "\n\nIf you installed Prompt to CAD, start it from its Start-menu "
+                                          "shortcut or reinstall it.");
     });
     connect(rpc, &RpcClient::ready, this, [this, openPath] {
         call("v2.state", {}, [this, openPath](auto r) {
