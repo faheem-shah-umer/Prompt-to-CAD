@@ -97,10 +97,10 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QPushButton:checked, QToolButton:checked { background:@selected@; }
         QPushButton:focus[keyboardFocus="true"], QToolButton:focus[keyboardFocus="true"] { border-color:@focus@; }
         QPushButton:disabled, QToolButton:disabled { color:@disabled@; background:transparent; border-color:transparent; }
-        QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect, QPushButton#onboardingNext, QPushButton#onboardingClaudeConnect, QPushButton#claudeConnect { color:@onAction@; background:@action@; font-weight:600; }
-        QPushButton#primaryButton:hover:enabled, QPushButton#connectChatGPT:hover:enabled, QPushButton#onboardingConnect:hover:enabled, QPushButton#onboardingNext:hover:enabled, QPushButton#onboardingClaudeConnect:hover:enabled, QPushButton#claudeConnect:hover:enabled { background:@actionHover@; }
-        QPushButton#primaryButton:pressed:enabled, QPushButton#connectChatGPT:pressed:enabled, QPushButton#onboardingConnect:pressed:enabled, QPushButton#onboardingNext:pressed:enabled, QPushButton#onboardingClaudeConnect:pressed:enabled, QPushButton#claudeConnect:pressed:enabled { background:@actionPressed@; }
-        QPushButton#primaryButton:disabled, QPushButton#connectChatGPT:disabled, QPushButton#onboardingConnect:disabled, QPushButton#onboardingNext:disabled, QPushButton#onboardingClaudeConnect:disabled, QPushButton#claudeConnect:disabled { color:@disabled@; background:@selected@; }
+        QPushButton#primaryButton, QPushButton#connectChatGPT, QPushButton#onboardingConnect, QPushButton#onboardingNext, QPushButton#onboardingClaudeCodeUse, QPushButton#claudeCodeUse, QPushButton#claudeConnect { color:@onAction@; background:@action@; font-weight:600; }
+        QPushButton#primaryButton:hover:enabled, QPushButton#connectChatGPT:hover:enabled, QPushButton#onboardingConnect:hover:enabled, QPushButton#onboardingNext:hover:enabled, QPushButton#onboardingClaudeCodeUse:hover:enabled, QPushButton#claudeCodeUse:hover:enabled, QPushButton#claudeConnect:hover:enabled { background:@actionHover@; }
+        QPushButton#primaryButton:pressed:enabled, QPushButton#connectChatGPT:pressed:enabled, QPushButton#onboardingConnect:pressed:enabled, QPushButton#onboardingNext:pressed:enabled, QPushButton#onboardingClaudeCodeUse:pressed:enabled, QPushButton#claudeCodeUse:pressed:enabled, QPushButton#claudeConnect:pressed:enabled { background:@actionPressed@; }
+        QPushButton#primaryButton:disabled, QPushButton#connectChatGPT:disabled, QPushButton#onboardingConnect:disabled, QPushButton#onboardingNext:disabled, QPushButton#onboardingClaudeCodeUse:disabled, QPushButton#claudeCodeUse:disabled, QPushButton#claudeConnect:disabled { color:@disabled@; background:@selected@; }
         QPushButton#providerCard { background:@raised@; border:1px solid @border@; border-radius:@popupRadius@px; padding:0; text-align:left; }
         QPushButton#providerCard:hover:enabled { background:@hover@; }
         QPushButton#providerCard:pressed:enabled { background:@pressed@; }
@@ -111,6 +111,9 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QLabel#providerTagline { color:@text@; }
         QLabel#providerDetail { color:@secondary@; font-size:12px; }
         QLabel#providerBadge { color:@link@; font-size:12px; font-weight:600; }
+        QPushButton#claudeMethod { padding:6px 14px; }
+        QPushButton#claudeMethod:checked { background:@selected@; border-color:@focus@; color:@text@; font-weight:600; }
+        QPushButton#claudeCodeStop { background:transparent; border-color:transparent; color:@link@; }
         QLabel#onboardingDot { background:@border@; border-radius:4px; min-width:8px; max-width:8px; min-height:8px; max-height:8px; }
         QLabel#onboardingDot[active="true"] { background:@action@; min-width:24px; max-width:24px; }
         QLabel#onboardingStatus, QLabel#onboardingClaudeRuntime { color:@secondary@; }

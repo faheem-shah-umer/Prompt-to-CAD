@@ -15,7 +15,8 @@ from backend.native.workspace import Workspace
 from backend.native.runtime_identity import RuntimeIdentity
 
 from .auth import Connections, provider_of
-from .claude_provider import CLAUDE_AGENT, ClaudeCodeRuntime, ClaudeProviderOptions, describe, discover_claude
+from .claude_provider import (CLAUDE_AGENT, ClaudeCodeRuntime, ClaudeProviderOptions, auth_status, describe,
+                              discover_claude, open_sign_in)
 from .cad_tools import TOOLS, TaskTools, ToolBridge, fingerprint
 from .projects import Projects
 from .provider import CODEX_AGENT, CodexAppServer, CodexProviderOptions, discover_executable
@@ -49,6 +50,7 @@ class WorkspaceV2(Workspace):
         self.token_usage = {}
         self.capability_cache = {}
         self.note_cache = {}
+        self.claude_code_auth = None
         self.provider_adapters: dict[str, ProviderOptions] = {
             "codex": CodexProviderOptions(),
             "claude": ClaudeProviderOptions(),
@@ -87,7 +89,8 @@ class WorkspaceV2(Workspace):
         provider_id = provider_id or (provider_of(account["mode"]) if account else self.provider_id)
         token = account.get("access_token", account.get("api_key")) if account else None
         if provider_id == "claude":
-            return ClaudeCodeRuntime(home, self.configuration.get("claude_path") or None, token, "anthropic", mcp)
+            mode = account["mode"] if account and account.get("mode") == "claude_code" else "anthropic"
+            return ClaudeCodeRuntime(home, self.configuration.get("claude_path") or None, token, mode, mcp)
         return CodexAppServer(home, self.configuration.get("codex_path") or None, token,
                               account["mode"] if account else "chatgpt", mcp)
 
@@ -193,9 +196,26 @@ class WorkspaceV2(Workspace):
         self.startup_notice = ""
         return self.state()
 
+    def claude_code_status(self, refresh=False):
+        """Claude Code's own sign-in state, cached briefly because it runs a subprocess."""
+        cached = self.claude_code_auth
+        if cached and not refresh and time.monotonic() - cached[0] < 30:
+            return copy.deepcopy(cached[1])
+        report = auth_status(discover_claude(self.configuration.get("claude_path")))
+        self.claude_code_auth = (time.monotonic(), report)
+        return copy.deepcopy(report)
+
     def state(self):
         provider = self.connections.status()
         active = provider.get("active") or {}
+        if active.get("connection") == "claude_code" and active.get("connected"):
+            report = self.claude_code_status()
+            provider["claude_code"] = report
+            if not report["signed_in"]:
+                provider["state"] = "disconnected"
+                provider["error"] = report["message"]
+        elif self.claude_code_auth:
+            provider["claude_code"] = copy.deepcopy(self.claude_code_auth[1])
         if (
             active.get("connected")
             and active.get("id") == self.usage_account
@@ -567,6 +587,19 @@ class WorkspaceV2(Workspace):
             return self.connections.api_key(params["key"])
         if method == "provider.anthropic_key":
             return self.connections.anthropic_key(params["key"])
+        if method == "provider.claude_code":
+            report = self.claude_code_status(refresh=True)
+            if not report["installed"]:
+                raise WorkspaceError("Install Claude Code, then try again.", "runtime_missing")
+            self.connections.claude_code()
+            return self.state()
+        if method == "provider.claude_code_sign_in":
+            open_sign_in(discover_claude(self.configuration.get("claude_path")))
+            self.claude_code_auth = None
+            return {"opened": True}
+        if method == "provider.claude_code_status":
+            self.claude_code_status(refresh=True)
+            return self.state()
         if method == "provider.use":
             return self.connections.use_provider(str(params.get("provider_id", "")))
         if method == "provider.select":
@@ -810,6 +843,9 @@ class WorkspaceV2(Workspace):
                 "model_required",
             )
         account_id, account = self.connections.credential()
+        if account["mode"] == "claude_code" and not self.claude_code_status(refresh=True)["signed_in"]:
+            raise WorkspaceError("Claude Code is not signed in. Sign in from Settings → AI connection, then send again. "
+                                 "Your draft was retained.", "reauthorization_required")
         provider_id = self.provider_options.identity["id"]
         if params.get("provider_id", provider_id) != provider_id:
             raise WorkspaceError("The selected provider changed. Review the model and submit again.", "provider_changed")
@@ -952,7 +988,9 @@ class WorkspaceV2(Workspace):
             self.notify(
                 {
                     "stage": "connecting",
-                    "message": "Starting Claude Code · Anthropic API billing"
+                    "message": "Starting Claude Code · your Claude Code sign-in"
+                    if account["mode"] == "claude_code"
+                    else "Starting Claude Code · Anthropic API billing"
                     if provider_id == "claude"
                     else "Starting Codex App Server · "
                     + (
@@ -1169,6 +1207,11 @@ class WorkspaceV2(Workspace):
             "available": False,
             "message": "API billing is separate. View costs in the API usage dashboard.",
         }
+        if account["mode"] == "claude_code":
+            usage = {
+                "available": False,
+                "message": "Usage counts against the account Claude Code is signed in with. Check it with /usage in Claude Code.",
+            }
         if account["mode"] == "anthropic":
             usage = {
                 "available": False,

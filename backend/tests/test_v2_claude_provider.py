@@ -12,9 +12,10 @@ from backend.v2.claude_provider import ClaudeCodeRuntime, ClaudeProviderOptions,
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def runtime(events=(), secret="sk-ant-fixture-secret"):
+def runtime(events=(), secret="sk-ant-fixture-secret", mode="anthropic"):
     item = ClaudeCodeRuntime.__new__(ClaudeCodeRuntime)
     item.secret = secret
+    item.mode = mode
     item.session_id = "fixture-session"
     item.process = None
     item.process_tree = None

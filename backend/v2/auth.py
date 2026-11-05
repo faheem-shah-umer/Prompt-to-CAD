@@ -27,11 +27,22 @@ SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use
 ANTHROPIC = "https://api.anthropic.com/v1"
 ANTHROPIC_VERSION = "2023-06-01"
 CLAUDE_USAGE_URL = "https://console.anthropic.com/settings/usage"
-PROVIDERS = {"codex": ("chatgpt", "api"), "claude": ("anthropic",)}
+CLAUDE_PLAN_USAGE_URL = "https://claude.ai/settings/usage"
+CLAUDE_CODE_ACCOUNT = "claude-code"
+PROVIDERS = {"codex": ("chatgpt", "api"), "claude": ("anthropic", "claude_code")}
 
 
 def provider_of(mode):
-    return "claude" if mode == "anthropic" else "codex"
+    return "claude" if mode in ("anthropic", "claude_code") else "codex"
+
+
+def usable(account):
+    """A connection the app may use now. Claude Code sign-ins hold no secret here."""
+    if not account:
+        return False
+    if account.get("mode") == "claude_code":
+        return not account.get("disabled", False)
+    return bool(account.get("access_token") or account.get("api_key"))
 
 
 def anthropic_headers(key):
@@ -223,7 +234,7 @@ class Connections:
                 "workspace": a.get("workspace", "Workspace not reported"),
                 "connection": a["mode"],
                 "provider_id": provider_of(a["mode"]),
-                "connected": bool(a.get("access_token") or a.get("api_key")),
+                "connected": usable(a),
                 "plan_enabled": "chatgpt.tokens.use.direct" in a.get("scopes", []),
             }
             for key, a in data["accounts"].items()
@@ -244,6 +255,8 @@ class Connections:
                 )
             elif active["connection"] == "anthropic":
                 billing = "Anthropic API billing (separate)"
+            elif active["connection"] == "claude_code":
+                billing = "Whatever Claude Code is signed in with (your Claude plan or key)"
             else:
                 billing = "API billing (separate)"
         elif active:
@@ -254,6 +267,7 @@ class Connections:
             for name, modes in PROVIDERS.items()
         }
         claude = provider_id == "claude"
+        local = bool(active and active["connection"] == "claude_code")
         return {
             "accounts": accounts,
             "preferred": data.get("preferred"),
@@ -269,17 +283,21 @@ class Connections:
             else "ready"
             if active
             and active["connected"]
-            and (active["connection"] in ("api", "anthropic") or active["plan_enabled"])
+            and (active["connection"] in ("api", "anthropic", "claude_code") or active["plan_enabled"])
             else "disconnected",
             "error": self.last_error,
             "billing": billing,
             "usage": {
                 "available": False,
-                "message": "Anthropic API usage is billed per token. View costs in the Claude Console."
+                "message": "Usage counts against the Claude plan or key Claude Code is signed in with."
+                if local
+                else "Anthropic API usage is billed per token. View costs in the Claude Console."
                 if claude
                 else "Allowance unavailable from this connection. Manage usage in ChatGPT Settings.",
             },
-            "usage_url": CLAUDE_USAGE_URL
+            "usage_url": CLAUDE_PLAN_USAGE_URL
+            if local
+            else CLAUDE_USAGE_URL
             if claude
             else "https://platform.openai.com/usage"
             if active and active["connection"] == "api"
@@ -576,6 +594,22 @@ class Connections:
             self.model_cache.pop(key_id, None)
         return self.status()
 
+    def claude_code(self):
+        """Use the installed Claude Code's own sign-in. Nothing secret is read or stored."""
+        with self.vault.lock, revision_lock(self.vault.folder):
+            data = self.vault.read()
+            data["accounts"][CLAUDE_CODE_ACCOUNT] = {
+                "mode": "claude_code",
+                "email": "Claude Code sign-in",
+                "name": "Your Claude Code sign-in",
+                "workspace": "The account Claude Code is signed in with on this PC",
+            }
+            data["active"] = CLAUDE_CODE_ACCOUNT
+            data["provider"] = "claude"
+            self.vault.write(data)
+            self.model_cache.pop(CLAUDE_CODE_ACCOUNT, None)
+        return self.status()
+
     def use_provider(self, provider_id):
         """Switch the active connection to the most recent saved credential for a provider."""
         if provider_id not in PROVIDERS:
@@ -584,16 +618,15 @@ class Connections:
             data = self.vault.read()
             accounts = data["accounts"]
 
-            def usable(key):
+            def candidate(key):
                 account = accounts.get(key) if key else None
-                return bool(account and account["mode"] in PROVIDERS[provider_id]
-                            and (account.get("access_token") or account.get("api_key")))
+                return bool(account and account["mode"] in PROVIDERS[provider_id] and usable(account))
 
-            choice = data.get("active") if usable(data.get("active")) else None
-            if not choice and provider_id == "codex" and usable(data.get("preferred")):
+            choice = data.get("active") if candidate(data.get("active")) else None
+            if not choice and provider_id == "codex" and candidate(data.get("preferred")):
                 choice = data["preferred"]
             if not choice:
-                choice = next((key for key in reversed(list(accounts)) if usable(key)), None)
+                choice = next((key for key in reversed(list(accounts)) if candidate(key)), None)
             data["provider"] = provider_id
             data["active"] = choice
             self.vault.write(data)
@@ -615,9 +648,7 @@ class Connections:
         with self.vault.lock, revision_lock(self.vault.folder):
             data = self.vault.read()
             account = data["accounts"].get(data["active"])
-            if not account or not (
-                account.get("access_token") or account.get("api_key")
-            ):
+            if not usable(account):
                 raise WorkspaceError(
                     "Connect Codex or Claude in Settings \u2192 AI connection.",
                     "not_connected",
@@ -691,6 +722,15 @@ class Connections:
                 (not refresh and requested - cached[0] < 600) or cached[0] >= requested
             ):
                 return copy.deepcopy(cached[1])
+            if account["mode"] == "claude_code":
+                # Claude Code resolves these aliases to the newest model the sign-in can use.
+                models = [{"id": alias, "name": name, "access": "Available models depend on your Claude Code sign-in",
+                           "inputModalities": ["text", "image"]}
+                          for alias, name in (("sonnet", "Sonnet (latest)"), ("opus", "Opus (latest)"),
+                                              ("haiku", "Haiku (latest)"))]
+                result = {"models": models, "billing": self.status()["billing"]}
+                self.model_cache[key] = (time.perf_counter(), result)
+                return copy.deepcopy(result)
             if account["mode"] == "anthropic":
                 result = {"models": self.anthropic_models(account["api_key"]), "billing": self.status()["billing"]}
                 self.model_cache[key] = (time.perf_counter(), result)
@@ -793,6 +833,8 @@ class Connections:
                 account["revocation_confirmed"] = confirmed
                 for key in ("access_token", "refresh_token", "id_token", "api_key"):
                     account.pop(key, None)
+                if account["mode"] == "claude_code":
+                    account["disabled"] = True
             if data.get("active") == selected:
                 data["active"] = None
             self.model_cache.pop(selected, None)
@@ -800,7 +842,9 @@ class Connections:
         return {
             **self.status(),
             "remote_revocation_confirmed": confirmed,
-            "message": "Disconnected. The key was removed from this computer; revoke it in the Claude Console if it is no longer needed."
+            "message": "Prompt to CAD stopped using Claude Code. You stay signed in to Claude Code itself."
+            if account and account["mode"] == "claude_code"
+            else "Disconnected. The key was removed from this computer; revoke it in the Claude Console if it is no longer needed."
             if account and account["mode"] == "anthropic"
             else "Disconnected."
             if confirmed
