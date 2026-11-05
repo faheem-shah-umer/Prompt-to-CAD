@@ -2,6 +2,7 @@
 #include "WorkspaceTheme.h"
 #include <QSet>
 #include "MeshSource.h"
+#include "LoadingIndicator.h"
 #include <QJsonDocument>
 #include <MeshVS_SelectionModeFlags.hxx>
 #include <MeshVS_DisplayModeFlags.hxx>
@@ -110,6 +111,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         QMap<QString, Handle(AIS_Shape)> next;
         QMap<QString, Handle(MeshVS_Mesh)> nextMeshes;
         for (const auto& item : document.value("components").toArray()) {
+            LoadingIndicator::keepAlive();
             const auto part = item.toObject();
             const auto id = part.value("instance_id").toString();
             const auto projectDir = QFileInfo(document.value("project_dir").toString()).canonicalFilePath();
@@ -161,7 +163,7 @@ void CadView::setDocument(const QJsonObject& incoming, bool fit) {
         for (auto it=shapes.cbegin();it!=shapes.cend();++it) existing.insert(it.key());
         for (auto it=meshes.cbegin();it!=meshes.cend();++it) existing.insert(it.key());
         hidden.intersect(existing);
-        for (const auto& id : existing) if (!hidden.contains(id)) displayInstance(id);
+        for (const auto& id : existing) if (!hidden.contains(id)) { LoadingIndicator::keepAlive(); displayInstance(id); }
         buildAnnotations();
         setSelectionMode(mode);
         currentSelection = {};

@@ -1086,9 +1086,14 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
     redoAction->setEnabled(false);
     auto *indicator = method == "v2.task" ? nullptr
         : method.startsWith("v2.conversation.") ? chatLoading : workspaceLoading;
-    if (indicator) indicator->begin(loadingMessage(method));
-    rpc->call(method, params, [this, done, method, params, indicator](const QJsonObject &result, const QString &failure) {
-        if (indicator) indicator->finish();
+    const int loadingToken = indicator ? indicator->begin(loadingMessage(method)) : -1;
+    rpc->call(method, params, [this, done, method, params, indicator, loadingToken](const QJsonObject &result, const QString &failure) {
+        // Rendering the reply (model load, chat rebuild) is part of loading: keep the
+        // badge visible and animated until it is done, then hide it.
+        struct FinishLoading {
+            LoadingIndicator *indicator; int token;
+            ~FinishLoading() { if (indicator) indicator->finish(token); }
+        } finishLoading{indicator, loadingToken};
         busy = false;
         taskRunning = false;
         updateSendControl();
@@ -2027,7 +2032,9 @@ void WorkspaceWindow::smokeCheck() {
         QJsonObject{{"role", "user"}, {"content", "Move the selected fixture 5 mm along X."}},
         QJsonObject{{"role", "assistant"}, {"task_id", "ui-fixture"}, {"elapsed_seconds", 76.0},
                     {"activity", QJsonArray{QJsonObject{{"message", "Inspected the selection"}}, QJsonObject{{"message", "Validated the candidate geometry"}}}},
-                    {"content", "Moved the selected fixture **5 mm along X**.\n\nThe other components remain unchanged.\n\n- Geometry validation passed.\n- The accepted revision is saved."}}
+                    {"content", "Moved the selected fixture **5 mm along X**.\n\nThe other components remain unchanged.\n\n- Geometry validation passed.\n- The accepted revision is saved."},
+                    {"design_notes", QJsonArray{QJsonObject{{"id", "ui-fixture-note"}, {"instance_id", "ui-fixture-part"},
+                        {"component_name", "Fixture plate"}, {"text", "Keep 5 mm clearance to the clamp for tool access."}}}}}
     };
     fixtureConversation["token_usage"] = QJsonObject{{"totalTokens", 145041}, {"inputTokens", 144266}, {"outputTokens", 775}};
     state["conversation"] = fixtureConversation;
@@ -2051,6 +2058,11 @@ void WorkspaceWindow::smokeCheck() {
     const auto bubbles = chat->findChildren<QFrame *>("messageBubble");
     if (bubbles.size() != 2 || bubbles.first()->mapTo(chat, QPoint(0, 0)).x() <= bubbles.last()->mapTo(chat, QPoint(0, 0)).x()) {
         showError("Conversation alignment regression failed.");
+        return;
+    }
+    const auto noteCards = chat->findChildren<QFrame *>("designNotesCard");
+    if (noteCards.size() != 1 || !bubbles.last()->isAncestorOf(noteCards.first())) {
+        showError("Saved design notes must render inside the response that wrote them.");
         return;
     }
     auto *reply = bubbles.last()->findChild<QTextBrowser *>("messageText");

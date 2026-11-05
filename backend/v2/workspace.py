@@ -48,6 +48,7 @@ class WorkspaceV2(Workspace):
         self.usage_account = None
         self.token_usage = {}
         self.capability_cache = {}
+        self.note_cache = {}
         self.provider_adapters: dict[str, ProviderOptions] = {
             "codex": CodexProviderOptions(),
             "claude": ClaudeProviderOptions(),
@@ -237,7 +238,47 @@ class WorkspaceV2(Workspace):
             for message in result["conversation"].get("messages", []):
                 if message.get("attachments"):
                     message["attachments"] = [public(base, item) for item in message["attachments"]]
+                revision = (message.get("change") or {}).get("result_revision_id")
+                if message.get("role") == "assistant" and revision and self.document:
+                    notes = self.turn_design_notes(self.document.folder, revision)
+                    if notes:
+                        message["design_notes"] = notes
         return result
+
+    def turn_design_notes(self, folder, revision_id):
+        """Notes an agent turn added or changed, read from its immutable result revision and parent."""
+        from backend.native.documents import asset_path
+
+        key = (str(folder), revision_id)
+        if key in self.note_cache:
+            return copy.deepcopy(self.note_cache[key])
+
+        def snapshot(identity):
+            if not isinstance(identity, str) or not identity:
+                return {}
+            return json.loads(asset_path(folder, f"revisions/{identity}.json").read_text(encoding="utf-8"))
+
+        try:
+            after = snapshot(revision_id)
+            before = snapshot(after.get("parent_revision_id"))
+            earlier = {r.get("id"): r for r in before.get("engineering", []) if r.get("kind") == "note"}
+            names = {p.get("instance_id"): p.get("name") for p in after.get("components", [])}
+            notes = [
+                {
+                    "id": record.get("id"),
+                    "instance_id": record.get("instance_id"),
+                    "component_name": names.get(record.get("instance_id")) or "Component",
+                    "text": record.get("text", ""),
+                    "status": record.get("status", "current"),
+                }
+                for record in after.get("engineering", [])
+                if record.get("kind") == "note"
+                and (earlier.get(record.get("id")) or {}).get("text") != record.get("text")
+            ]
+        except (OSError, ValueError, TypeError, AttributeError, WorkspaceError):
+            notes = []  # A missing or foreign revision simply has no notes to show.
+        self.note_cache[key] = notes
+        return copy.deepcopy(notes)
 
     def capability_key(self, account_id):
         provider_id = self.provider_id
