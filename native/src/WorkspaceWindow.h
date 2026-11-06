@@ -94,6 +94,8 @@ class WorkspaceWindow : public QMainWindow {
     void smokeCheck();
     void captureDemo();
     void renderChat();
+    bool canNavigate() const;
+    bool displayingTaskConversation() const;
     void receiveAssistant(const QJsonObject &event, bool complete);
     void updateTask(const QString &status, const QString &message);
     bool focusOpenDialog();
@@ -136,7 +138,8 @@ class WorkspaceWindow : public QMainWindow {
     QLabel *activity, *title, *saved, *conversationTitle, *modelSummary = nullptr;
     QPointer<QDialog> settingsDialog, onboardingDialog;
     QPointer<QFrame> effortPopover;
-    QString activeTaskId;
+    QString activeTaskId, taskConversationId;
+    QJsonObject taskCandidate;
     QComboBox *models, *selectionMode;
     QString effortSelection;
     QString automaticModelContext;
@@ -155,5 +158,6 @@ class WorkspaceWindow : public QMainWindow {
     int settingsSaves = 0;
     bool taskRunning = false, modelsLoading = false, refreshScheduled = false;
     bool busy = false, smoke = false, viewerFailed = false, loading = false;
+    bool navigationBusy = false;
     bool imagePreflight = false;
 };

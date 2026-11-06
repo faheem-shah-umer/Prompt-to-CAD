@@ -839,7 +839,7 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     connect(treeFilter, &QLineEdit::textChanged, this, [this] { filterModels(); });
     connect(search, &QLineEdit::textChanged, this, [this] { filterProjects(); });
     connect(projects, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int) {
-        if (busy || loading || (QApplication::keyboardModifiers() & (Qt::ControlModifier|Qt::ShiftModifier)))
+        if (!canNavigate() || loading || (QApplication::keyboardModifiers() & (Qt::ControlModifier|Qt::ShiftModifier)))
             return;
         auto pid = item->data(0, Qt::UserRole).toString();
         auto cid = item->data(0, Qt::UserRole + 1).toString();
@@ -944,11 +944,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         auto taskId = event.value("task_id").toString();
         if (!taskId.isEmpty() && taskId != activeTaskId)
             return;
-        if (!taskId.isEmpty() &&
-            event.value("conversation_id") != state.value("conversation").toObject().value("conversation_id"))
-            return;
+        // Task progress is always recorded; only the conversation that owns the task shows it.
+        const bool shown = taskId.isEmpty() ||
+            event.value("conversation_id") == state.value("conversation").toObject().value("conversation_id");
         if (stage == "usage") {
-            if (event.contains("tokens")) {
+            if (event.contains("tokens") && shown) {
                 auto c = state.value("conversation").toObject();
                 c["token_usage"] = event.value("tokens");
                 state["conversation"] = c;
@@ -995,8 +995,11 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
         } else if (stage == "assistant_delta" || stage == "assistant_message") {
             receiveAssistant(event, stage == "assistant_message");
         } else if (stage == "candidate") {
-            viewer->setDocument(event.value("document").toObject(), false);
-            saved->setText("Candidate preview · not accepted");
+            taskCandidate = event.value("document").toObject();
+            if (shown) {
+                viewer->setDocument(taskCandidate, false);
+                saved->setText("Candidate preview · not accepted");
+            }
         } else if (stage == "connection") {
             activity->setText(event.value("message").toString());
             if (event.value("provider_status").isObject()) {
@@ -1076,10 +1079,39 @@ void WorkspaceWindow::showError(const QString &message) {
     if (smoke)
         QApplication::exit(2);
 }
+namespace {
+// Requests that only change which project or conversation is shown. They may run while an
+// agent task continues in the background (the backend accepts the same set).
+const QStringList backgroundNavigation{"v2.state", "v2.project.open", "v2.project.create", "v2.conversation.open",
+                                       "v2.conversation.new", "v2.document.open", "v2.projects.refresh"};
+}
+bool WorkspaceWindow::canNavigate() const { return (!busy || taskRunning) && !navigationBusy; }
+bool WorkspaceWindow::displayingTaskConversation() const {
+    return !taskConversationId.isEmpty() &&
+           state.value("conversation").toObject().value("conversation_id").toString() == taskConversationId;
+}
 void WorkspaceWindow::call(const QString &method, QJsonObject params, std::function<void(QJsonObject)> done) {
-    if (busy) {
-        showError("A task is running. Stop it before changing the document or "
-                  "conversation.");
+    if (taskRunning && method != "v2.task" && backgroundNavigation.contains(method)) {
+        if (navigationBusy) return;
+        navigationBusy = true;
+        auto *indicator = method.startsWith("v2.conversation.") ? chatLoading : workspaceLoading;
+        const int loadingToken = indicator->begin(loadingMessage(method));
+        rpc->call(method, params, [this, done, indicator, loadingToken](const QJsonObject &result, const QString &failure) {
+            struct FinishLoading {
+                LoadingIndicator *indicator; int token;
+                ~FinishLoading() { indicator->finish(token); }
+            } finishLoading{indicator, loadingToken};
+            navigationBusy = false;
+            if (!failure.isEmpty()) { showError(failure); return; }
+            if (result.contains("catalog")) showState(result);
+            if (done) done(result);
+        });
+        return;
+    }
+    if (busy || navigationBusy) {
+        showError(taskRunning ? "A task is running in the background. You can open other conversations and "
+                                "projects; stop it or wait before changing documents."
+                              : "Wait for the current operation to finish.");
         return;
     }
     busy = true;
@@ -1103,10 +1135,12 @@ void WorkspaceWindow::call(const QString &method, QJsonObject params, std::funct
         updateSendControl();
         refreshConnectionControls();
         if (!failure.isEmpty()) {
-            if (method == "v2.task") {
+            if (method == "v2.task" && (taskConversationId.isEmpty() || displayingTaskConversation())) {
+                // Return the draft only to the conversation it was written in.
                 if (composer->toPlainText().isEmpty()) composer->setPlainText(params.value("prompt").toString());
                 restoreSubmittedAttachments();
             }
+            if (method == "v2.task") { taskConversationId.clear(); taskCandidate = {}; }
             activeTaskId.clear();
             pendingUser.clear();
             liveAnswer.clear();
@@ -1133,8 +1167,8 @@ void WorkspaceWindow::revealConversation() {
 }
 void WorkspaceWindow::newConversation() {
     revealConversation();
-    if (busy) {
-        activity->setText("Wait for the current task, or stop it before starting another conversation.");
+    if (!canNavigate()) {
+        activity->setText("Wait for the current operation to finish before starting another conversation.");
         return;
     }
     if (focusOpenDialog()) return;
@@ -1149,7 +1183,7 @@ void WorkspaceWindow::newConversation() {
     });
 }
 void WorkspaceWindow::openConversation(const QString &projectId, const QString &conversationId) {
-    if (busy || projectId.isEmpty() || conversationId.isEmpty()) return;
+    if (!canNavigate() || projectId.isEmpty() || conversationId.isEmpty()) return;
     setPanelVisible("conversation", true);
     call("v2.conversation.open", {{"project_id", projectId}, {"conversation_id", conversationId}},
          [this](auto) { revealConversation(); Q_EMIT conversationOpened(); });
@@ -1170,7 +1204,7 @@ void WorkspaceWindow::openNativeProject() {
     if (!path.isEmpty()) call("v2.open_native", {{"path", path}});
 }
 void WorkspaceWindow::newProject() {
-    if (busy || focusOpenDialog())
+    if (!canNavigate() || focusOpenDialog())
         return;
     auto *dialog = new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -1373,6 +1407,11 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                        connection.value("state") == "ready" ? "Select geometry or send a design request."
                                                             : "Sign in from Settings to start a CAD task.");
     }
+    if (changed && taskRunning && displayingTaskConversation() && !taskCandidate.isEmpty()) {
+        // Returning to a conversation whose task is still running: show its latest candidate again.
+        viewer->setDocument(taskCandidate, false);
+        saved->setText("Candidate preview · not accepted");
+    }
     updateSendControl();
     loading = false;
     refreshConnectionControls();
@@ -1423,6 +1462,10 @@ QString WorkspaceWindow::takeComposerText() {
     return prompt;
 }
 void WorkspaceWindow::submit() {
+    if (taskRunning && !displayingTaskConversation()) {
+        notify("A task is running in another conversation. Your draft is kept; send it when that task finishes.", "info");
+        return;
+    }
     if (busy || (composer->toPlainText().trimmed().isEmpty() && draftAttachments.isEmpty())) return;
     if (state.value("conversation").toObject().isEmpty()) { notify("Create or open a conversation before sending a request.", "info"); return; }
     if (state.value("provider").toObject().value("state") != "ready") { account(); return; }
@@ -1440,6 +1483,8 @@ void WorkspaceWindow::submit() {
 }
 void WorkspaceWindow::startAgentTask(QJsonObject params) {
     activeTaskId = params.value("task_id").toString();
+    taskConversationId = state.value("conversation").toObject().value("conversation_id").toString();
+    taskCandidate = {};
     taskAgent = state.value("runtime").toObject().value("agent").toObject();
     currentActivity.clear();
     pendingUser = takeComposerText();
@@ -1448,7 +1493,7 @@ void WorkspaceWindow::startAgentTask(QJsonObject params) {
     taskClock.restart(); updateTask("connecting", "Preparing the document, selection and reference images.");
     QTimer::singleShot(0, this, &WorkspaceWindow::renderChat);
     call("v2.task", params, [this](auto) {
-        pendingUser.clear(); liveAnswer.clear(); activeTaskId.clear();
+        pendingUser.clear(); liveAnswer.clear(); activeTaskId.clear(); taskConversationId.clear(); taskCandidate = {};
         submittedAttachments = {}; submittedDraftAttachments = {};
     });
 }

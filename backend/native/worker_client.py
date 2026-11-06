@@ -24,6 +24,8 @@ class GeometryWorker:
         self.log = None
         self.responses = None
         self.runtime_identity = RuntimeIdentity("geometry_client")
+        # One request at a time on the worker pipe, even when a background task and the UI both need geometry.
+        self.call_lock = threading.RLock()
 
     def start(self):
         if self.process and self.process.poll() is None:
@@ -58,6 +60,10 @@ class GeometryWorker:
         threading.Thread(target=read, daemon=True).start()
 
     def call(self, method, params, cancel=None, progress=None, timeout=None):
+        with self.call_lock:
+            return self._call(method, params, cancel, progress, timeout)
+
+    def _call(self, method, params, cancel=None, progress=None, timeout=None):
         self.runtime_identity.ensure_current()
         self.start()
         request_id = uuid4().hex

@@ -26,9 +26,11 @@ class Workspace:
         self.notify = notify
         self.task_deadline = None
 
-    def geometry(self, method, params, timeout=None):
-        if self.task_deadline is not None:
-            remaining = self.task_deadline - time.monotonic()
+    def geometry(self, method, params, timeout=None, deadline=None):
+        # A background task passes its own deadline; other requests never inherit it.
+        deadline = deadline if deadline is not None else self.task_deadline
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise WorkspaceError(CAD_TURN_TIMEOUT_MESSAGE, "timeout")
             timeout = min(

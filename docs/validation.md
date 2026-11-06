@@ -2,6 +2,17 @@
 
 Development policy: run tests only when the user explicitly requests a task-specific test. Do not automatically run these commands after source edits. Historical results below describe earlier runs; generated validation reports/screenshots have been removed as part of the source-only cleanup.
 
+## Pending verification: faster validation, gear generation and background tasks
+
+Implemented without running tests or a rebuild:
+
+- `cad_validate` reuses a passing result while asset hashes, placements, names, colours and assembly structure are unchanged (asset integrity, scope and engineering records are re-checked every time). Full validation defaults to a 180 s budget (`CAD_VALIDATION_TIMEOUT`, or `time_budget_seconds` up to 600); an identical retry after a timeout is refused unless the budget grows. The MCP bridge waits up to 660 s so long results are returned.
+- The geometry worker's `verify` checks each unique solid asset once, measures each shape once during the STEP round-trip comparison (same comparisons and tolerances), and reports `step_timing` for solid checks, STEP export, re-import and comparison. Turn logs record them as `validation_*` phases.
+- Scripts can call `involute_gear(...)`, `planet_mesh_rotation(...)` and `ring_mesh_rotation(...)`, and place identical copies with `instances`, which share one geometry asset.
+- The Working dropdown shows the latest progress line only while collapsed. Agent tasks keep running while other conversations or projects are opened; document edits stay locked until the task finishes or is stopped.
+
+When requested, compare the same saved assembly before and after with identical solid validity, interference, dimension, placement and STEP round-trip checks, using the logged `step_timing`.
+
 ## Pending verification: project ordering and conversation polish
 
 Project sorting/timestamps, bulk model visibility/selection, shaded redisplay, per-message copying, provider-aware authors and the compact model trigger have been implemented and included in the explicitly requested local native rebuild. No tests or UI verification were run for these changes.

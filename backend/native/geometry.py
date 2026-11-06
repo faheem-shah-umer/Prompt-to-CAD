@@ -22,7 +22,7 @@ from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ColorType
 
 from backend.native.design_schema import Design
-from backend.native.modelling import Builder, measure, verify_assembly
+from backend.native.modelling import Builder, measure, precise_bounds, verify_assembly
 from .contracts import Command, WorkspaceError
 from .documents import asset_path
 from pydantic import TypeAdapter
@@ -72,7 +72,8 @@ def has_auxiliary_geometry(shape, solids):
     return False
 
 
-def store_shape(folder, shape, allow_compound=False):
+def check_solid(shape, allow_compound=False):
+    """Solid validity checks shared by asset storage and full validation; returns the measurement."""
     report = measure(shape)
     solids = shape.Solids()
     count_ok = 1 <= len(solids) <= 1000 if allow_compound else len(solids) == 1
@@ -82,6 +83,12 @@ def store_shape(folder, shape, allow_compound=False):
     # Reject loose faces/edges alongside solids, even for an explicit compound part.
     if has_auxiliary_geometry(shape, solids):
         raise WorkspaceError("Compound parts may contain valid solids only.")
+    return report
+
+
+def store_shape(folder, shape, allow_compound=False):
+    check_solid(shape, allow_compound)
+    solids = shape.Solids()
     folder = Path(folder)
     assets = folder / "assets"
     assets.mkdir(exist_ok=True)
@@ -526,26 +533,59 @@ def export_step(folder, snapshot, path):
     return path
 
 
-def verify_export(folder, snapshot, path):
+def round_trip_values(shape):
+    """The exact quantities the STEP round-trip compares, measured once per shape."""
+    return {"dimensions_mm": measure_dimensions(shape), "volume": shape.Volume(),
+            "solids": len(shape.Solids()), "center": shape.Center()}
+
+
+def measure_dimensions(shape):
+    (xmin, ymin, zmin), (xmax, ymax, zmax) = precise_bounds(shape)
+    return [xmax - xmin, ymax - ymin, zmax - zmin]
+
+
+def verify_export(folder, snapshot, path, timing=None):
     # Import into a disposable project directory; source and accepted assets stay immutable.
     import tempfile
+    timing = timing if timing is not None else {}
     with tempfile.TemporaryDirectory(dir=folder) as temporary:
+        started = time.perf_counter()
         imported = import_step(path, temporary)
+        timing["step_reimport_seconds"] = time.perf_counter() - started
+        started = time.perf_counter()
         expected = snapshot["components"]
         remaining = list(imported["components"])
+        # Identical instances share local geometry; world measurements are keyed by asset and placement.
+        local_shapes, expected_values = {}, {}
+
+        def expected_measure(part):
+            key = (part["asset_hash"], tuple(part["matrix"]))
+            if key not in expected_values:
+                if part["asset_hash"] not in local_shapes:
+                    local_shapes[part["asset_hash"]] = load_shape(folder, part)
+                shape = local_shapes[part["asset_hash"]].moved(cq.Location(transform(part["matrix"])))
+                expected_values[key] = round_trip_values(shape)
+            return expected_values[key]
+
+        actual_values = {}
+
+        def actual_measure(other):
+            identity = other["instance_id"]
+            if identity not in actual_values:
+                actual_values[identity] = round_trip_values(world_shape(temporary, other))
+            return actual_values[identity]
+
         for part in expected:
-            expected_shape = world_shape(folder, part)
+            mine = expected_measure(part)
             found = None
             for i, other in enumerate(remaining):
                 if part["name"] != other["name"]:
                     continue
-                actual_shape = world_shape(temporary, other)
-                if (part["name"] == other["name"] and
-                    all(abs(a - b) < 0.01 for a, b in zip(measure(expected_shape)["dimensions_mm"],
-                                                        measure(actual_shape)["dimensions_mm"])) and
-                    abs(expected_shape.Volume() - actual_shape.Volume()) < max(0.01, expected_shape.Volume() * 1e-5) and
-                    len(expected_shape.Solids()) == len(actual_shape.Solids()) and
-                    expected_shape.Center().sub(actual_shape.Center()).Length < 0.01 and
+                theirs = actual_measure(other)
+                if (all(abs(a - b) < 0.01 for a, b in zip(mine["dimensions_mm"], theirs["dimensions_mm"])) and
+                    abs(mine["volume"] - theirs["volume"]) < max(0.01, mine["volume"] * 1e-5) and
+                    mine["solids"] == theirs["solids"] and
+                    mine["center"].sub(theirs["center"]).Length < 0.01 and
                     all(abs(a - b) < 1 / 255 + 1e-5 for a, b in zip(part["color"], other["color"]))):
                     found = i
                     break
@@ -558,8 +598,9 @@ def verify_export(folder, snapshot, path):
         actual_groups = [n["name"] for n in imported.get("assembly_nodes", [])]
         if expected_groups and not all(actual_groups.count(name) >= expected_groups.count(name) for name in expected_groups):
             raise WorkspaceError("STEP round-trip lost assembly groups.", "verification_failed")
+        timing["comparison_seconds"] = time.perf_counter() - started
     return {"passed": True, "component_count": len(expected),
-            "solid_count": sum(len(load_shape(folder, p).Solids()) for p in expected), "names_colors_placements": True}
+            "solid_count": sum(expected_measure(p)["solids"] for p in expected), "names_colors_placements": True}
 
 
 def check_new_intersections(folder, before, after, command, *, shape_for=None, stats=None):

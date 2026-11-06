@@ -10,6 +10,7 @@ from uuid import uuid4
 import cadquery as cq
 from backend.native import geometry
 from backend.native.contracts import WorkspaceError
+from .gears import gear, planet_mesh_rotation, ring_mesh_rotation
 
 METHODS = set(
     "box sphere cylinder cone rect circle ellipse polygon polyline lineTo moveTo move line hLine vLine hLineTo vLineTo threePointArc radiusArc spline bezier close wire toPending workplane center transformed pushPoints rarray polarArray extrude revolve loft sweep hole cutBlind cutThruAll shell fillet chamfer union cut intersect add faces edges vertices wires solids vals val translate rotate mirror clean fuse makeBox makeCylinder makeSphere makeCone makeTorus makePolygon makeCircle makeEllipse makeLine makeThreePointArc makeSpline makeLoft extrudeLinear".split()
@@ -68,6 +69,9 @@ class Interpreter:
             "floor": math.floor,
             "ceil": math.ceil,
             "round": round,
+            "involute_gear": gear,
+            "planet_mesh_rotation": planet_mesh_rotation,
+            "ring_mesh_rotation": ring_mesh_rotation,
         }
         self.reserved = set(self.scope)
         self.steps = 0
@@ -185,7 +189,8 @@ class Interpreter:
             return result
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name):
-                if node.func.id not in ("range", "min", "max", "abs", "sin", "cos", "sqrt", "len", "str", "int", "tan", "atan2", "asin", "acos", "floor", "ceil", "round"):
+                if node.func.id not in ("range", "min", "max", "abs", "sin", "cos", "sqrt", "len", "str", "int", "tan", "atan2", "asin", "acos", "floor", "ceil", "round",
+                                        "involute_gear", "planet_mesh_rotation", "ring_mesh_rotation"):
                     raise WorkspaceError("This function is not in the CAD language.")
                 function = self.scope[node.func.id]
             elif isinstance(node.func, ast.Attribute):
@@ -235,6 +240,12 @@ class Interpreter:
 
 
 def run_source(source, parameters, inputs=None):
+    parts, colors, _ = run_script(source, parameters, inputs)
+    return parts, colors
+
+
+def run_script(source, parameters, inputs=None):
+    """Run a CAD script; returns parts, colours and optional instances of identical parts."""
     if not isinstance(source, str) or not source.strip() or len(source) > 50000:
         raise WorkspaceError("Use a CAD script of 1–50,000 characters.", "script_syntax")
     if not isinstance(parameters, dict) or len(parameters) > 64 or any(
@@ -250,7 +261,7 @@ def run_source(source, parameters, inputs=None):
         raise WorkspaceError(f"CAD script syntax error at line {error.lineno}: {error.msg}", "script_syntax") from None
     except (KeyError, AttributeError, TypeError, ValueError, IndexError) as error:
         raise WorkspaceError("CAD script failed: " + str(error), "script_failed") from None
-    return interpreter.scope.get("parts"), interpreter.scope.get("colors", {})
+    return interpreter.scope.get("parts"), interpreter.scope.get("colors", {}), interpreter.scope.get("instances")
 
 
 def execute(folder, snapshot, source, parameters, instance_id=None, source_instance_ids=None):
@@ -258,9 +269,9 @@ def execute(folder, snapshot, source, parameters, instance_id=None, source_insta
 
     identities = source_instance_ids if source_instance_ids is not None else [instance_id] if instance_id else []
     sources = targets(snapshot, identities) if identities else []
-    outputs, colors = run_source(source, parameters, input_shapes(folder, snapshot, sources))
+    outputs, colors, instances = run_script(source, parameters, input_shapes(folder, snapshot, sources))
     return publish(folder, snapshot, sources, outputs, kind="replace" if sources else "create",
-                   parameters=parameters, source=source, colors=colors)
+                   parameters=parameters, source=source, colors=colors, instances=instances)
 
 
 def change_parameters(folder, snapshot, instance_id, values):
@@ -285,14 +296,20 @@ def change_parameters(folder, snapshot, instance_id, values):
     for label, old_id in old_names.items():
         target = copy.deepcopy(rebuilt_parts[fresh["output_names"][label]])
         current = lookup[old_id]
+        generated = definition.get("instance_matrices", {}).get(old_id)
         for key in ("matrix", "parent_id", "name", "color", "color_override"):
+            # An instance placement still at its generated value follows the new parameters.
+            if key == "matrix" and generated is not None and current.get("matrix") == generated:
+                continue
             if key in current:
                 target[key] = copy.deepcopy(current[key])
         target["instance_id"] = old_id
         replacements[old_id] = target
     candidate["components"] = [replacements.get(p["instance_id"], p) for p in candidate["components"]]
     candidate.setdefault("scripts", []).append({**copy.deepcopy(definition), "parameters": parameters,
-        "output_hashes": {identity: p["asset_hash"] for identity, p in replacements.items()}})
+        "output_hashes": {identity: p["asset_hash"] for identity, p in replacements.items()},
+        "instance_matrices": {identity: list(replacements[identity]["matrix"])
+                              for identity in definition.get("instance_matrices", {}) if identity in replacements}})
     from .definitions import stage
     stage(candidate, "parameters-" + uuid4().hex + ".cad.py", definition["source"], list(replacements), parameters)
     return candidate

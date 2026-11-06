@@ -15,7 +15,8 @@ def bridge_call(message):
     call = urllib.request.Request(
         os.environ["PROMPTCAD_TOOL_URL"], data=json.dumps(message).encode(), method="POST",
         headers={"Authorization": "Bearer " + os.environ["PROMPTCAD_TOOL_TOKEN"], "Content-Type": "application/json"})
-    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(call, timeout=120) as response:
+    # Must exceed the longest CAD tool budget (full validation may take up to 600 s) so results are returned.
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(call, timeout=660) as response:
         return json.load(response)
 
 

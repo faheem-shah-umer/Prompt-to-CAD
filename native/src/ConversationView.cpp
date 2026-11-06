@@ -395,20 +395,24 @@ void ConversationView::rebuild() {
                 latest->raise();
             });
             activity->setVisible(toggle->isChecked());
-            connect(toggle, &QToolButton::toggled, this, [this, key, activity, toggle](bool open) {
-                if (open) expanded.insert(key); else expanded.remove(key);
-                toggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-                activity->setVisible(open);
-            });
-            body->addWidget(toggle, 0, Qt::AlignLeft);
-            body->addWidget(activity);
+            // The latest progress line is the last activity entry: show it alone only while collapsed.
+            QLabel *phase = nullptr;
             if (message.value("working").toBool()) {
-                auto *phase = new QLabel(message.value("phase").toString(), bubble);
+                phase = new QLabel(message.value("phase").toString(), bubble);
                 phase->setObjectName("livePhase");
                 phase->setTextFormat(Qt::PlainText);
                 phase->setWordWrap(true);
-                body->addWidget(phase);
+                phase->setVisible(!toggle->isChecked());
             }
+            connect(toggle, &QToolButton::toggled, this, [this, key, activity, toggle, phase](bool open) {
+                if (open) expanded.insert(key); else expanded.remove(key);
+                toggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+                activity->setVisible(open);
+                if (phase) phase->setVisible(!open);
+            });
+            body->addWidget(toggle, 0, Qt::AlignLeft);
+            body->addWidget(activity);
+            if (phase) body->addWidget(phase);
         }
         const auto text = message.value("content").toString();
         if (!text.isEmpty() || message.value("working").toBool()) {

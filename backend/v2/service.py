@@ -45,7 +45,11 @@ def main():
     output_lock = threading.Lock()
     state_lock = threading.Lock()
     busy = False
+    task_busy = False
+    # An agent task runs on its own thread so navigation (opening other conversations or
+    # projects) stays responsive; the workspace decides which requests may run alongside it.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-service")
+    task_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-task")
 
     def send(message):
         with output_lock:
@@ -62,8 +66,8 @@ def main():
         projects_dir=project_folder,
     )
 
-    def respond(request):
-        nonlocal busy
+    def respond(request, task=False):
+        nonlocal busy, task_busy
         try:
             result = workspace.dispatch(request["method"], request.get("params", {}))
             reply = {"jsonrpc": "2.0", "id": request["id"], "result": result}
@@ -78,7 +82,10 @@ def main():
                 },
             }
         with state_lock:
-            busy = False
+            if task:
+                task_busy = False
+            else:
+                busy = False
             send(reply)
 
     try:
@@ -130,14 +137,21 @@ def main():
                     workspace.cancelled.set()
                     send({"jsonrpc": "2.0", "id": request["id"], "result": {}})
                     break
+                task = method == "v2.task"
                 with state_lock:
-                    if busy:
+                    if (task_busy or busy) if task else busy:
                         raise WorkspaceError(
                             "Another task is running. Wait or cancel it first.", "busy"
                         )
-                    busy = True
-                    workspace.cancelled.clear()
-                executor.submit(respond, request)
+                    if task:
+                        task_busy = True
+                        workspace.cancelled.clear()
+                    else:
+                        busy = True
+                        if not task_busy:
+                            # Never clear a running task's cancellation from a navigation request.
+                            workspace.cancelled.clear()
+                (task_executor if task else executor).submit(respond, request, task)
             except Exception as error:
                 send(
                     {
@@ -153,6 +167,7 @@ def main():
     finally:
         workspace.cancelled.set()
         executor.shutdown(wait=True, cancel_futures=True)
+        task_executor.shutdown(wait=True, cancel_futures=True)
         workspace.connections.cancel_login()
         workspace.worker.close()
 

@@ -27,6 +27,17 @@ INSTRUCTIONS = (
     Path(__file__).with_name("CAD_INSTRUCTIONS.md").read_text(encoding="utf-8")
 )
 
+# Requests that only change which project/conversation is shown; they may run while a task works.
+BACKGROUND_NAVIGATION = {
+    "v2.state",
+    "v2.project.open",
+    "v2.project.create",
+    "v2.conversation.open",
+    "v2.conversation.new",
+    "v2.document.open",
+    "v2.projects.refresh",
+}
+
 
 class WorkspaceV2(Workspace):
     def __init__(
@@ -384,16 +395,18 @@ class WorkspaceV2(Workspace):
             self.application_runtime.verify_peer(worker, "geometry")
             return {"backend": self.application_runtime.report(private=True), "geometry": worker}
         if method.startswith("v2.") and method != "v2.state":
-            if self.active_task:
+            if self.active_task and method not in BACKGROUND_NAVIGATION:
                 raise WorkspaceError(
-                    "Wait for the active task or stop it before changing projects.",
+                    "A task is running in the background. You can open other conversations and projects; "
+                    "wait for it or stop it before changing documents.",
                     "busy",
                 )
+            if method == "v2.task":
+                return self.dispatch_task(params)
             with self.projects.write_lock():
                 if (
                     method
                     in {
-                        "v2.task",
                         "v2.command",
                         "v2.command_batch",
                         "v2.script",
@@ -408,24 +421,33 @@ class WorkspaceV2(Workspace):
                     and self.document
                 ):
                     with revision_lock(self.document.folder / ".task-lock"):
-                        try:
-                            return self._dispatch(method, params)
-                        except WorkspaceError as error:
-                            if method == "v2.task":
-                                self.emit(
-                                    {
-                                        "stage": "task_state",
-                                        "state": "usage_limit"
-                                        if error.code == "usage_limit"
-                                        else "cancelled"
-                                        if error.code == "cancelled"
-                                        else "failed",
-                                        "message": str(error),
-                                    }
-                                )
-                            raise
+                        return self._dispatch(method, params)
                 return self._dispatch(method, params)
         return self._dispatch(method, params)
+
+    def dispatch_task(self, params):
+        # Capture the submitting project and document: the user may open others while the task runs.
+        with self.projects.write_lock():
+            project_id, document = self.project_id, self.document
+        try:
+            if document is None:
+                return self.run_task(params, project_id, document)
+            # Only the task's own document is locked, so navigation and other projects stay available.
+            with revision_lock(document.folder / ".task-lock"):
+                return self.run_task(params, project_id, document)
+        except WorkspaceError as error:
+            self.emit(
+                {
+                    "stage": "task_state",
+                    "state": "usage_limit"
+                    if error.code == "usage_limit"
+                    else "cancelled"
+                    if error.code == "cancelled"
+                    else "failed",
+                    "message": str(error),
+                }
+            )
+            raise
 
     def _dispatch(self, method, params):
         self.task_deadline = None
@@ -815,16 +837,18 @@ class WorkspaceV2(Workspace):
             }
         raise WorkspaceError("Unknown V2 method: " + method, "method_not_found")
 
-    def run_task(self, params):
+    def run_task(self, params, project_id=None, document=None):
         self.application_runtime.ensure_current()
-        if not self.project_id:
+        if project_id is None and document is None:
+            project_id, document = self.project_id, self.document
+        if not project_id:
             raise WorkspaceError("Create a project first.")
-        if not self.projects.project(self.project_id).get("active_conversation_id"):
+        if not self.projects.project(project_id).get("active_conversation_id"):
             raise WorkspaceError(
                 "Start or open a conversation before sending a request.",
                 "conversation_required",
             )
-        chat = self.projects.conversation(self.project_id)
+        chat = self.projects.conversation(project_id)
         if chat.get("trashed") or chat.get("archived"):
             raise WorkspaceError(
                 "Restore or start a conversation before sending a request.",
@@ -849,7 +873,7 @@ class WorkspaceV2(Workspace):
         provider_id = self.provider_options.identity["id"]
         if params.get("provider_id", provider_id) != provider_id:
             raise WorkspaceError("The selected provider changed. Review the model and submit again.", "provider_changed")
-        state = self.projects.view(self.project_id)
+        state = self.projects.view(project_id)
         original = state["document"]
         if params.get("base_revision_id") != original.get("revision_id"):
             raise WorkspaceError(
@@ -857,7 +881,7 @@ class WorkspaceV2(Workspace):
                 "revision_conflict",
             )
         from .attachments import submission
-        attached = submission(self.projects.project_path(self.project_id), params.get("attachments", []))
+        attached = submission(self.projects.project_path(project_id), params.get("attachments", []))
         if attached:
             self.image_support(model)
         cached = self.capability_cache.get(self.capability_key(account_id))
@@ -873,7 +897,7 @@ class WorkspaceV2(Workspace):
         if bounds and time.monotonic() - bounds[0] < 600 and not bounds[1]:
             supports_images = False
         viewport = (
-            self.projects.reference(self.project_id, params["viewport_path"])
+            self.projects.reference(project_id, params["viewport_path"])
             if params.get("viewport_path")
             else None
         )
@@ -881,7 +905,7 @@ class WorkspaceV2(Workspace):
         if len(task_id) != 32 or any(c not in "0123456789abcdef" for c in task_id):
             raise WorkspaceError("Invalid task submission identifier.")
         if (
-            self.projects.project_path(self.project_id) / "tasks" / (task_id + ".json")
+            self.projects.project_path(project_id) / "tasks" / (task_id + ".json")
         ).exists():
             raise WorkspaceError(
                 "This submission has already been received. Reopen the conversation to inspect its outcome.",
@@ -905,14 +929,14 @@ class WorkspaceV2(Workspace):
         }
         tools = TaskTools(
             self,
-            self.document,
+            document,
             original,
             task["submitted_selection"],
-            self.project_id,
+            project_id,
             task["task_id"],
         )
         from .turn_logs import TurnLog
-        turn_log = TurnLog(self.projects.project_path(self.project_id), task, self.project_id,
+        turn_log = TurnLog(self.projects.project_path(project_id), task, project_id,
             notify=lambda message: self.notify({"stage": "logging", "message": message}))
         turn_log.event("backend_runtime_verified", self.application_runtime.report())
         tools.turn_log = turn_log
@@ -938,8 +962,8 @@ class WorkspaceV2(Workspace):
         conversation["tasks"].append(task["task_id"])
         if conversation["title"] == "New conversation":
             conversation["title"] = prompt[:60] if raw_prompt.strip() else "Image reference"
-        self.projects.save_conversation(self.project_id, conversation)
-        self.projects.task(self.project_id, task)
+        self.projects.save_conversation(project_id, conversation)
+        self.projects.task(project_id, task)
         self.active_task = task
         self.notify({
             "stage": "budget",
@@ -949,8 +973,9 @@ class WorkspaceV2(Workspace):
             "operations_remaining": 32,
         })
         bridge = None
-        self.task_deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
-        self.document.journal(
+        deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
+        tools.deadline = deadline
+        document.journal(
             "running",
             action=provider_id,
             task_id=task["task_id"],
@@ -1021,7 +1046,7 @@ class WorkspaceV2(Workspace):
                 )
                 raise
             conversation.update(provider_session=session, provider_account=account_id)
-            self.projects.save_conversation(self.project_id, conversation)
+            self.projects.save_conversation(project_id, conversation)
             context_data = tools.context()
             context = json.dumps(context_data, allow_nan=False)
             if not resuming:
@@ -1054,7 +1079,7 @@ class WorkspaceV2(Workspace):
                     turn_notify,
                     [str(path) for _, path in attached] + ([viewport["path"]] if viewport and supports_images and len(attached) < 8
                         and sum(path.stat().st_size for _, path in attached) + Path(viewport["path"]).stat().st_size <= 50 * 1024 * 1024 else []),
-                    timeout=max(1, self.task_deadline - time.monotonic()),
+                    timeout=max(1, deadline - time.monotonic()),
                     turn_options=turn_options,
                 )
             except Exception:
@@ -1089,14 +1114,14 @@ class WorkspaceV2(Workspace):
                         raise WorkspaceError(
                             "Task cancelled before acceptance.", "cancelled"
                         )
-                    self.document.commit(
+                    document.commit(
                         tools.candidate,
                         original.get("revision_id"),
                         summary=message[:3000] or task["agent"]["display_name"] + " CAD task",
                         commands=tools.commands,
                     )
                 task.update(
-                    result_revision_id=self.document.current()["revision_id"],
+                    result_revision_id=document.current()["revision_id"],
                     validation=report,
                     affected_components=[
                         p["instance_id"]
@@ -1152,7 +1177,7 @@ class WorkspaceV2(Workspace):
                     },
                 }
             )
-            self.document.journal("completed", task_id=task["task_id"])
+            document.journal("completed", task_id=task["task_id"])
         except Exception as error:
             task.update(
                 status="cancelled"
@@ -1174,7 +1199,7 @@ class WorkspaceV2(Workspace):
                     ),
                 }
             )
-            self.document.journal(task["status"], task_id=task["task_id"])
+            document.journal(task["status"], task_id=task["task_id"])
             raise
         finally:
             with tools.lock:
@@ -1187,10 +1212,17 @@ class WorkspaceV2(Workspace):
             if self.runtime:
                 self.runtime.close()
                 self.runtime = None
-            self.projects.task(self.project_id, task)
+            self.projects.task(project_id, task)
             conversation["token_usage"] = self.token_usage
-            self.projects.save_conversation(self.project_id, conversation)
-            self.task_deadline = None
+            try:
+                # Keep renames or archive changes made elsewhere while the task ran in the background.
+                stored = self.projects.conversation(project_id, conversation["conversation_id"])
+                for key in ("title", "archived", "trashed"):
+                    if key in stored:
+                        conversation[key] = stored[key]
+            except (OSError, ValueError, KeyError, WorkspaceError):
+                pass
+            self.projects.save_conversation(project_id, conversation)
             self.emit(
                 {
                     "stage": "task_state",

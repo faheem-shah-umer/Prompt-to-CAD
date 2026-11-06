@@ -13,6 +13,18 @@ TOLERANCE = 1e-5
 
 
 def measure(shape):
+    (xmin, ymin, zmin), (xmax, ymax, zmax) = precise_bounds(shape)
+    return {
+        "brep_valid": shape.isValid(),
+        "solid_count": len(shape.Solids()),
+        "volume_mm3": shape.Volume(tol=1e-8),
+        "dimensions_mm": [xmax - xmin, ymax - ymin, zmax - zmin],
+        "bounds_mm": [[xmin, ymin, zmin], [xmax, ymax, zmax]],
+    }
+
+
+def precise_bounds(shape):
+    """Exact BREP coordinate extrema, the bounds used by measure()."""
     box = Bnd_Box()
     # Measure the BREP directly; cached tessellation can change a loft's approximate bounds.
     BRepBndLib.AddOptimal_s(shape.wrapped, box, False, False)
@@ -40,13 +52,7 @@ def measure(shape):
                 pair.append(sign * (extent - distance))
             limits.append(pair)
         (xmin, xmax), (ymin, ymax), (zmin, zmax) = limits
-    return {
-        "brep_valid": shape.isValid(),
-        "solid_count": len(shape.Solids()),
-        "volume_mm3": shape.Volume(tol=1e-8),
-        "dimensions_mm": [xmax - xmin, ymax - ymin, zmax - zmin],
-        "bounds_mm": [[xmin, ymin, zmin], [xmax, ymax, zmax]],
-    }
+    return (xmin, ymin, zmin), (xmax, ymax, zmax)
 
 
 def pose(shape, placement: Placement, parameters: Parameters, component: str):

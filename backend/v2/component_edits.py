@@ -1,6 +1,7 @@
 """Trusted component transactions. Scripts supply shapes, never ownership records."""
 
 import copy
+import math
 from uuid import uuid4
 
 import cadquery as cq
@@ -44,12 +45,14 @@ def input_shapes(folder, snapshot, sources):
             else geometry.world_shape(folder, p) for p in sources}
 
 
-def publish(folder, snapshot, sources, outputs, *, kind, parameters=None, source=None, colors=None):
+def publish(folder, snapshot, sources, outputs, *, kind, parameters=None, source=None, colors=None, instances=None):
     from .engineering import rgb
 
     if not isinstance(outputs, dict) or not 1 <= len(outputs) <= 100:
         raise WorkspaceError("Return parts={name: solid, ...} with 1–100 outputs.", "invalid_output")
-    if not isinstance(colors or {}, dict) or set(colors or {}) - set(outputs):
+    if instances is not None and (not isinstance(instances, dict) or len(outputs) + len(instances) > 100):
+        raise WorkspaceError("instances must be {name: [part_name, [tx, ty, tz], [rx, ry, rz]]} with at most 100 parts in total.", "invalid_output")
+    if not isinstance(colors or {}, dict) or set(colors or {}) - set(outputs) - set(instances or {}):
         raise WorkspaceError("Output colours must refer to returned part names.", "invalid_output")
     candidate = copy.deepcopy(snapshot)
     consumed = [p["instance_id"] for p in sources]
@@ -89,6 +92,32 @@ def publish(folder, snapshot, sources, outputs, *, kind, parameters=None, source
             part["editable_definition_kind"] = "script"
         built.append(part)
         output_names[label] = identity
+    instance_matrices = {}
+    for label, spec in (instances or {}).items():
+        # Identical repeated parts reuse the stored asset and definition; only the placement differs.
+        if not isinstance(label, str) or not label.strip() or len(label) > 128 or label in outputs:
+            raise WorkspaceError("Instance names must be new 1–128 character names distinct from parts.", "invalid_output")
+        if (not isinstance(spec, (list, tuple)) or len(spec) not in (2, 3)
+                or not isinstance(spec[0], str) or spec[0] not in outputs):
+            raise WorkspaceError("Each instance needs [part_name, [tx, ty, tz], [rx, ry, rz]] naming a returned part.", "invalid_output")
+        vectors = [spec[1], spec[2] if len(spec) == 3 else [0, 0, 0]]
+        if any(not isinstance(v, (list, tuple)) or len(v) != 3 or
+               any(type(x) not in (int, float) or not math.isfinite(x) or abs(x) > 10000 for x in v) for v in vectors):
+            raise WorkspaceError("Instance translation and rotation need three finite numbers within ±10,000.", "invalid_output")
+        if not sources and label in old_ids:
+            raise WorkspaceError("Select a component before replacing it.", "insufficient_selection")
+        identity = label if not sources else uuid4().hex
+        base = next(p for p in built if p["instance_id"] == output_names[spec[0]])
+        placement = cq.Location(tuple(float(x) for x in vectors[0]), tuple(float(x) for x in vectors[1])).wrapped.Transformation()
+        part = copy.deepcopy(base)
+        part.update(instance_id=identity, name=label,
+                    matrix=geometry.matrix(geometry.transform(frame).Multiplied(placement)),
+                    color=rgb((colors or {}).get(label, base["color"])))
+        built.append(part)
+        output_names[label] = identity
+        instance_matrices[identity] = list(part["matrix"])
+    if len({p["instance_id"] for p in built}) != len(built):
+        raise WorkspaceError("Output and instance names must be distinct.", "invalid_output")
     candidate["components"] = [p for p in candidate["components"] if p["instance_id"] not in consumed] + built
     mapping = {identity: [p["instance_id"] for p in built] for identity in consumed}
     transaction = {"operation": kind, "consumed": consumed,
@@ -107,6 +136,7 @@ def publish(folder, snapshot, sources, outputs, *, kind, parameters=None, source
             "output_names": output_names, "colors": colors or {},
             "input_components": copy.deepcopy(snapshot["components"]),
             "output_hashes": {p["instance_id"]: p["asset_hash"] for p in built},
+            "instance_matrices": instance_matrices,
         })
     return candidate
 
@@ -135,10 +165,10 @@ def restructure(folder, snapshot, request):
         stage(candidate, "recipe-" + uuid4().hex + ".cad.json", json.dumps(request["recipe"], indent=2), list(mapping.values()))
         return candidate
     if operation == "replace":
-        from .scripts import run_source
-        outputs, colors = run_source(request.get("source", ""), request.get("parameters", {}), shapes)
+        from .scripts import run_script
+        outputs, colors, instances = run_script(request.get("source", ""), request.get("parameters", {}), shapes)
         return publish(folder, snapshot, sources, outputs, kind="replace", source=request["source"],
-                       parameters=request.get("parameters", {}), colors=colors)
+                       parameters=request.get("parameters", {}), colors=colors, instances=instances)
     if operation == "merge":
         if len(sources) < 2:
             raise WorkspaceError("Select at least two bodies to merge.", "insufficient_selection")

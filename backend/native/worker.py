@@ -132,16 +132,31 @@ def dispatch(method, params):
         snapshot = params["snapshot"]
         from backend.v2.meshes import verify as verify_meshes
         meshes = verify_meshes(folder, snapshot)
+        import time
+        started = time.perf_counter()
+        timing = {}
         solids = {**snapshot, "components": [p for p in snapshot["components"] if p.get("representation") != "mesh"]}
+        # Solid validity depends only on the stored asset: check each unique asset once (instances share it).
+        checked = set()
         for part in solids["components"]:
-            geometry.store_shape(folder, geometry.load_shape(folder, part), allow_compound=part.get("shape_kind") == "compound")
+            key = (part["asset_hash"], part.get("shape_kind") == "compound")
+            if key in checked:
+                continue
+            geometry.check_solid(geometry.load_shape(folder, part), allow_compound=key[1])
+            checked.add(key)
+        timing["solid_checks_seconds"] = time.perf_counter() - started
+        timing["unique_solids_checked"] = len(checked)
         if not solids["components"]:
             return {"passed": bool(meshes), "meshes": meshes, "mesh_interference": "Not evaluated; meshes are visual geometry, not engineering solids."}
         import tempfile
         with tempfile.TemporaryDirectory(dir=folder) as temporary:
             path = Path(temporary) / "verified.step"
+            step_started = time.perf_counter()
             geometry.export_step(folder, solids, path)
-            return {**geometry.verify_export(folder, solids, path), "meshes": meshes, "mesh_interference": "Not evaluated" if meshes else "No meshes"}
+            timing["step_export_seconds"] = time.perf_counter() - step_started
+            report = geometry.verify_export(folder, solids, path, timing)
+            timing["total_seconds"] = time.perf_counter() - started
+            return {**report, "step_timing": timing, "meshes": meshes, "mesh_interference": "Not evaluated" if meshes else "No meshes"}
     if method == "export":
         snapshot = params["snapshot"]
         destination = Path(params["path"])

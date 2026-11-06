@@ -214,8 +214,15 @@ void WorkspaceWindow::receiveAssistant(const QJsonObject &event, bool complete) 
 
 void WorkspaceWindow::renderChat() {
     auto messages = state.value("conversation").toObject().value("messages").toArray();
-    if (busy && (!pendingUser.isEmpty() || !submittedAttachments.isEmpty())) {
-        messages.append(QJsonObject{{"role", "user"}, {"content", pendingUser}, {"attachments", submittedAttachments}});
+    // A task keeps running while other conversations are open; draw it only in its own conversation.
+    const bool taskHere = taskConversationId.isEmpty() || displayingTaskConversation();
+    if (busy && taskRunning && taskHere && !activeTaskId.isEmpty()) {
+        bool persisted = false;  // Reopening the conversation loads the user turn the backend already saved.
+        for (const auto &value : messages)
+            persisted = persisted || (value.toObject().value("role") == "user" &&
+                                      value.toObject().value("task_id").toString() == activeTaskId);
+        if (!persisted)
+            messages.append(QJsonObject{{"role", "user"}, {"content", pendingUser}, {"attachments", submittedAttachments}});
         QJsonArray events;
         for (const auto &message : currentActivity)
             events.append(QJsonObject{{"message", message}});

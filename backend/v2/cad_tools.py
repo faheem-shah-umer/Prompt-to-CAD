@@ -137,8 +137,11 @@ TOOLS = [
     },
     {
         "name": "cad_validate",
-        "description": "Check current candidate solid validity, unrelated component preservation and STEP export/reimport. Application repeats checks before accepting the turn.",
-        "inputSchema": schema({"candidate_id": TOKEN}, ["candidate_id"]),
+        "description": "Check current candidate solid validity, unrelated component preservation and STEP export/reimport. Call once after the last geometry change. A passing result is reused while asset hashes, placements, names, colours and assembly structure are unchanged (acceptance re-checks asset integrity, scope and engineering records). If validation times out, an identical retry is refused: change the geometry or pass a larger time_budget_seconds.",
+        "inputSchema": schema({"candidate_id": TOKEN,
+                               "time_budget_seconds": {"type": "number", "minimum": 30, "maximum": 600,
+                                                       "description": "Full-validation time budget. Default 180 s."}},
+                              ["candidate_id"]),
     },
 ]
 
@@ -225,7 +228,7 @@ TOOLS.extend([
 ])
 for tool in TOOLS:
     if tool["name"] == "cad_script":
-        tool["description"] = "Run the controlled CAD language: CadQuery workplanes and typed solid/compound constructors, selectors, splits, tags, profile offsets, text, bounded loops/collections, tuple unpacking and branching. Return parts={name: solid,...}; optionally colors={name: '#RRGGBB'}. selected is local for one source; inputs[id] supplies named source shapes (world coordinates for multiple sources). Multiple outputs replace consumed selected bodies atomically. No imports, filesystem, shell, reflection or arbitrary functions. Source/parameters are retained."
+        tool["description"] = "Run the controlled CAD language: CadQuery workplanes and typed solid/compound constructors, selectors, splits, tags, profile offsets, text, bounded loops/collections, tuple unpacking and branching. Return parts={name: solid,...}; optionally colors={name: '#RRGGBB'}. Repeated identical parts: build one and set instances={new_name: [base_part_name, [tx,ty,tz], [rx,ry,rz]]} to place copies that share the same geometry (rotation in degrees about the script origin, then translation). Gears: involute_gear(module, teeth, face_width, helix_angle=0, herringbone=False, internal=False, rim_width=None, bore_diameter=0, pressure_angle=20, backlash=0.1) returns an involute spur/helical/herringbone solid centred on Z (external tooth at 0 deg, internal gap at 0 deg); planet_mesh_rotation(sun_teeth, planet_teeth, planet_angle_deg) and ring_mesh_rotation(ring_teeth, planet_teeth) give mesh phasing in degrees. selected is local for one source; inputs[id] supplies named source shapes (world coordinates for multiple sources). Multiple outputs replace consumed selected bodies atomically. No imports, filesystem, shell, reflection or arbitrary functions. Source/parameters are retained."
         tool["inputSchema"]["properties"].update(source_instance_ids=SOURCE_IDS, definition_id={"type": "string"})
         tool["inputSchema"]["required"] = ["candidate_id"]
 
@@ -264,6 +267,34 @@ def geometry_fingerprint(snapshot):
     return {p["instance_id"]: (p["asset_hash"], p["matrix"]) for p in snapshot["components"]}
 
 
+VERIFIED_COMPONENT_FIELDS = ("instance_id", "asset_hash", "matrix", "name", "color", "color_override",
+                             "parent_id", "shape_kind", "representation")
+VERIFIED_NODE_FIELDS = ("id", "parent_id", "name", "matrix")
+
+
+def verification_key(snapshot):
+    """Everything full validation checks: geometry assets, placements, names, colours and structure."""
+    import hashlib
+    payload = {
+        "components": [{k: p.get(k) for k in VERIFIED_COMPONENT_FIELDS} for p in snapshot["components"]],
+        "assembly_nodes": [{k: n.get(k) for k in VERIFIED_NODE_FIELDS} for n in snapshot.get("assembly_nodes", [])],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def validation_budget(requested=None):
+    import os
+    if requested is not None:
+        if type(requested) not in (int, float) or not math.isfinite(requested) or not 30 <= requested <= 600:
+            raise WorkspaceError("time_budget_seconds must be between 30 and 600.", "invalid_parameters")
+        return float(requested)
+    try:
+        value = float(os.getenv("CAD_VALIDATION_TIMEOUT", "180"))
+    except ValueError:
+        value = 180.0
+    return min(600.0, max(30.0, value)) if math.isfinite(value) else 180.0
+
+
 def changed_state(before, after):
     return any(before.get(key, []) != after.get(key, []) for key in ("components", "engineering", "definitions"))
 
@@ -286,6 +317,9 @@ class TaskTools:
         self.turn_log = None
         self.decisions = []
         self.mcp_runtime = None
+        self.deadline = None
+        self.validation_cache = {}
+        self.validation_timeouts = {}
         self._catalog = None
         self.catalog_groups = []
         self.selection = normalize(
@@ -302,9 +336,12 @@ class TaskTools:
             else set()
         )
 
-    def geometry(self, method, **params):
+    def geometry(self, method, _timeout=None, **params):
         scripted = method == "script" or (method == "restructure" and params.get("request", {}).get("operation") == "replace" and "source" in params.get("request", {}))
         started = time.monotonic()
+        limits = {"timeout": _timeout if _timeout is not None else 45 if scripted else None}
+        if self.deadline is not None:
+            limits["deadline"] = self.deadline
         try:
             result = self.workspace.geometry(
             method,
@@ -313,7 +350,7 @@ class TaskTools:
                 "snapshot": self.candidate,
                 **params,
             },
-            timeout=45 if scripted else None,
+            **limits,
             )
         except WorkspaceError as error:
             stats = getattr(error, "details", {}).get("intersection")
@@ -386,11 +423,18 @@ class TaskTools:
         return {"passed": True, "unrelated_components_checked": len(before) - len(self.scope) if self.scope else 0,
                 "scope": sorted(self.scope) if self.scope else "document", "component_count": len(candidate["components"])}
 
-    def validate(self):
-        from .engineering import rgb, validate_records
-        from .definitions import read
+    def check_asset_integrity(self):
         from backend.native.documents import asset_path
         import hashlib
+        for part in self.candidate["components"]:
+            path = asset_path(self.document.folder, part.get("mesh", part.get("brep", "")))
+            if hashlib.sha256(path.read_bytes()).hexdigest() != part["asset_hash"]:
+                raise WorkspaceError("A retained geometry asset changed.", "asset_integrity")
+
+    def validate(self, budget_seconds=None):
+        from .engineering import rgb, validate_records
+        from .definitions import read
+        budget = validation_budget(budget_seconds)
         for part in self.candidate["components"]:
             rgb(part["color"])
             if part.get("color_override") is not None:
@@ -398,41 +442,82 @@ class TaskTools:
         for definition in self.candidate.get("definitions", []):
             read(self.document.folder, definition)
         engineering = validate_records(self.candidate)
+        scope = self.scope_check(self.candidate)
+        key = verification_key(self.candidate)
         prior = self.original.get("verification", {})
         prior_passed = prior.get("passed") or prior.get("geometry", {}).get("passed")
-        if geometry_fingerprint(self.candidate) == geometry_fingerprint(self.original) and (prior_passed or not self.candidate["components"]):
-            for part in self.candidate["components"]:
-                path = asset_path(self.document.folder, part.get("mesh", part.get("brep", "")))
-                if hashlib.sha256(path.read_bytes()).hexdigest() != part["asset_hash"]:
-                    raise WorkspaceError("A retained geometry asset changed.", "asset_integrity")
-            report = {"passed": True, "mode": "unchanged_geometry", "asset_integrity": True}
-        else:
+        cached = self.validation_cache.get(key)
+        if cached is None and key == verification_key(self.original) and (prior_passed or not self.candidate["components"]):
+            cached = {"passed": True, "mode": "unchanged_geometry"}
+        if cached is not None:
+            # Reuse the full geometry result only for the exact verified state; integrity is re-checked every time.
             started = time.monotonic()
-            try:
-                report = self.geometry("verify")
-            finally:
-                if self.turn_log is not None:
-                    self.turn_log.phase("geometry_worker", time.monotonic() - started,
-                                        failed=not bool(locals().get("report", {}).get("passed")))
-            if self.turn_log is not None and report.get("verification_timing"):
-                timing = report["verification_timing"]
-                self.workspace.notify({
-                    "stage": "verifying",
-                    "message": "Assembly verification checked "
-                    f"{timing.get('exact_intersections_checked', 0)} exact pairs "
-                    f"and skipped {timing.get('skipped_pairs', 0)} separated pairs.",
-                })
-                self.turn_log.phase(
-                    "assembly_verification",
-                    timing.get("total_seconds", 0),
-                    candidate_pairs=timing.get("candidate_pairs", 0),
-                    skipped_pairs=timing.get("skipped_pairs", 0),
-                    exact_intersections_checked=timing.get("exact_intersections_checked", 0),
-                    exact_intersection_seconds=timing.get("exact_intersection_seconds", 0),
-                )
-            if not report.get("passed"):
-                raise WorkspaceError("Candidate geometry did not pass verification.", "verification_failed")
-        return {"geometry": report, "engineering": engineering, "scope": self.scope_check(self.candidate), "candidate_id": self.candidate_id}
+            self.check_asset_integrity()
+            report = {**copy.deepcopy(cached), "asset_integrity": True,
+                      "mode": cached.get("mode") if cached.get("mode") == "unchanged_geometry" else "reused",
+                      "verification_key": key}
+            if self.turn_log is not None:
+                self.turn_log.phase("validation_reused", time.monotonic() - started)
+            return {"geometry": report, "engineering": engineering, "scope": scope, "candidate_id": self.candidate_id}
+        timed_out = self.validation_timeouts.get(key)
+        if timed_out is not None and budget <= timed_out:
+            raise WorkspaceError(
+                f"Validation of this exact candidate already timed out after {timed_out:.0f} s. "
+                "Retrying it unchanged would time out again. Change the geometry, or call cad_validate "
+                f"with time_budget_seconds greater than {timed_out:.0f} (maximum 600).",
+                "validation_timeout_repeat")
+        self.workspace.notify({"stage": "verifying",
+                               "message": f"Running full validation (budget {budget:.0f} s): solids, STEP export, re-import and comparison."})
+        started = time.monotonic()
+        report = {}
+        try:
+            report = self.geometry("verify", _timeout=budget)
+        except WorkspaceError as error:
+            if error.code == "timeout":
+                self.validation_timeouts[key] = max(budget, self.validation_timeouts.get(key, 0))
+                raise WorkspaceError(
+                    f"Full validation exceeded its {budget:.0f} s budget. The accepted revision is unchanged. "
+                    "An identical retry will be refused; change the geometry or pass a larger time_budget_seconds.",
+                    "timeout") from None
+            raise
+        finally:
+            if self.turn_log is not None:
+                self.turn_log.phase("geometry_worker", time.monotonic() - started,
+                                    failed=not bool(report.get("passed")))
+        steps = report.get("step_timing")
+        if steps:
+            if self.turn_log is not None:
+                for step in ("solid_checks", "step_export", "step_reimport", "comparison"):
+                    if f"{step}_seconds" in steps:
+                        self.turn_log.phase("validation_" + step, steps[f"{step}_seconds"],
+                                            **({"unique_solids_checked": steps.get("unique_solids_checked", 0)}
+                                               if step == "solid_checks" else {}))
+            self.workspace.notify({
+                "stage": "verifying",
+                "message": "Validation timing: solids {:.1f} s, STEP export {:.1f} s, re-import {:.1f} s, comparison {:.1f} s.".format(
+                    steps.get("solid_checks_seconds", 0), steps.get("step_export_seconds", 0),
+                    steps.get("step_reimport_seconds", 0), steps.get("comparison_seconds", 0)),
+            })
+        if self.turn_log is not None and report.get("verification_timing"):
+            timing = report["verification_timing"]
+            self.workspace.notify({
+                "stage": "verifying",
+                "message": "Assembly verification checked "
+                f"{timing.get('exact_intersections_checked', 0)} exact pairs "
+                f"and skipped {timing.get('skipped_pairs', 0)} separated pairs.",
+            })
+            self.turn_log.phase(
+                "assembly_verification",
+                timing.get("total_seconds", 0),
+                candidate_pairs=timing.get("candidate_pairs", 0),
+                skipped_pairs=timing.get("skipped_pairs", 0),
+                exact_intersections_checked=timing.get("exact_intersections_checked", 0),
+                exact_intersection_seconds=timing.get("exact_intersection_seconds", 0),
+            )
+        if not report.get("passed"):
+            raise WorkspaceError("Candidate geometry did not pass verification.", "verification_failed")
+        self.validation_cache[key] = copy.deepcopy(report)
+        return {"geometry": report, "engineering": engineering, "scope": scope, "candidate_id": self.candidate_id}
 
 
     def context(self):
@@ -686,7 +771,7 @@ class TaskTools:
                     "selection": self.selection,
                 }
             if name == "cad_validate":
-                return self.validate()
+                return self.validate(params.get("time_budget_seconds"))
             from . import definitions
             if name == "cad_files" and params.get("action") == "list":
                 return {"candidate_id": self.candidate_id,
@@ -901,7 +986,7 @@ class TaskTools:
                       for value in vector) for vector in pose.values()):
             raise WorkspaceError("Placement uses finite three-value translation and rotation vectors.", "invalid_parameters")
         with self.catalog.stage(params.get("catalog_id"), params.get("fingerprint"), self.workspace.cancelled,
-                                getattr(self.workspace, "task_deadline", None)) as (path, entry):
+                                self.deadline if self.deadline is not None else getattr(self.workspace, "task_deadline", None)) as (path, entry):
             updated = self.geometry("catalog_insert", path=str(path), provenance=entry, placement=pose)
             if self.closed or self.workspace.cancelled.is_set():
                 raise WorkspaceError("Task cancelled; candidate discarded.", "cancelled")
