@@ -118,3 +118,5 @@ Desktop.ini
 !/site/assets/app-icon.svg
 !/site/assets/pen-plotter-demo.gif
 !/site/assets/pen-plotter-workspace.png
+!/.codex-plugin/plugin.json
+!/.claude-plugin/plugin.json

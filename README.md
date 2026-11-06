@@ -105,6 +105,7 @@ After the first build, double-click `Run-PromptToCAD.cmd` or run it again to lau
 | [Standard parts](docs/standard-parts.md) | cq_warehouse components and retained generator parameters. |
 | [Privacy & local storage](docs/privacy.md) | Projects, credentials, provider requests and source boundaries. |
 | [Turn logs](docs/turn-logs.md) | Local diagnostic records and their privacy limits. |
+| [Agent skills](docs/agent-skills.md) | Bundled workflows and the current external-agent connection boundary. |
 
 <details>
 <summary><strong>Development checks and local files</strong></summary>

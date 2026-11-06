@@ -95,6 +95,7 @@ class TurnLog:
             "phase_timings": {},
             "application_runtime": task.get("application_runtime"),
             "catalog_evidence": {},
+            "agent_skills": {"available": [], "loads": []},
             "evidence": "Observed tool calls and concise assistant-stated reasons; not hidden reasoning or proof that a stated reason is correct."})
         try:
             self.folder.mkdir(parents=True, exist_ok=False)
@@ -126,6 +127,9 @@ class TurnLog:
             call = {"call_id": uuid4().hex, "name": name, "started_at": time.time(),
                     "status": "running", "library_operation": library_operation, "generator_id": safe(generator_id),
                     "decision_id": self.data["decisions"][-1]["decision_id"] if self.data["decisions"] else None}
+            if name == "cad_skills":
+                call["skill_action"] = safe(arguments.get("action"))
+                call["skill_id"] = safe(arguments.get("skill_id"))
             if name in ("cad_catalog", "cad_catalog_insert"):
                 call["catalog_request"] = safe({key: arguments[key] for key in
                     ("action", "query", "category", "limit", "offset", "catalog_id", "fingerprint") if key in arguments})
@@ -148,12 +152,38 @@ class TurnLog:
                 self.phase_finished(phase, call["elapsed_seconds"], failed=error is not None)
             if error is not None:
                 call["error"] = safe({"code": getattr(error, "code", "tool_failed"), "message": str(error)})
+                event_result = None
+            elif call["name"] == "cad_skills":
+                if call.get("skill_action") == "read":
+                    skill = result.get("skill", {}) if isinstance(result, dict) else {}
+                    load = {key: safe(skill.get(key)) for key in ("id", "version", "sha256")}
+                    load["status"] = "loaded" if all(load.get(key) for key in ("id", "version", "sha256")) else "invalid_result"
+                    call.update({"skill_version": load.get("version"), "skill_sha256": load.get("sha256"), "load_status": load["status"]})
+                    self.data.setdefault("agent_skills", {"available": [], "loads": []})["loads"].append(load)
+                    event_result = {**load, "content": "[skill instructions omitted from log]"}
+                else:
+                    available = result.get("available", []) if isinstance(result, dict) else []
+                    event_result = {"available": [{key: safe(item.get(key)) for key in ("id", "version", "sha256", "available", "error") if key in item}
+                                                   for item in available if isinstance(item, dict)]}
             elif call["name"] == "cad_catalog_insert":
                 call["created_component_ids"] = [safe(identity) for identity in result["created_component_ids"]]
+                event_result = result
             elif call["name"] == "cad_catalog" and call["catalog_request"].get("action") == "search":
                 call["result_ids"] = [entry["catalog_id"] for entry in result["results"]]
-            self.event("tool_" + call["status"], {**call, **({"result": result} if error is None else {})})
+                event_result = result
+            elif error is None:
+                event_result = result
+            self.event("tool_" + call["status"], {**call, **({"result": event_result} if error is None else {})})
             self.checkpoint()
+
+    def skill_availability(self, descriptor):
+        with self.lock:
+            available = safe(descriptor.get("available", [])) if isinstance(descriptor, dict) else []
+            evidence = self.data.setdefault("agent_skills", {"available": [], "loads": []})
+            if evidence.get("available") != available:
+                evidence["available"] = available
+                self.event("skills_available", {"skills": available})
+                self.checkpoint()
 
     def phase_started(self, name):
         with self.lock:
@@ -240,12 +270,17 @@ class TurnLog:
         try:
             self.data["cq_warehouse"] = self.usage()
             self.data["step_catalog"] = self.catalog_usage()
+            self.data["agent_skills_usage"] = {
+                "available_ids": [item.get("id") for item in self.data.get("agent_skills", {}).get("available", []) if item.get("version")],
+                "loaded": list(self.data.get("agent_skills", {}).get("loads", [])),
+            }
             write_json(self.folder / "summary.json", self.data)
             lines = ["# CAD turn log", "", "Task: " + self.data["task_id"],
                 "Started (UTC): " + datetime.fromtimestamp(self.data["started_at"], UTC).isoformat(),
                 "Status: " + self.data["status"], "", "## Request", "", text_block(self.data["request"]),
                 "", "## cq_warehouse: observed use", "", text_block(json.dumps(self.data["cq_warehouse"], indent=2)),
                 "", "## STEP catalog: observed access and use", "", text_block(json.dumps(self.data["step_catalog"], indent=2)),
+                "", "## Agent skills: availability and loads", "", text_block(json.dumps(self.data["agent_skills_usage"], indent=2)),
                 "", "## Phase timings", "", text_block(json.dumps(self.data.get("phase_timings", {}), indent=2)),
                 "", "## Stated decisions", "", self.data["evidence"], ""]
             for decision in self.data["decisions"]:

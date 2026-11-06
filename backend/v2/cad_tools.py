@@ -3,8 +3,8 @@
 import copy
 import json
 import math
-import shutil
 import secrets
+import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,9 +12,17 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from backend.native.contracts import CAD_TURN_TIMEOUT_SECONDS, Command, FaceOffset, FaceHoles, WorkspaceError
+from backend.native.contracts import (
+    CAD_TURN_TIMEOUT_SECONDS,
+    Command,
+    FaceHoles,
+    FaceOffset,
+    WorkspaceError,
+)
 from backend.native.documents import asset_path
-from .selection import normalize, check_command
+
+from . import agent_skills
+from .selection import check_command, normalize
 from .step_catalog import CATALOG_TOOLS, CHOICES, StepCatalog, digest
 
 
@@ -164,6 +172,9 @@ COLOUR = {"anyOf": [VEC, {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}]}
 CATALOG_ID = {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}
 CATALOG_FINGERPRINT = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 TOOLS.extend([
+    {"name": "cad_skills", "description": "List or read one of the application's fixed, read-only CAD workflow skills. Skill IDs come from cad_context; this tool cannot access arbitrary files.",
+     "inputSchema": schema({"action": {"enum": ["list", "read"]},
+         "skill_id": {"enum": list(agent_skills.SKILL_IDS)}}, ["action"])},
     {"name": "cad_decision", "description": "Record a brief public CAD decision summary for this turn's project log. State the chosen approach, supporting facts, alternatives and why cq_warehouse is suitable or unsuitable. This is a concise rationale, not private reasoning. Report before modelling, and update when the approach changes; no geometry or operation-budget change.",
      "inputSchema": schema({"candidate_id": TOKEN, "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
         "cq_warehouse": schema({"choice": {"enum": ["use", "do_not_use", "not_applicable", "undecided"]},
@@ -224,6 +235,7 @@ for tool in TOOLS:
         in (
             "cad_context",
             "cad_capabilities",
+            "cad_skills",
             "cad_decision",
             "cad_standard_parts",
             "cad_catalog",
@@ -424,8 +436,12 @@ class TaskTools:
 
 
     def context(self):
+        skills = agent_skills.describe()
+        if self.turn_log is not None:
+            self.turn_log.skill_availability(skills)
         return {
             "step_catalog": self.catalog.status(),
+            "agent_skills": skills,
             "project_id": self.project_id,
             "document_id": self.original["document_id"],
             "base_revision_id": self.original.get("revision_id"),
@@ -531,6 +547,8 @@ class TaskTools:
                         "image_data": base64.b64encode(output.getvalue()).decode()}
             if name == "cad_context":
                 return self.context()
+            if name == "cad_skills":
+                return agent_skills.list_or_read(params.get("action"), params.get("skill_id"))
             if name == "cad_catalog":
                 return self.catalog.query(params)
             if name == "cad_standard_parts":
