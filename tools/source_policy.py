@@ -8,12 +8,20 @@ BRANDING = {"assets/README.md", "assets/app-icon.svg", "assets/app-icon.png", "a
 SITE_FILES = {"site/index.html", "site/styles.css", "site/main.js", "site/assets/app-icon.svg",
     "site/assets/workspace-dark.png", "site/assets/workspace-light.png", "site/assets/PROVENANCE.md",
     "site/assets/pen-plotter-demo.gif", "site/assets/pen-plotter-workspace.png"}
+AGENT_SKILL_FILES = {
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    "skills/promptcad-catalog/SKILL.md",
+    "skills/promptcad-modeling/SKILL.md",
+    "skills/promptcad-review/SKILL.md",
+}
 
 
 def is_public_source(relative):
     path = PurePosixPath(str(relative).replace("\\", "/"))
     name = path.as_posix()
-    if name in ROOT_FILES or name in BRANDING or name in SITE_FILES or name == "tools/locks/sdk-win-64.lock":
+    if (name in ROOT_FILES or name in BRANDING or name in SITE_FILES
+            or name in AGENT_SKILL_FILES or name == "tools/locks/sdk-win-64.lock"):
         return True
     if len(path.parts) < 2 or any(part.startswith(".") or part == "__pycache__" for part in path.parts[1:]):
         return False
