@@ -91,7 +91,7 @@ py -3.11 -m venv .venv
 
 Setup downloads pinned **Qt 6.9.0** and **OpenCascade 7.8.1** SDKs; Anaconda is not required. The build produces `build\bin\PromptToCAD.exe`. See the [setup guide](docs/setup.md) for exact dependencies and troubleshooting.
 
-After the first build, double-click `Run-PromptToCAD.cmd` or run it again to launch. The launcher also works from another directory. Rebuild explicitly after changing C++ source; launching does not install dependencies or compile the app.
+After the first build, double-click `Run-PromptToCAD.cmd` to open the app; it is the only launcher. A double-click starts the app without leaving a console window open. The launcher also works from another directory. Rebuild explicitly after changing C++ source; launching does not install dependencies or compile the app.
 
 **Using AI:** Choose Codex or Claude on first launch (or later in Settings → AI connection). Codex needs a Codex executable with App Server support and your own eligible ChatGPT plan or OpenAI API key. Claude needs Claude Code installed, then either your own Claude Code sign-in (for example a Claude Pro/Max plan) or your own Anthropic API key; see [Claude integration](docs/claude-integration.md). No credentials or model weights are included. Viewing, import/export, measurement and supported direct tools work without AI.
 
@@ -120,7 +120,7 @@ Run checks deliberately from the repository root:
 
 Checks use synthetic data rather than live provider inference. The manual **Windows source check** workflow installs dependencies, builds and tests on a fresh Windows x64 runner, including a native viewport smoke check through the portable launcher.
 
-Keep managed development output in the ignored repository folders: `.venv/`, `build/`, `.sdk/`, `.local/`, `tmp/` and `artifacts/`. The source launcher uses `build\bin\PromptToCAD.exe`; the existing personal VBS/desktop shortcut separately preserves `.local/desktop-build/` when present. Keep projects, chats, credentials and environments out of Git.
+Keep managed development output in the ignored repository folders: `.venv/`, `build/`, `.sdk/`, `.local/`, `tmp/` and `artifacts/`. The launcher always opens `build\bin\PromptToCAD.exe`, the copy `tools.build_native` updates. Keep projects, chats, credentials and environments out of Git.
 
 </details>
 

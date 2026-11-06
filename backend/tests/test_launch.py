@@ -149,7 +149,7 @@ class BatchLauncherTests(unittest.TestCase):
         self.assertIn("pip install -r requirements-dev.txt", result.stdout)
 
     def test_private_outputs_and_credentials_remain_ignored(self):
-        paths = [".venv/Scripts/python.exe", ".local/desktop-build/bin/PromptToCAD.exe", "build/bin/PromptToCAD.exe",
+        paths = [".venv/Scripts/python.exe", ".local/toolchain/env.json", "build/bin/PromptToCAD.exe",
                  ".sdk/windows/Library/bin/Qt6Core.dll", "Projects/private/project.json", ".promptcad/identity/auth.json", ".env", "credentials.json"]
         output = subprocess.check_output(["git", "check-ignore", "--stdin", "-z"], input=("\0".join(paths) + "\0").encode(), cwd=ROOT)
         ignored = output.decode().rstrip("\0").split("\0")

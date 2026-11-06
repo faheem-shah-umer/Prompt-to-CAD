@@ -32,11 +32,11 @@ py -3.11 -m venv .venv
 
 The bootstrap verifies micromamba 2.3.3-0 and the exact SDK URLs/SHA-256 values in `tools/locks/sdk-win-64.lock`. Downloads and caches stay under `.sdk/`. Keep the checkout path reasonably short for Windows SDK headers.
 
-The default source executable is `build\bin\PromptToCAD.exe`. `Run-PromptToCAD.cmd` resolves the checkout relative to itself, uses `.venv\Scripts\python.exe -m tools.run_native` and supplies runtime DLL/plugin paths without initializing compiler tools. No environment activation, private runtime or absolute-path shortcut is required. Run it from any directory, or double-click it; failures remain visible (set `CI=true` to suppress the failure pause in automation). Launching never installs dependencies or builds. Re-run `tools.build_native` explicitly after changing C++ source.
+The default source executable is `build\bin\PromptToCAD.exe`. `Run-PromptToCAD.cmd` resolves the checkout relative to itself, uses `.venv\Scripts\python.exe -m tools.run_native` and supplies runtime DLL/plugin paths without initializing compiler tools. No environment activation, private runtime or absolute-path shortcut is required. It is the only launcher. Double-click it (no arguments) to start the app without a console window; startup problems appear in a message box. Run it with arguments from a terminal to keep console output; failures remain visible (set `CI=true` to suppress the failure pause in automation). Launching never installs dependencies or builds. Re-run `tools.build_native` explicitly after changing C++ source.
 
 The `.cmd` forwards the existing SDK and `--build-dir` options to `tools.run_native`; pass the same `--build-dir` when building and launching elsewhere. Native application arguments follow `--`, for example `.\Run-PromptToCAD.cmd -- --version`.
 
-The existing personal `Prompt to CAD.vbs`/desktop shortcut separately uses `.local/desktop-build/bin/` when its preserved desktop runtime is present, otherwise the source build. Its runtime selection and existing local data are unchanged. No sibling build directories are required.
+There is one application build: `build\bin\PromptToCAD.exe`. No sibling build directory, VBS script or separate desktop runtime is used.
 
 Existing SDKs can use `CAD_QT_PREFIX`, `CAD_OCCT_PREFIX`, `CAD_SDK_PREFIX`, explicit prefix arguments, or activated `CONDA_PREFIX/Library`. A private compiler environment can be passed with `--toolchain-env`. The owner's preserved `.local/toolchain/environment.json` is discovered for compilation only; other machines do not need it. Never commit `.local/`.
 

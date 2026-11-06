@@ -4,7 +4,7 @@ The desktop, main Python service, MCP server and geometry workers must load the 
 
 ## Launcher and interpreter chain
 
-The repository shortcut starts `wscript.exe` with `Prompt to CAD.vbs`. The script launches `.local/desktop-build/bin/PromptToCAD.exe --workspace <checkout>` when the preserved desktop runtime is available; otherwise it uses the documented source-build launcher. The desktop service defaults to `<checkout>/.venv/Scripts/python.exe -B -m backend.v2.service`. On Windows that venv executable can delegate to its base Python interpreter; the venv's package configuration still applies.
+`Run-PromptToCAD.cmd` is the only launcher. It runs `tools.run_native`, which starts `build/bin/PromptToCAD.exe --workspace <checkout>` with the runtime library paths. The desktop service defaults to `<checkout>/.venv/Scripts/python.exe -B -m backend.v2.service`. On Windows that venv executable can delegate to its base Python interpreter; the venv's package configuration still applies.
 
 The native RPC launcher pins the working directory, `PYTHONPATH` and `PROMPTCAD_WORKSPACE` to that checkout and disables user-site imports. MCP uses the real windowless interpreter with an explicit source/package search path. Geometry workers use the real interpreter where needed, with the same source root and package search paths. No SDK, CadQuery or OCP version change is required.
 
