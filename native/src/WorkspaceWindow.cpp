@@ -1914,6 +1914,17 @@ void WorkspaceWindow::smokeCheck() {
                 if (!panel || !panel->isVisible()) { showError("Choosing Claude did not show its connection panel."); return; }
                 for (int pass = 0; pass < 3; ++pass) QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 25);
                 dialog->grab().save(workspace + "/tmp/native-settings-claude.png");
+                const auto methods = dialog->findChildren<QPushButton *>("claudeMethod");
+                auto *codeSection = dialog->findChild<QWidget *>("claudeCodeSection");
+                auto *keySection = dialog->findChild<QWidget *>("claudeKeySection");
+                if (methods.size() != 2 || !codeSection || !keySection || !codeSection->isVisible() || keySection->isVisible()) {
+                    showError("Claude must offer the Claude Code sign-in first, with the API key as the alternative."); return;
+                }
+                for (auto *method : methods) if (method->property("method") == "anthropic") method->click();
+                if (codeSection->isVisible() || !keySection->isVisible()) { showError("The API key option did not open."); return; }
+                for (int pass = 0; pass < 3; ++pass) QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 25);
+                dialog->grab().save(workspace + "/tmp/native-settings-claude-key.png");
+                dialog->setProperty("claudeMethodShown", QVariant());
                 dialog->setProperty("providerShown", QVariant());
                 refreshConnectionControls();
             }
