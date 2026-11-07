@@ -1489,11 +1489,21 @@ void WorkspaceWindow::select(const QJsonObject &selection) {
     {
         const QSignalBlocker blocker(modelTree);
         modelTree->clearSelection();
+        QTreeWidgetItem *first = nullptr;
         for (QTreeWidgetItemIterator it(modelTree); *it; ++it)
             if (ids.contains((*it)->data(0, Qt::UserRole).toString())) {
                 (*it)->setSelected(true);
                 for (auto *parent = (*it)->parent(); parent; parent = parent->parent()) parent->setExpanded(true);
+                bool shown = !(*it)->isHidden();
+                for (auto *parent = (*it)->parent(); shown && parent; parent = parent->parent()) shown = !parent->isHidden();
+                if (!first && shown) first = *it;
             }
+        if (first) {
+            // Bring the picked part into view in the model tree instead of leaving it off-screen.
+            modelTree->doItemsLayout();
+            if (!modelTree->viewport()->rect().contains(modelTree->visualItemRect(first)))
+                modelTree->scrollToItem(first, QAbstractItemView::PositionAtCenter);
+        }
     }
     showSelectionProperties();
     refreshDocumentControls();
