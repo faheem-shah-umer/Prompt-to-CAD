@@ -1,6 +1,0 @@
-{
-  "name": "prompt-to-cad",
-  "version": "0.1.0",
-  "description": "Workflow skills for creating, sourcing, and reviewing CAD designs with Prompt to CAD.",
-  "skills": "./skills/"
-}
