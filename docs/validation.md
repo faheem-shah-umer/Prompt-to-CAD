@@ -2,6 +2,14 @@
 
 Development policy: run tests only when the user explicitly requests a task-specific test. Do not automatically run these commands after source edits. Historical results below describe earlier runs; generated validation reports/screenshots have been removed as part of the source-only cleanup.
 
+## Pending verification: draft checkpoints for interrupted turns
+
+Implemented without running tests or a rebuild. After every successful CAD operation in an agent turn, the candidate is written to `documents/<id>/draft.json` (one draft per document). The record points at the content-addressed geometry files already on disk and stores the component placements, parameters, definitions, engineering records, applied operations and transaction history needed to continue. It is written atomically, so a failed operation leaves the previous checkpoint. Drafts are never added to `project.json`, revisions, undo or redo.
+
+When a turn stops (time limit, provider error, cancellation or an application crash), the conversation shows an **Unsaved draft** card with Preview, Continue and Discard. Continue starts a turn from the draft; the agent receives `resumed_draft` context. The draft becomes a revision only through the normal `cad_validate` and acceptance path, and is removed once accepted. A draft whose base revision is no longer current can be previewed or discarded but not continued.
+
+When requested, verify: stop a long turn after several operations and preview the draft; continue it to an accepted revision; force a failing operation and confirm the previous checkpoint still loads; restart the app mid-turn and confirm the draft is offered; change the document and confirm the draft is marked stale.
+
 ## Pending verification: faster validation, gear generation and background tasks
 
 Implemented without running tests or a rebuild:

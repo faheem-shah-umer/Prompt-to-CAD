@@ -232,6 +232,7 @@ void WorkspaceWindow::renderChat() {
                                    {"phase", currentTaskMessage}, {"activity", events},
                                    {"elapsed_seconds", taskClock.isValid() ? taskClock.elapsed() / 1000.0 : 0}});
     }
+    chat->setDraft(state.value("draft").toObject());
     chat->setMessages(messages, state.value("conversation").toObject().value("conversation_id").toString());
 }
 

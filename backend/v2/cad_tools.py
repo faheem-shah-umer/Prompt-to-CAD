@@ -318,6 +318,10 @@ class TaskTools:
         self.decisions = []
         self.mcp_runtime = None
         self.deadline = None
+        # Set by agent turns only: the task record checkpointed as a local draft after each write.
+        self.draft_task = None
+        self.resumed_draft = None
+        self.prior_commands = []
         self.validation_cache = {}
         self.validation_timeouts = {}
         self._catalog = None
@@ -520,6 +524,38 @@ class TaskTools:
         return {"geometry": report, "engineering": engineering, "scope": scope, "candidate_id": self.candidate_id}
 
 
+    def checkpoint(self):
+        """Save the candidate as a local draft; a failed checkpoint never fails the operation."""
+        if self.draft_task is None:
+            return
+        from . import drafts
+        started = time.monotonic()
+        try:
+            record = drafts.save(self.document, self, self.draft_task)
+        except Exception as error:  # Disk or serialization problems must not lose the working candidate.
+            if self.turn_log is not None:
+                self.turn_log.phase("draft_checkpoint", time.monotonic() - started, failed=True)
+                self.turn_log.event("draft_checkpoint_failed", {"error": str(error)[:500]})
+            self.workspace.notify({"stage": "draft", "message": "Could not save a draft checkpoint: " + str(error)[:200]})
+            return
+        if self.turn_log is not None:
+            self.turn_log.phase("draft_checkpoint", time.monotonic() - started)
+        self.workspace.notify({"stage": "draft", "message": f"Draft checkpoint {record['checkpoint']} saved.",
+                               "draft_id": record["draft_id"], "checkpoint": record["checkpoint"]})
+
+    def resume_from(self, record):
+        """Continue a saved draft: its candidate and task state become this turn's starting point."""
+        self.candidate = copy.deepcopy(record["snapshot"])
+        self.candidate_id = uuid4().hex
+        self.prior_commands = copy.deepcopy(record.get("commands", []))
+        self.created = set(record.get("created", []))
+        self.retired = set(record.get("retired", []))
+        self.transactions = copy.deepcopy(record.get("transactions", []))
+        self.catalog_groups = copy.deepcopy(record.get("catalog_groups", []))
+        self.decisions = copy.deepcopy(record.get("decisions", []))[:64]
+        self.resumed_draft = {k: record.get(k) for k in ("draft_id", "checkpoint", "prompt", "stop_reason", "updated_at")}
+        self.scope_check(self.candidate)
+
     def context(self):
         skills = agent_skills.describe()
         if self.turn_log is not None:
@@ -566,6 +602,13 @@ class TaskTools:
                 "mode": "complex" if self.operation_limit == 64 else "normal",
             },
             "reference_images": self.reference_context(),
+            **({"resumed_draft": {
+                **self.resumed_draft,
+                "operations_already_applied": len(self.prior_commands),
+                "components_in_draft": [{"instance_id": p["instance_id"], "name": p.get("name")} for p in self.candidate["components"]],
+                "instruction": "This turn continues a saved draft. The components above are already built in the candidate. "
+                               "Inspect them, keep finished parts, complete only the remaining work, then call cad_validate once.",
+            }} if self.resumed_draft else {}),
             "units": "mm",
             "rules": "Selection is frozen for this task. Reinspect after every successful write. Failed tools leave candidate unchanged. Changes are accepted only after final verification and successful provider completion.",
         }
@@ -953,6 +996,7 @@ class TaskTools:
             self.candidate = updated
             self.candidate_id = uuid4().hex
             self.commands.extend(commands if name == "cad_apply_batch" else [record])
+            self.checkpoint()
             self.workspace.notify({"stage": "candidate", "message": "Candidate updated; validating before acceptance.",
                 "document": {**updated, "project_dir": str(self.document.folder), "revision_id": self.original.get("revision_id")},
                 "candidate_id": self.candidate_id,

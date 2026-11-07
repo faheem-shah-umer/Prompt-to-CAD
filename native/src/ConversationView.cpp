@@ -223,6 +223,11 @@ void ConversationView::setDocumentContext(const QJsonObject &document) {
         cachedTheme.clear();
     }
 }
+void ConversationView::setDraft(const QJsonObject &value) {
+    if (draft == value) return;
+    draft = value;
+    cachedTheme.clear();  // Rebuild on the next setMessages so the draft card matches.
+}
 void ConversationView::setMessages(const QJsonArray &messages, const QString &conversation) {
     if (context != conversation) {
         context = conversation;
@@ -563,6 +568,39 @@ void ConversationView::rebuild() {
         if (!user)
             horizontal->addSpacing(10);
         stack->addWidget(row);
+    }
+    bool working = false;
+    for (const auto &value : messages) working = working || value.toObject().value("working").toBool();
+    if (!working && !draft.isEmpty() && draft.value("conversation_id").toString() == context) {
+        // Work from an interrupted turn, kept apart from accepted revisions until validated.
+        const bool stale = draft.value("stale").toBool();
+        auto *card = new QFrame(content);
+        card->setObjectName("changeCard");
+        card->setAccessibleName("Unsaved draft from an interrupted turn");
+        auto *cardLayout = new QVBoxLayout(card);
+        auto *links = new QLabel(card);
+        links->setObjectName("draftCard");
+        links->setWordWrap(true);
+        links->setTextFormat(Qt::RichText);
+        const auto updated = QDateTime::fromSecsSinceEpoch(qint64(draft.value("updated_at").toDouble())).toLocalTime();
+        QString html = "<b>Unsaved draft</b><p>Checkpoint " + QString::number(draft.value("checkpoint").toInt()) +
+            " · " + QString::number(draft.value("operations").toInt()) + " operation(s) · " +
+            QString::number(draft.value("component_count").toInt()) + " component(s) · saved " +
+            updated.toString("ddd HH:mm") + "</p>";
+        const auto reason = draft.value("stop_reason").toString();
+        html += "<p>" + (reason.isEmpty() ? QString("The turn ended before this work was validated and saved.")
+                                          : "Stopped: " + reason.left(300).toHtmlEscaped()) + "</p>";
+        if (stale)
+            html += "<p>The document changed after this draft was saved, so it can be previewed or discarded but not continued.</p>";
+        html += "<p><a href='draft:preview'>Preview</a>" +
+            QString(stale ? "" : " &nbsp;·&nbsp; <a href='draft:continue'>Continue</a>") +
+            " &nbsp;·&nbsp; <a href='draft:discard'>Discard</a></p>"
+            "<p>It becomes a saved revision only after the normal validation passes. A new request that does not "
+            "continue it replaces this draft at its first checkpoint.</p>";
+        links->setText(html);
+        connect(links, &QLabel::linkActivated, this, [this](const QString &url) { Q_EMIT anchorClicked(QUrl(url)); });
+        cardLayout->addWidget(links);
+        stack->addWidget(card);
     }
     stack->addStretch(1);
     // setWidget deletes the previous contents without detaching a native widget.

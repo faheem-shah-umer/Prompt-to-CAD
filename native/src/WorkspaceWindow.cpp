@@ -570,6 +570,14 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     selectionChip->hide();
     selectionChip->setToolTip("Remove selection context from the next task");
     compose->addWidget(selectionChip);
+    draftChip = new QPushButton("Continuing saved draft  ×");
+    draftChip->setObjectName("selectionChip");
+    draftChip->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    draftChip->setToolTip("The next request continues the saved draft. Click to start fresh instead.");
+    draftChip->setAccessibleName("Continuing saved draft; activate to cancel");
+    draftChip->hide();
+    connect(draftChip, &QPushButton::clicked, this, [this] { resumeDraftId.clear(); draftChip->hide(); });
+    compose->addWidget(draftChip);
     auto *imageScroll = new QScrollArea;
     imageScroll->setObjectName("attachmentDraftScroll"); imageScroll->setWidgetResizable(true);
     imageScroll->setFrameShape(QFrame::NoFrame); imageScroll->setMaximumHeight(130); imageScroll->hide();
@@ -937,6 +945,34 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
             viewer->selectInstance(link.path());
         else if (link.scheme() == "engineering")
             editEngineeringRecord(link.path());
+        else if (link.scheme() == "draft") {
+            const auto id = state.value("draft").toObject().value("draft_id").toString();
+            if (id.isEmpty()) return;
+            if (link.path() == "preview") {
+                call("v2.draft.preview", {{"draft_id", id}}, [this](const QJsonObject &result) {
+                    // Show the draft without touching the accepted document or its history.
+                    emptyPage->hide();
+                    viewer->show();
+                    viewer->setDocument(result.value("draft").toObject(), true);
+                    saved->setText("Draft preview · not saved");
+                });
+            } else if (link.path() == "continue") {
+                resumeDraftId = id;
+                draftChip->show();
+                if (composer->toPlainText().trimmed().isEmpty())
+                    composer->setPlainText("Continue from the saved draft and finish the original request.");
+                revealConversation();
+            } else if (link.path() == "discard") {
+                if (QMessageBox::question(this, "Discard draft",
+                        "Discard this unsaved draft? Its work can no longer be previewed or continued. "
+                        "Accepted revisions are not affected.") != QMessageBox::Yes)
+                    return;
+                call("v2.draft.discard", {{"draft_id", id}}, [this](auto) {
+                    resumeDraftId.clear();
+                    draftChip->hide();
+                });
+            }
+        }
     });
     connect(chat, &ConversationView::attachmentRequested, this, &WorkspaceWindow::addReferenceAttachment);
     connect(rpc, &RpcClient::progress, this, [this](const QJsonObject &event) {
@@ -1083,7 +1119,8 @@ namespace {
 // Requests that only change which project or conversation is shown. They may run while an
 // agent task continues in the background (the backend accepts the same set).
 const QStringList backgroundNavigation{"v2.state", "v2.project.open", "v2.project.create", "v2.conversation.open",
-                                       "v2.conversation.new", "v2.document.open", "v2.projects.refresh"};
+                                       "v2.conversation.new", "v2.document.open", "v2.projects.refresh",
+                                       "v2.draft.preview"};
 }
 bool WorkspaceWindow::canNavigate() const { return (!busy || taskRunning) && !navigationBusy; }
 bool WorkspaceWindow::displayingTaskConversation() const {
@@ -1407,6 +1444,13 @@ void WorkspaceWindow::showState(const QJsonObject &value, bool fit) {
                        connection.value("state") == "ready" ? "Select geometry or send a design request."
                                                             : "Sign in from Settings to start a CAD task.");
     }
+    const auto draftInfo = value.value("draft").toObject();
+    if (!resumeDraftId.isEmpty() && (draftInfo.value("draft_id").toString() != resumeDraftId ||
+            draftInfo.value("stale").toBool() ||
+            draftInfo.value("conversation_id") != value.value("conversation").toObject().value("conversation_id"))) {
+        resumeDraftId.clear();  // The draft was discarded, replaced or belongs to another conversation.
+        draftChip->hide();
+    }
     if (changed && taskRunning && displayingTaskConversation() && !taskCandidate.isEmpty()) {
         // Returning to a conversation whose task is still running: show its latest candidate again.
         viewer->setDocument(taskCandidate, false);
@@ -1478,6 +1522,7 @@ void WorkspaceWindow::submit() {
     if (!effortSelection.isEmpty()) params["reasoning_effort"] = effortSelection;
     params["task_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
     if (!selected.isEmpty()) params["selection"] = selected;
+    if (!resumeDraftId.isEmpty()) params["resume_draft_id"] = resumeDraftId;
     if (!draftAttachments.isEmpty()) prepareImageSubmission(params);
     else { submittedAttachments = {}; submittedDraftAttachments = {}; startAgentTask(params); }
 }
@@ -1485,6 +1530,8 @@ void WorkspaceWindow::startAgentTask(QJsonObject params) {
     activeTaskId = params.value("task_id").toString();
     taskConversationId = state.value("conversation").toObject().value("conversation_id").toString();
     taskCandidate = {};
+    resumeDraftId.clear();
+    draftChip->hide();
     taskAgent = state.value("runtime").toObject().value("agent").toObject();
     currentActivity.clear();
     pendingUser = takeComposerText();

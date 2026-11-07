@@ -14,6 +14,7 @@ class ConversationView : public QScrollArea {
     void setMessages(const QJsonArray &messages, const QString &conversation);
     void scrollToLatest();
     void setDocumentContext(const QJsonObject &document);
+    void setDraft(const QJsonObject &draft);
     QString plainText() const;
   Q_SIGNALS:
     void anchorClicked(const QUrl &url);
@@ -27,6 +28,7 @@ class ConversationView : public QScrollArea {
     bool updateWorkingMessages(const QJsonArray &messages);
     QJsonArray entries;
     QJsonArray designNotes;
+    QJsonObject draft;
     QToolButton *latest;
     bool following = true, restoring = false;
     unsigned scrollGeneration = 0;

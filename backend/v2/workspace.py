@@ -36,6 +36,7 @@ BACKGROUND_NAVIGATION = {
     "v2.conversation.new",
     "v2.document.open",
     "v2.projects.refresh",
+    "v2.draft.preview",
 }
 
 
@@ -263,6 +264,12 @@ class WorkspaceV2(Workspace):
                 },
             },
         }
+        if self.document is not None and result.get("document"):
+            from . import drafts
+            try:
+                result["draft"] = drafts.summary(self.document, result["document"].get("revision_id"))
+            except (OSError, ValueError, WorkspaceError):
+                result["draft"] = None
         if self.project_id and result.get("conversation"):
             from .attachments import public
             base = self.projects.project_path(self.project_id)
@@ -571,6 +578,25 @@ class WorkspaceV2(Workspace):
                     self.project_id, active_document_id=did, active_conversation_id=None
                 )
             return self.activate(self.project_id)
+        if method == "v2.draft.preview":
+            from . import drafts
+            if self.document is None:
+                raise WorkspaceError("Open a project first.", "no_document")
+            record = drafts.read(self.document)
+            if record is None or (params.get("draft_id") and record.get("draft_id") != params["draft_id"]):
+                raise WorkspaceError("This draft is no longer available.", "draft_missing")
+            current = self.state().get("document", {})
+            # A preview only; the accepted revision and its history are unchanged.
+            return {"draft": {**record["snapshot"], "project_dir": str(self.document.folder),
+                              "document_id": current.get("document_id"), "revision_id": current.get("revision_id"),
+                              "name": current.get("name")},
+                    "summary": drafts.summary(self.document, current.get("revision_id"))}
+        if method == "v2.draft.discard":
+            from . import drafts
+            if self.document is None:
+                raise WorkspaceError("Open a project first.", "no_document")
+            drafts.discard(self.document, params.get("draft_id"))
+            return self.state()
         if method == "v2.conversation.restart_session":
             chat = self.projects.conversation(self.project_id)
             chat["provider_session"] = None
@@ -935,6 +961,12 @@ class WorkspaceV2(Workspace):
             project_id,
             task["task_id"],
         )
+        from . import drafts
+        if params.get("resume_draft_id"):
+            # Continue a saved draft: verified against the current revision and its geometry files.
+            tools.resume_from(drafts.load(document, str(params["resume_draft_id"]), original.get("revision_id")))
+            task["resumed_draft"] = copy.deepcopy(tools.resumed_draft)
+        tools.draft_task = task
         from .turn_logs import TurnLog
         turn_log = TurnLog(self.projects.project_path(project_id), task, project_id,
             notify=lambda message: self.notify({"stage": "logging", "message": message}))
@@ -972,6 +1004,14 @@ class WorkspaceV2(Workspace):
             "operations_limit": 32,
             "operations_remaining": 32,
         })
+        if tools.resumed_draft:
+            self.notify({
+                "stage": "candidate",
+                "message": f"Continuing saved draft (checkpoint {tools.resumed_draft.get('checkpoint')}, "
+                           f"{len(tools.prior_commands)} operation(s) already applied).",
+                "document": {**tools.candidate, "project_dir": str(document.folder),
+                             "revision_id": original.get("revision_id")},
+            })
         bridge = None
         deadline = time.monotonic() + CAD_TURN_TIMEOUT_SECONDS
         tools.deadline = deadline
@@ -1058,9 +1098,18 @@ class WorkspaceV2(Workspace):
                     "\nPrior local conversation (context data, may reference older revisions):\n"
                     + history
                 )
+            resume_note = ""
+            if tools.resumed_draft:
+                resume_note = (
+                    "\n\nThis turn continues a saved draft from an interrupted turn (checkpoint "
+                    f"{tools.resumed_draft.get('checkpoint')}, {len(tools.prior_commands)} operation(s) already applied). "
+                    "The candidate already contains that work; see resumed_draft in the state. Original request:\n"
+                    + str(tools.resumed_draft.get("prompt") or "")[:8000]
+                )
             text = (
                 "Current application state (fresh for this turn):\n"
                 + context
+                + resume_note
                 + "\n\nUser request:\n"
                 + prompt
             )
@@ -1094,7 +1143,8 @@ class WorkspaceV2(Workspace):
             turn_log.phase("provider_transport_wait", max(0, total_elapsed - tool_elapsed))
             if self.cancelled.is_set():
                 raise WorkspaceError("Task cancelled before acceptance.", "cancelled")
-            if tools.commands:
+            applied = tools.prior_commands + tools.commands
+            if applied:
                 self.application_runtime.ensure_current()
                 if tools.mcp_runtime is None:
                     raise WorkspaceError("The CAD MCP tool contract was not verified. Restart the application before generating geometry.", "runtime_mismatch")
@@ -1118,7 +1168,7 @@ class WorkspaceV2(Workspace):
                         tools.candidate,
                         original.get("revision_id"),
                         summary=message[:3000] or task["agent"]["display_name"] + " CAD task",
-                        commands=tools.commands,
+                        commands=applied,
                     )
                 task.update(
                     result_revision_id=document.current()["revision_id"],
@@ -1135,12 +1185,17 @@ class WorkspaceV2(Workspace):
                                                if fingerprint(original)[identity] != fingerprint(tools.candidate)[identity]),
                     component_transactions=copy.deepcopy(tools.transactions),
                 )
-            if not tools.commands:
+                # The draft's work is now an accepted revision.
+                draft = drafts.read(document)
+                if draft and (draft.get("task_id") == task["task_id"]
+                              or draft.get("draft_id") == (tools.resumed_draft or {}).get("draft_id")):
+                    drafts.discard(document)
+            if not applied:
                 message += (
                     "\n\nApplication: no geometry revision was created by this turn."
                 )
             task.update(
-                status="completed" if tools.commands else "completed_no_change",
+                status="completed" if applied else "completed_no_change",
                 message=message,
                 completed_at=time.time(),
             )
@@ -1200,6 +1255,12 @@ class WorkspaceV2(Workspace):
                 }
             )
             document.journal(task["status"], task_id=task["task_id"])
+            try:
+                # Keep the work done so far as a draft the user can preview or continue.
+                drafts.mark_stopped(document, task["task_id"], str(error),
+                                    draft_id=(tools.resumed_draft or {}).get("draft_id"))
+            except Exception:
+                pass
             raise
         finally:
             with tools.lock:

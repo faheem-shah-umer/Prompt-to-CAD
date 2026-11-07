@@ -129,7 +129,8 @@ class WorkspaceWindow : public QMainWindow {
     QTextBrowser *properties;
     QPlainTextEdit *composer;
     QPushButton *sendButton, *selectionChip, *accountBadge, *agentButton;
-    QPushButton *usageBadge;
+    QPushButton *usageBadge, *draftChip = nullptr;
+    QString resumeDraftId;
     QTimer *taskPulse, *chatRefresh, *modelDiscoveryTimer = nullptr;
     QElapsedTimer taskClock;
     QString pendingUser, liveAnswer, currentTaskState, currentTaskMessage;
