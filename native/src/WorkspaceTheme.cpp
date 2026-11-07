@@ -90,7 +90,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QToolButton { padding:4px; }
         QPushButton { background:@raised@; border:1px solid @border@; border-radius:@controlRadius@px; min-height:20px; }
         QToolButton { background:transparent; border:1px solid transparent; border-radius:@controlRadius@px; }
-        QPushButton[workspaceIconOnly="true"], QPushButton[controlRole="quiet"], QPushButton#quietButton, QPushButton#usageBadge, QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { background:transparent; border-color:transparent; }
+        QPushButton[workspaceIconOnly="true"], QPushButton[controlRole="quiet"], QPushButton#quietButton, QPushButton#usageBadge, QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#hideSelectedModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { background:transparent; border-color:transparent; }
         QPushButton[workspaceIconOnly="true"], QToolButton[workspaceIconOnly="true"] { padding:4px; }
         QPushButton:hover:enabled, QToolButton:hover:enabled { background:@hover@; }
         QPushButton:pressed:enabled, QToolButton:pressed:enabled { background:@pressed@; }
@@ -151,7 +151,7 @@ void applyWorkspaceTheme(const QString &name, int textSize) {
         QSlider#effortSlider::handle:horizontal:disabled { background:@disabled@; }
         QToolButton#projectSort { padding:4px; }
         QToolButton#projectSort::menu-indicator { image:none; }
-        QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:4px 6px; font-size:12px; }
+        QPushButton#showAllModels, QPushButton#hideAllModels, QPushButton#hideSelectedModels, QPushButton#selectAllModels, QPushButton#clearModelSelection { padding:4px 6px; font-size:12px; }
         QToolButton#workDisclosure { padding:3px 0; color:@secondary@; }
         QLabel#activitySummary, QLabel#livePhase { color:@secondary@; }
         QScrollArea#workActivityScroll, QScrollArea#workActivityScroll > QWidget { background:transparent; border:0; padding:0; }

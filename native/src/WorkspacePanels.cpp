@@ -188,6 +188,7 @@ void WorkspaceWindow::syncModelVisibility() {
   for (const auto& name : {"showAllModels", "hideAllModels", "selectAllModels"})
     if (auto *control = findChild<QPushButton*>(name)) control->setEnabled(any);
   if (auto *control = findChild<QPushButton*>("clearModelSelection")) control->setEnabled(!selected.isEmpty());
+  if (auto *control = findChild<QPushButton*>("hideSelectedModels")) control->setEnabled(!selected.isEmpty());
 }
 
 void WorkspaceWindow::showAccountDetails() {

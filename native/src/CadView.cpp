@@ -284,8 +284,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 void CadView::mouseMoveEvent(QMouseEvent* event) {
     if (view.IsNull()) return;
     auto point = QPoint(qRound(event->position().x() * devicePixelRatioF()), qRound(event->position().y() * devicePixelRatioF())); auto delta = point - lastPosition;
-    if ((event->buttons() & Qt::MiddleButton) || ((event->buttons() & Qt::LeftButton) && (event->modifiers() & Qt::ShiftModifier)))
+    // Shift+drag pans once the pointer really moves, so a plain Shift+click stays a selection click.
+    if ((event->buttons() & Qt::MiddleButton) || ((event->buttons() & Qt::LeftButton) && (event->modifiers() & Qt::ShiftModifier)
+                                                  && (point - pressedPosition).manhattanLength() > 4))
         view->Pan(delta.x(), -delta.y());
+    else if ((event->buttons() & Qt::LeftButton) && (event->modifiers() & Qt::ShiftModifier)) {}
     else if (event->buttons() & Qt::LeftButton) {
         if ((point - pressedPosition).manhattanLength() > 4) view->Rotation(point.x(), point.y());
     } else if (event->buttons() & Qt::RightButton) view->Zoom(lastPosition.x(), lastPosition.y(), point.x(), point.y());
@@ -299,13 +302,15 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
     if (view.IsNull() || event->button() != Qt::LeftButton || (QPoint(qRound(event->position().x() * devicePixelRatioF()), qRound(event->position().y() * devicePixelRatioF())) - pressedPosition).manhattanLength() > 4) return;
     const QPoint point(qRound(event->position().x()*devicePixelRatioF()),qRound(event->position().y()*devicePixelRatioF()));
+    // Shift+click or Ctrl+click adds a part to the selection, or removes it if already selected.
+    const bool add = event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
     context->MoveTo(point.x(), point.y(), view, false);
     if(!context->HasDetected()&&mode=="face") {
         auto owner=pickMeshFace(point);
-        if(!owner.IsNull()){if(!(event->modifiers()&Qt::ControlModifier))context->ClearSelected(false);context->AddOrRemoveSelected(owner,false);updateSelection();view->Redraw();return;}
+        if(!owner.IsNull()){if(!add)context->ClearSelected(false);context->AddOrRemoveSelected(owner,false);updateSelection();view->Redraw();return;}
     }
-    if((event->modifiers() & Qt::ControlModifier) && !context->HasDetected())return;
-    context->SelectDetected(event->modifiers() & Qt::ControlModifier ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
+    if(add && !context->HasDetected())return;
+    context->SelectDetected(add ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
     updateSelection(); view->Redraw();
 }
 void CadView::wheelEvent(QWheelEvent* event) {

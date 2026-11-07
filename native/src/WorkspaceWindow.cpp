@@ -401,6 +401,21 @@ WorkspaceWindow::WorkspaceWindow(const QString &source, const QString &python, c
     hideModels->setObjectName("hideAllModels");
     showModels->setToolTip("Show every component, including filtered models");
     hideModels->setToolTip("Hide every component, including filtered models");
+    auto *hideSelected = button("Hide selected", visibilityControls, [this] {
+        QStringList ids;
+        for (const auto &value : selected.value("entities").toArray()) {
+            const auto id = value.toObject().value("instance_id").toString();
+            if (!id.isEmpty() && !ids.contains(id)) ids << id;
+        }
+        if (ids.isEmpty() && !selected.value("instance_id").toString().isEmpty()) ids << selected.value("instance_id").toString();
+        if (ids.isEmpty()) return;
+        viewer->setVisibleInstances(ids, false);
+    });
+    hideSelected->setObjectName("hideSelectedModels");
+    setWorkspaceIcon(hideSelected, "eye-off");
+    hideSelected->setAccessibleName("Hide selected components");
+    hideSelected->setToolTip("Hide the selected components. Shift+click or Ctrl+click parts in the model to select several.");
+    hideSelected->setEnabled(false);
     modelLayout->addLayout(visibilityControls);
     auto *selectionControls = new QHBoxLayout;
     selectionControls->setSpacing(5);
